@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>WA AI Assistant</title>
+<script src="/socket.io/socket.io.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+:root{--bg:#F0F4F8;--s1:#FFFFFF;--s2:#F8FAFC;--s3:#E2E8F0;--text:#1E293B;--muted:#64748B;--border:#E2E8F0;
+--green:#10B981;--green2:#059669;--red:#EF4444;--yellow:#F59E0B;--blue:#3B82F6;--darkblue:#1E3A8A;
+--radius:8px;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display:flex}
+.app-layout{display:flex;width:100%;height:100%;}
+.sidebar{width:65px;background:#1b2b4d;color:#fff;display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;white-space:nowrap;transition:width 0.3s ease;z-index:100;position:relative}
+.sidebar:hover{width:260px;}
+.sidebar-logo{padding:20px;font-size:1.2rem;font-weight:700;display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(255,255,255,0.1);}
+.logo-badge{background:var(--green);color:#000;padding:4px 8px;border-radius:6px;font-size:.8rem;font-weight:800;flex-shrink:0}
+.sidebar-menu{padding:20px 10px;display:flex;flex-direction:column;gap:5px;}
+.menu-item{padding:12px 15px;border-radius:8px;cursor:pointer;font-size:0.9rem;font-weight:500;color:rgba(255,255,255,0.7);transition:all 0.2s;display:flex;align-items:center;gap:10px;}
+.menu-item:hover{background:rgba(255,255,255,0.1);color:#fff;}
+.menu-item.active{background:var(--blue);color:#fff;}
+
+.main-content{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg);}
+.view{display:none;width:100%;height:100%;flex-direction:column;overflow:hidden;}
+.view.active{display:flex;}
+
+/* AI View styles (Current main layout) */
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 24px;background:var(--s1);border-bottom:1px solid var(--border);flex-shrink:0}
+.status-pill{display:flex;align-items:center;gap:8px;padding:6px 14px;border-radius:20px;font-size:.78rem;font-weight:600;background:var(--s2);color:var(--muted);border:1px solid var(--border)}
+.status-pill.connected{color:var(--green2);background:#ecfdf5;border-color:#d1fae5}
+.status-pill .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.status-pill.connected .dot{background:var(--green)}
+.main-cols{flex:1;display:flex;overflow:hidden;padding:16px;gap:16px}
+.col{background:var(--s1);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;width:320px;box-shadow:0 1px 3px rgba(0,0,0,0.05)}
+.col-inner{padding:16px;overflow-y:auto;flex:1}
+.col-title{font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}
+
+/* Data Table styles */
+.data-container{padding:24px;overflow-y:auto;flex:1;}
+.data-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;background:var(--s1);padding:16px 20px;border-radius:12px;border:1px solid var(--border);box-shadow:0 1px 3px rgba(0,0,0,0.05);}
+.data-title{font-size:1.2rem;font-weight:600;color:var(--darkblue);}
+.table-wrapper{background:var(--s1);border-radius:12px;border:1px solid var(--border);overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.05);}
+.data-table{width:100%;border-collapse:collapse;font-size:0.85rem;}
+.data-table th{background:var(--s2);text-align:left;padding:14px 16px;font-weight:600;color:var(--muted);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--border);}
+.data-table td{padding:16px;border-bottom:1px solid var(--border);color:var(--text);vertical-align:top;}
+.data-table tr:hover td{background:var(--s2);}
+.badge{padding:4px 10px;border-radius:20px;font-size:0.75rem;font-weight:600;display:inline-block;text-transform:uppercase;}
+.badge-order{background:#fef3c7;color:#b45309;}
+.badge-diproses{background:#dbeafe;color:#1e40af;}
+.badge-terkirim{background:#d1fae5;color:#065f46;}
+.badge-retur{background:#fee2e2;color:#991b1b;}
+.badge-batal{background:#f1f5f9;color:#475569;}
+
+select.badge-select { border:none; appearance:none; font-family:inherit; cursor:pointer; font-weight:600; outline:none; }
+
+.btn{padding:8px 14px;border:none;border-radius:6px;font-size:.8rem;font-weight:600;cursor:pointer;transition:background .2s}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-green{background:var(--green);color:#fff}.btn-green:hover{background:var(--green2)}
+.btn-blue{background:var(--blue);color:#fff}.btn-blue:hover{background:#2563EB}
+.btn-red{background:transparent;color:var(--red);border:1px solid var(--red);padding:4px 8px;font-size:0.7rem;}.btn-red:hover{background:var(--red);color:#fff;}
+.btn-block{display:block;width:100%;text-align:center}
+
+.fg{margin-bottom:16px}.lbl{display:block;font-size:.75rem;font-weight:600;color:var(--muted);margin-bottom:6px}
+.fg textarea,.fg input[type="text"],.fg select{width:100%;background:var(--s1);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;color:var(--text);font-family:'Inter',sans-serif;font-size:.85rem;outline:none}
+.fg textarea:focus,.fg input[type="text"]:focus,.fg select:focus{border-color:var(--blue)}
+.ts{font-size:.75rem;color:var(--muted)}
+.save-ok{font-size:.7rem;color:var(--green2);margin-top:6px;min-height:14px}
+.toggle{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--s2);border-radius:8px;border:1px solid var(--border);margin-bottom:12px}
+.toggle-lbl{font-size:.8rem;font-weight:600}
+.toggle-sub{font-size:.65rem;color:var(--muted)}
+.switch{position:relative;display:inline-block;width:40px;height:22px;flex-shrink:0}
+.switch input{opacity:0;width:0;height:0}
+.slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background-color:var(--s3);transition:.3s;border-radius:22px}
+.slider:before{position:absolute;content:"";height:16px;width:16px;left:3px;bottom:3px;background-color:#fff;transition:.3s;border-radius:50%}
+input:checked+.slider{background-color:var(--green)}
+input:checked+.slider:before{transform:translateX(18px)}
+.qr-area{display:flex;flex-direction:column;align-items:center;padding:12px;background:var(--s2);border-radius:8px;border:1px dashed var(--border);position:relative;overflow:hidden;transition:max-height 0.3s ease;max-height:44px;cursor:pointer}
+.qr-area:hover{max-height:300px;border:1px solid var(--border)}
+.qr-area-hint{font-size:.75rem;font-weight:600;color:var(--text);margin-bottom:15px;white-space:nowrap;display:flex;align-items:center;gap:6px}
+.qr-box{width:200px;height:200px;background:#fff;border-radius:12px;padding:10px;margin-bottom:16px;box-shadow:0 4px 12px rgba(0,0,0,.15);display:flex;align-items:center;justify-content:center}
+.qr-box img{width:100%;height:100%;display:block}
+.qr-hint{text-align:center;font-size:.75rem;color:var(--muted);line-height:1.5}
+.qr-loading{display:flex;flex-direction:column;align-items:center;gap:12px;color:var(--muted);font-size:.8rem;font-weight:600}
+.spinner{border:3px solid var(--s3);border-top:3px solid var(--green);border-radius:50%;width:30px;height:30px;animation:spin 1s linear infinite}
+@keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
+.connected-box{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px 0;text-align:center}
+.conn-icon{font-size:48px;margin-bottom:16px}
+.conn-label{font-size:1.1rem;font-weight:700;color:var(--green2);margin-bottom:6px}
+.conn-sub{font-size:.75rem;color:var(--muted);margin-bottom:24px}
+.contact-item{display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .15s}
+.contact-item:hover{background:var(--s2)}
+.contact-item.active{background:var(--s2);border-left:4px solid var(--blue)}
+.contact-avatar{width:40px;height:40px;border-radius:50%;background:var(--s3);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;flex-shrink:0;color:var(--muted)}
+.contact-info{flex:1;min-width:0}
+.contact-name{font-size:.85rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.contact-preview{font-size:.75rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.contact-time{font-size:.65rem;color:var(--muted)}
+.chat-header{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0;background:var(--s1)}
+.chat-avatar{width:36px;height:36px;border-radius:50%;background:var(--s3);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:var(--muted)}
+.chat-name{font-size:.95rem;font-weight:600}.chat-sub{font-size:.7rem;color:var(--muted)}
+.chat-messages{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:12px;background:var(--s2)}
+.empty-chat{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;height:100%;color:var(--muted);text-align:center}
+.empty-chat .ei{font-size:48px;opacity:.2}
+.empty-chat p{font-size:.85rem;line-height:1.6}
+.bubble-wrap{display:flex;flex-direction:column;gap:2px}
+.bubble-wrap.incoming{align-items:flex-start}.bubble-wrap.outgoing{align-items:flex-end}
+.bubble{max-width:80%;padding:10px 14px;border-radius:12px;font-size:.85rem;line-height:1.5;box-shadow:0 1px 2px rgba(0,0,0,0.05)}
+.bubble.incoming{background:var(--s1);border:1px solid var(--border);border-bottom-left-radius:4px}
+.bubble.outgoing{background:var(--green);color:#fff;border-bottom-right-radius:4px}
+.bubble-time{font-size:.65rem;color:var(--muted);padding:0 4px;margin-top:2px}
+.bubble-ai-label{font-size:.65rem;color:var(--green2);padding:0 4px;margin-top:2px}
+.no-reply-note{font-size:.65rem;color:var(--yellow);padding:0 4px}
+.tabs{display:flex;flex-direction:column;border-right:1px solid var(--border);flex-shrink:0;background:var(--s1);width:65px}
+.tab{flex:none;padding:15px 5px;text-align:center;font-size:.7rem;font-weight:600;cursor:pointer;color:var(--muted);border-right:2px solid transparent;transition:all .2s;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;}
+.tab:hover{background:var(--s2)}
+.tab.active{color:var(--blue);border-right-color:var(--blue);background:var(--s2)}
+.tab-content{display:none;overflow-y:auto}
+.tab-content.active{display:block}
+.tab-panel{padding:20px}
+#setup{position:fixed;inset:0;background:rgba(15,23,42,.95);z-index:999;display:none;align-items:center;justify-content:center}
+.setup-box{background:var(--s1);border:1px solid var(--border);border-radius:16px;padding:32px;width:420px;text-align:center;box-shadow:0 10px 25px rgba(0,0,0,0.1)}
+.setup-ico{font-size:42px;margin-bottom:12px}
+.setup-title{font-size:1.2rem;font-weight:700;margin-bottom:8px}
+.setup-sub{font-size:.8rem;color:var(--muted);line-height:1.6;margin-bottom:20px}
+.setup-link{font-size:.75rem;color:var(--blue);cursor:pointer;margin-bottom:16px;display:block;text-decoration:underline}
+.setup-input{width:100%;background:var(--s2);border:1px solid var(--border);border-radius:var(--radius);padding:12px;color:var(--text);font-family:'Inter',sans-serif;font-size:.85rem;outline:none;margin-bottom:12px}
+.setup-input:focus{border-color:var(--blue);background:var(--s1)}
+.setup-err{font-size:.7rem;color:var(--red);margin-top:8px;min-height:14px;line-height:1.5;word-break:break-word}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:4px}
+</style>
+</head>
+<body>
+
+<div id="setup">
+  <div class="setup-box">
+    <div class="setup-ico">🔑</div>
+    <div class="setup-title">Masukkan Gemini API Key</div>
+    <div class="setup-sub">Gratis di Google AI Studio! Isi Key 1 minimal, Key 2 & 3 opsional untuk rotasi otomatis saat key habis.</div>
+    <a class="setup-link" onclick="window.open('https://aistudio.google.com/apikey','_blank')">→ Dapatkan API Key gratis di aistudio.google.com</a>
+    <div class="lbl" style="text-align:left">API Key 1 (utama)</div>
+    <input class="setup-input" id="setupKeyInput1" type="text" placeholder="Paste API Key Gemini #1"/>
+    <div class="lbl" style="text-align:left">API Key 2 (opsional)</div>
+    <input class="setup-input" id="setupKeyInput2" type="text" placeholder="Paste API Key Gemini #2"/>
+    <div class="lbl" style="text-align:left">API Key 3 (opsional)</div>
+    <input class="setup-input" id="setupKeyInput3" type="text" placeholder="Paste API Key Gemini #3"/>
+    <button class="btn btn-green" onclick="saveKeySetup()">Simpan & Lanjutkan</button>
+    <div class="setup-err" id="setupKeyErr"></div>
+  </div>
+</div>
+
+<div class="app-layout">
+  <aside class="sidebar">
+    <div class="sidebar-logo"><div class="logo-badge">WA</div> AI Assistant</div>
+    <div class="sidebar-menu">
+      <div class="menu-item" id="menu-data" onclick="switchMainView('data')">📊 Menu Data</div>
+      <div class="menu-item active" id="menu-ai" onclick="switchMainView('ai')">🤖 AI WA Assistant</div>
+      <div class="menu-item" id="menu-gambar" onclick="switchMainView('gambar')">🖼️ Galeri Produk</div>
+    </div>
+  </aside>
+  <div class="main-content">
+    
+    <div id="view-ai" class="view active">
+      <header>
+        <div class="data-title">AI WA Assistant</div>
+        <div class="status-pill" id="statusPill"><div class="dot"></div><span id="statusTxt">Memuat...</span></div>
+      </header>
+      <div class="main-cols">
+  <!-- Panel Kiri -->
+  <div class="col">
+    <div class="col-inner">
+      <div class="col-title">WhatsApp</div>
+      <div id="qrSection" class="qr-area">
+        <div class="qr-area-hint">🔍 Arahkan kursor ke sini untuk Scan QR</div>
+        <div class="qr-box"><div class="qr-loading"><div class="spinner"></div><span>Memuat QR...</span></div></div>
+        <p class="qr-hint">Buka WhatsApp di HP<br/>⋮ → Perangkat Tertaut → Tautkan</p>
+      </div>
+      <div id="connSection" class="connected-box" style="display:none">
+        <div class="conn-icon">✅</div>
+        <div class="conn-label">Terhubung</div>
+        <div class="conn-sub">AI aktif membalas pesan</div>
+        <button class="btn btn-red" style="width:auto;padding:6px 16px;margin-top:6px" onclick="doLogout()">Logout WA</button>
+      </div>
+      <div class="card">
+        <div class="col-title">Kontrol</div>
+        <div class="toggle-row">
+          <div><div class="tl">Auto Reply</div><div class="ts">AI balas otomatis</div></div>
+          <label class="sw"><input type="checkbox" id="arToggle" onchange="patch('autoReply',this.checked)"/><span class="sl"></span></label>
+        </div>
+        <div class="toggle-row">
+          <div><div class="tl">Jam Operasional</div><div class="ts">Batasi jam aktif</div></div>
+          <label class="sw"><input type="checkbox" id="ohToggle" onchange="toggleOH(this.checked)"/><span class="sl"></span></label>
+        </div>
+        <div id="ohFields" style="display:none;margin-top:8px">
+          <div class="time-grid">
+            <div class="fg"><label class="lbl">Mulai</label><input type="time" id="ohStart" onchange="saveOH()"/></div>
+            <div class="fg"><label class="lbl">Selesai</label><input type="time" id="ohEnd" onchange="saveOH()"/></div>
+          </div>
+        </div>
+        <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border)">
+          <button class="btn btn-blue" onclick="doRetryFailed()">♻️ Coba Ulang Pesan Gagal</button>
+          <div class="ts" style="margin-top:6px;line-height:1.6">Picu AI untuk membalas ulang pesan pelanggan yang sebelumnya gagal dibalas karena kehabisan kuota atau error (kecuali yang sudah Anda balas manual).</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="col-title">⏱️ Waktu & Delay</div>
+        <div class="fg">
+          <label class="lbl">Tunggu Pesan Susulan (detik)</label>
+          <input type="text" id="debounceSeconds" placeholder="6" onchange="patch('debounceSeconds',parseInt(this.value)||6)"/>
+          <div class="ts" style="margin-top:5px;line-height:1.6">Berapa detik bot menunggu setelah pesan terakhir, untuk menampung kalau pelanggan kirim beberapa bubble berurutan, sebelum digabung & dibalas sekaligus.</div>
+        </div>
+        <div class="fg">
+          <label class="lbl">Delay Balas Min (detik)</label>
+          <input type="text" id="replyDelayMin" placeholder="15" onchange="patch('replyDelayMin',parseInt(this.value)||0)"/>
+        </div>
+        <div class="fg">
+          <label class="lbl">Delay Balas Max (detik)</label>
+          <input type="text" id="replyDelayMax" placeholder="25" onchange="patch('replyDelayMax',parseInt(this.value)||0)"/>
+          <div class="ts" style="margin-top:5px;line-height:1.6">Bot menunggu durasi acak antara Min-Max detik sebelum benar-benar mengirim balasan, supaya terasa natural seperti orang mengetik (bukan langsung dijawab AI).</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel Tengah -->
+  <div class="col" style="flex:1;width:auto;max-width:none;display:grid;grid-template-columns:250px 1fr;border-right:none;overflow:hidden">
+    <div style="border-right:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column">
+      <div style="padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0">
+        <div class="col-title" style="margin:0">Kontak</div>
+      </div>
+      <div id="contactList" style="flex:1">
+        <div class="empty-chat" style="padding:30px 12px;height:auto;margin-top:20px">
+          <div class="ei">👥</div><p style="font-size:.72rem">Belum ada pesan</p>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;overflow:hidden">
+      <div class="chat-header" id="chatHeader" style="display:none">
+        <div class="chat-avatar" id="chatAvatar">?</div>
+        <div><div class="chat-name" id="chatName">-</div><div class="chat-sub" id="chatSub">-</div></div>
+      </div>
+      <div class="chat-messages" id="chatMessages">
+        <div class="empty-chat"><div class="ei">💬</div><p>Pilih kontak untuk melihat percakapan</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel Kanan -->
+  <div class="col" style="display:flex;flex-direction:row;overflow:hidden;width:380px">
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('ai')"><div style="font-size:1.2rem">🤖</div>AI</div>
+      <div class="tab" onclick="switchTab('kb')"><div style="font-size:1.2rem">📚</div>Data</div>
+      <div class="tab" onclick="switchTab('send')"><div style="font-size:1.2rem">📤</div>Kirim</div>
+      <div class="tab" onclick="switchTab('key')"><div style="font-size:1.2rem">🔑</div>Key</div>
+    </div>
+    <div style="flex:1; overflow-y:auto; display:flex; flex-direction:column; background:var(--s1)">
+      <div class="tab-content active" id="tab-ai" style="flex:1">
+      <div class="tab-panel">
+        <div class="fg"><label class="lbl">Persona AI</label>
+          <textarea id="persona" rows="3" placeholder="Contoh: CS toko Trustiomart yang ramah, membantu pelanggan menemukan produk yang tepat"></textarea>
+        </div>
+        <div class="fg"><label class="lbl">Model Gemini</label>
+          <select id="modelName" onchange="patch('modelName',this.value)">
+            <option value="gemini-2.5-flash">gemini-2.5-flash (Rekomendasi)</option>
+            <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (Termurah & tercepat)</option>
+            <option value="gemini-2.5-pro">gemini-2.5-pro (Paling pintar)</option>
+            <option value="gemini-3.5-flash">gemini-3.5-flash (Flash terbaru)</option>
+          </select>
+        </div>
+        <div class="fg"><label class="lbl">Bahasa</label>
+          <select id="lang" onchange="patch('language',this.value)">
+            <option value="Indonesia">🇮🇩 Indonesia</option>
+            <option value="English">🇺🇸 English</option>
+            <option value="Auto">🌐 Auto</option>
+          </select>
+        </div>
+        <div class="fg"><label class="lbl">Tone</label>
+          <select id="tone" onchange="patch('tone',this.value)">
+            <option value="Santai">😊 Santai & Friendly</option>
+            <option value="Formal">👔 Formal & Profesional</option>
+            <option value="Singkat">⚡ Singkat & Padat</option>
+          </select>
+        </div>
+        <div class="fg"><label class="lbl">Temperature (kreativitas)</label>
+          <div style="display:flex;align-items:center;gap:8px">
+            <input type="range" id="temp" min="0" max="1" step="0.1" value="0.7" style="flex:1" oninput="document.getElementById('tempVal').textContent=this.value" onchange="patch('temperature',parseFloat(this.value))"/>
+            <span id="tempVal" style="font-size:.75rem;color:var(--muted);width:24px">0.7</span>
+          </div>
+        </div>
+        <div class="fg"><label class="lbl">Whitelist Nomor (opsional)</label>
+          <textarea id="wl" rows="2" placeholder="628xxxxxxxxxx&#10;(kosong = reply semua)"></textarea>
+        </div>
+        <div class="fg"><label class="lbl">📱 Nomor Superadmin</label>
+          <input type="text" id="adminNumber" placeholder="08xxxxxxxxxx"/>
+          <div class="ts" style="margin-top:6px;line-height:1.6">💡 Kirim <b>on</b> atau <b>off</b> dari nomor ini ke nomor bot untuk menyalakan/mematikan auto-reply dari HP, tanpa perlu buka dashboard. Bot akan balas konfirmasi.</div>
+        </div>
+        <button class="btn btn-green" onclick="saveSettings()">💾 Simpan</button>
+        <div class="save-ok" id="saveOk"></div>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-kb" style="flex:1">
+      <div class="tab-panel">
+        <div class="fg">
+          <label class="lbl">📦 Informasi Produk & Bisnis (1-5 produk)</label>
+          <textarea id="knowledgeBase" rows="12" placeholder="=== PRODUK: Baby Walking Assistant ===
+Harga: Rp 150.000
+Warna: Merah, Biru, Kuning
+Stok: Tersedia
+Keunggulan: Membantu bayi belajar jalan dengan aman
+Garansi: 6 bulan
+---
+=== PRODUK: Sealer Elektrik Pro ===
+Harga: Rp 250.000
+Stok: Tersedia
+Keunggulan: Kedap udara, tahan lama
+Garansi: 6 bulan"></textarea>
+          <div class="ts" style="margin-top:6px;line-height:1.6">💡 Tulis tiap produk diawali <b>=== PRODUK: Nama Produk ===</b> lalu pisahkan antar produk dengan baris <b>---</b>. Format ini membuat AI otomatis fokus ke produk yang ditanya pelanggan (lebih hemat & akurat).</div>
+        </div>
+        <div class="fg">
+          <label class="lbl">🎯 Panduan Follow Up & Closing</label>
+          <textarea id="followUp" rows="7" placeholder="Tulis panduan closing. Contoh:
+
+1. Sapa pelanggan dengan ramah
+2. Tanyakan kebutuhan spesifik
+3. Jelaskan keunggulan produk yang relevan
+4. Jika tanya harga, sebutkan harga + garansi
+5. Tanya alamat untuk cek ongkir
+6. Dorong order hari ini: stok terbatas
+7. Jika ragu, tawarkan garansi uang kembali 7 hari"></textarea>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <button class="btn btn-green" onclick="saveKB()">💾 Simpan Manual (Biasa)</button>
+          <button id="btnAiFormat" class="btn btn-primary" onclick="formatAndSaveKB()" style="background:linear-gradient(135deg, #8b5cf6, #3b82f6);color:white;border:none;border-radius:6px;font-weight:600;display:flex;align-items:center;gap:6px;">✨ Rapikan dengan AI & Simpan</button>
+        </div>
+        <div class="save-ok" id="kbOk"></div>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-send" style="flex:1">
+      <div class="tab-panel">
+        <div class="fg"><label class="lbl">Nomor Tujuan</label><input type="text" id="sendNum" placeholder="628xxxxxxxxxx"/></div>
+        <div class="fg"><label class="lbl">Pesan</label><textarea id="sendMsg" rows="5" placeholder="Tulis pesan..."></textarea></div>
+        <button class="btn btn-green" onclick="doSend()">📤 Kirim Pesan</button>
+      </div>
+    </div>
+
+    
+    </div>
+
+    <div class="tab-content" id="tab-key" style="flex:1">
+      <div class="tab-panel">
+        <div class="ts" style="margin-bottom:12px;line-height:1.6">💡 Isi sampai 3 API Key Gemini. Kalau Key 1 gagal terus (3x percobaan), sistem otomatis pindah ke Key 2, lalu Key 3, lalu balik lagi ke Key 1 — bot tetap bisa balas chat tanpa berhenti.</div>
+        <div id="activeKeyBadge" class="ts" style="margin-bottom:12px;padding:8px 10px;background:var(--s2);border-radius:var(--radius);border:1px solid var(--border)"></div>
+
+        <div class="fg"><label class="lbl">API Key 1 (utama)</label>
+          <input type="text" id="keyInput1" placeholder="Paste API Key Gemini #1"/>
+        </div>
+        <button class="btn btn-blue" style="font-size:.7rem;padding:6px;margin-bottom:6px" onclick="testKey(1)">🧪 Test Key 1</button>
+        <div class="save-ok" id="testOk1" style="margin-bottom:10px"></div>
+
+        <div class="fg"><label class="lbl">API Key 2 (opsional)</label>
+          <input type="text" id="keyInput2" placeholder="Paste API Key Gemini #2"/>
+        </div>
+        <button class="btn btn-blue" style="font-size:.7rem;padding:6px;margin-bottom:6px" onclick="testKey(2)">🧪 Test Key 2</button>
+        <div class="save-ok" id="testOk2" style="margin-bottom:10px"></div>
+
+        <div class="fg"><label class="lbl">API Key 3 (opsional)</label>
+          <input type="text" id="keyInput3" placeholder="Paste API Key Gemini #3"/>
+        </div>
+        <button class="btn btn-blue" style="font-size:.7rem;padding:6px;margin-bottom:6px" onclick="testKey(3)">🧪 Test Key 3</button>
+        <div class="save-ok" id="testOk3" style="margin-bottom:14px"></div>
+
+        <button class="btn btn-green" onclick="saveKey()">💾 Simpan Semua Key</button>
+        <div class="setup-err" id="keyErr"></div>
+      </div>
+
+    </div>
+    </div> <!-- tutup wrapper tab-content -->
+  </div>
+      </div>
+    </div>
+
+    <!-- VIEW GAMBAR -->
+    <div id="view-gambar" class="view">
+      <div class="data-container">
+        <div class="data-header">
+          <div class="data-title">Galeri Produk</div>
+          <p style="font-size:0.85rem; color:var(--muted); margin-top:5px;">Gambar yang diunggah di sini hanya akan dikirimkan oleh AI jika pelanggan memintanya.</p>
+        </div>
+        <div id="gambarListContainer" style="display:flex; flex-direction:column; gap:16px; padding-bottom:40px;">
+          <!-- list produk dirender dari JS -->
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW DATA ORDER -->
+    <div id="view-data" class="view">
+      <div class="data-container">
+        <div class="data-header">
+          <div class="data-title">Data Order (Ticket Log)</div>
+          <button class="btn btn-blue" onclick="downloadExcel()">📥 Download Excel</button>
+        </div>
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>NO. TIKET / TGL</th>
+                <th>CUSTOMER</th>
+                <th>PRODUK</th>
+                <th>ALAMAT LENGKAP</th>
+                <th>STATUS</th>
+                <th>AKSI</th>
+              </tr>
+            </thead>
+            <tbody id="orderListTable">
+              <!-- rendered via JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const socket=io();
+let allMessages=[],orders=[],contacts={},activeContact=null;
+socket.on('status',setStatus);
+socket.on('qr',showQR);
+socket.on('new_message',msg=>{allMessages.unshift(msg);processContacts();if(activeContact===msg.from)renderChat(msg.from);});
+socket.on('settings_updated',s=>{document.getElementById('arToggle').checked=s.autoReply??true;});
+socket.on('new_order',o=>{orders.unshift(o);renderOrders();});
+socket.on('order_updated',o=>{
+  const idx=orders.findIndex(x=>x.id===o.id);
+  if(idx>-1){orders[idx]=o;renderOrders();}
+});
+
+async function init(){
+  const kr=await fetch('/api/haskey').then(r=>r.json()).catch(()=>({ok:false}));
+  if(!kr.ok)showSetup();
+  const[sr,mr,or,set]=await Promise.all([
+    fetch('/api/status').then(r=>r.json()).catch(()=>({status:'disconnected'})),
+    fetch('/api/messages').then(r=>r.json()).catch(()=>[]),
+    fetch('/api/orders').then(r=>r.json()).catch(()=>[]),
+    fetch('/api/settings').then(r=>r.json()).catch(()=>({})),
+  ]);
+  setStatus(sr.status);allMessages=mr;orders=or;applySettings(set);processContacts();renderOrders();
+  const qr=await fetch('/api/qr').then(r=>r.json()).catch(()=>({qr:null}));
+  if(qr.qr)showQR(qr.qr);
+  loadKeyStatus();
+}
+
+function applySettings(s){
+  if(!s)return;
+  document.getElementById('arToggle').checked=s.autoReply??true;
+  document.getElementById('persona').value=s.persona||'';
+  document.getElementById('modelName').value=s.modelName||'gemini-2.5-flash';
+  document.getElementById('lang').value=s.language||'Indonesia';
+  document.getElementById('tone').value=s.tone||'Santai';
+  document.getElementById('temp').value=s.temperature??0.7;
+  document.getElementById('tempVal').textContent=s.temperature??0.7;
+  document.getElementById('wl').value=(s.whitelist||[]).join('\n');
+  document.getElementById('adminNumber').value=s.adminNumber||'';
+  document.getElementById('knowledgeBase').value=s.knowledgeBase||'';
+  document.getElementById('followUp').value=s.followUp||'';
+  document.getElementById('debounceSeconds').value=s.debounceSeconds??6;
+  document.getElementById('replyDelayMin').value=s.replyDelayMin??15;
+  document.getElementById('replyDelayMax').value=s.replyDelayMax??25;
+  
+  window.productImagesData = s.productImages || {};
+  const oh=s.opHours||{};
+  document.getElementById('ohToggle').checked=oh.enabled||false;
+  document.getElementById('ohStart').value=oh.start||'08:00';
+  document.getElementById('ohEnd').value=oh.end||'17:00';
+  if(oh.enabled)document.getElementById('ohFields').style.display='block';
+}
+
+function processContacts(){
+  contacts={};
+  for(const msg of allMessages){
+    if(!contacts[msg.from])contacts[msg.from]={name:msg.senderName||msg.from,messages:[]};
+    contacts[msg.from].messages.push(msg);
+  }
+  renderContacts();
+}
+
+function renderContacts(){
+  const list=document.getElementById('contactList');
+  const keys=Object.keys(contacts);
+  if(!keys.length){
+    list.innerHTML='<div class="empty-chat" style="padding:30px 12px;height:auto;margin-top:20px"><div class="ei">👥</div><p style="font-size:.72rem">Belum ada pesan</p></div>';
+    return;
+  }
+  list.innerHTML=keys.map(jid=>{
+    const c=contacts[jid],last=c.messages[0];
+    return`<div class="contact-item ${activeContact===jid?'active':''}" onclick="selectContact('${jid}')">
+      <div class="contact-avatar">${(c.name||'?')[0].toUpperCase()}</div>
+      <div class="contact-info">
+        <div class="contact-name">${x(c.name)}</div>
+        <div class="contact-preview">${x(last?.body||'')}</div>
+      </div>
+      <div class="contact-time">${ft(last?.timestamp)}</div>
+    </div>`;
+  }).join('');
+}
+
+function selectContact(jid){activeContact=jid;renderContacts();renderChat(jid);}
+
+function renderChat(jid){
+  const c=contacts[jid];if(!c)return;
+  document.getElementById('chatHeader').style.display='flex';
+  document.getElementById('chatAvatar').textContent=(c.name||'?')[0].toUpperCase();
+  document.getElementById('chatName').textContent=c.name;
+  document.getElementById('chatSub').textContent=jid.replace('@s.whatsapp.net','').replace('@c.us','');
+  const msgs=[...c.messages].reverse();
+  const area=document.getElementById('chatMessages');
+  if(!msgs.length){area.innerHTML='<div class="empty-chat"><div class="ei">💬</div><p>Belum ada pesan</p></div>';return;}
+  area.innerHTML=msgs.map(m=>`
+    <div class="bubble-wrap incoming">
+      <div class="bubble incoming">${x(m.body)}</div>
+      <div class="bubble-time">${ft(m.timestamp)}</div>
+    </div>
+    ${m.replied&&m.aiReply?`
+    <div class="bubble-wrap outgoing">
+      <div class="bubble outgoing">${x(m.aiReply)}</div>
+      <div class="bubble-ai-label">✨ AI · ${ft(m.timestamp)}</div>
+    </div>`:`<div class="no-reply-note">⚠️ Tidak dibalas (cek pengaturan/quota)</div>`}
+  `).join('');
+  area.scrollTop=area.scrollHeight;
+}
+
+function setStatus(st){
+  const pill=document.getElementById('statusPill'),txt=document.getElementById('statusTxt');
+  pill.className='status-pill '+st;
+  txt.textContent={connected:'● Terhubung',waiting_qr:'Scan QR',disconnected:'Terputus'}[st]||st;
+  document.getElementById('qrSection').style.display=st==='connected'?'none':'flex';
+  document.getElementById('connSection').style.display=st==='connected'?'flex':'none';
+}
+
+function showQR(qr){if(!qr)return;document.querySelector('.qr-box').innerHTML=`<img src="${qr}" alt="QR"/>`;}
+
+async function patch(k,v){await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({[k]:v})});}
+
+async function saveSettings(){
+  const wl=document.getElementById('wl').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    persona:document.getElementById('persona').value,
+    modelName:document.getElementById('modelName').value,
+    language:document.getElementById('lang').value,
+    tone:document.getElementById('tone').value,
+    temperature:parseFloat(document.getElementById('temp').value),
+    whitelist:wl,
+    adminNumber:document.getElementById('adminNumber').value.trim(),
+  })});
+  flash('saveOk','✅ Tersimpan!');
+}
+
+async function saveKB(){
+  await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    knowledgeBase:document.getElementById('knowledgeBase').value,
+    followUp:document.getElementById('followUp').value,
+  })});
+  flash('kbOk','✅ Training disimpan secara manual!');
+}
+
+async function formatAndSaveKB(){
+  const btn = document.getElementById('btnAiFormat');
+  const origText = btn.innerHTML;
+  btn.innerHTML = '⏳ Sedang merapikan AI...';
+  btn.disabled = true;
+  btn.style.opacity = '0.7';
+
+  try {
+    const res = await fetch('/api/format-kb', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        knowledgeBase: document.getElementById('knowledgeBase').value,
+        followUp: document.getElementById('followUp').value
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Server error');
+    
+    document.getElementById('knowledgeBase').value = data.knowledgeBase || '';
+    flash('kbOk','✅ Sukses Dirapikan AI & Disimpan!');
+  } catch(e) {
+    alert('Gagal merapikan dengan AI: ' + e.message);
+  } finally {
+    btn.innerHTML = origText;
+    btn.disabled = false;
+    btn.style.opacity = '1';
+  }
+}
+
+function toggleOH(v){document.getElementById('ohFields').style.display=v?'block':'none';saveOH();}
+async function saveOH(){
+  await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    opHours:{enabled:document.getElementById('ohToggle').checked,start:document.getElementById('ohStart').value,end:document.getElementById('ohEnd').value}
+  })});
+}
+
+
+function switchMainView(view) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById('view-' + view).classList.add('active');
+  document.querySelectorAll('.menu-item').forEach(m => m.classList.remove('active'));
+  document.getElementById('menu-' + view).classList.add('active');
+  if (view === 'gambar') renderGambarList();
+}
+
+function switchTab(name){
+  document.querySelectorAll('.tabs .tab').forEach(t => t.classList.remove('active'));
+  const activeTab = document.querySelector(`.tabs .tab[onclick="switchTab('${name}')"]`);
+  if(activeTab) activeTab.classList.add('active');
+  
+  document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+  
+  if(name==='key')loadKeyStatus();
+}
+
+function parseProductBlocksClient(kb) {
+  if (!kb?.trim()) return [];
+  return kb.split(/^---$/m).map(b => b.trim()).filter(Boolean).map(block => {
+    const headerMatch = block.match(/===\s*PRODUK:\s*(.+?)\s*===/i);
+    return headerMatch ? headerMatch[1].trim() : null;
+  }).filter(Boolean);
+}
+
+function renderGambarList() {
+  const container = document.getElementById('gambarListContainer');
+  const kbText = document.getElementById('knowledgeBase').value;
+  const products = parseProductBlocksClient(kbText);
+  
+  if (products.length === 0) {
+    container.innerHTML = '<div style="padding:20px; text-align:center; background:var(--s2); border-radius:8px; color:var(--muted); font-size:0.85rem;">Belum ada produk. Tambahkan produk di tab Data dengan format `=== PRODUK: Nama ===`</div>';
+    return;
+  }
+  
+  let html = '';
+  products.forEach((p, pIdx) => {
+    const imgs = window.productImagesData[p] || [null, null, null];
+    html += `
+    <div style="background:var(--s1); border:1px solid var(--border); border-radius:8px; padding:16px;">
+      <div style="font-weight:600; font-size:0.9rem; margin-bottom:12px; color:var(--darkblue);">${p}</div>
+      <div style="display:flex; gap:12px; overflow-x:auto;">
+        ${[0,1,2].map(slot => {
+          const imgUrl = imgs[slot] ? '/images/'+imgs[slot] : '';
+          return `
+          <div style="width:100px; flex-shrink:0; display:flex; flex-direction:column; gap:6px;">
+            <div style="font-size:0.7rem; color:var(--muted); text-align:center;">Gambar ${slot+1}</div>
+            <div style="width:100px; height:100px; background:var(--s2); border:1px dashed var(--border); border-radius:8px; overflow:hidden; position:relative; display:flex; align-items:center; justify-content:center; cursor:pointer;" onclick="document.getElementById('upload_${pIdx}_${slot}').click()">
+              ${imgUrl ? `<img src="${imgUrl}?t=${Date.now()}" style="width:100%; height:100%; object-fit:cover;"/>` : '<span style="font-size:1.5rem; color:var(--s3);">+</span>'}
+            </div>
+            <input type="file" id="upload_${pIdx}_${slot}" style="display:none;" accept="image/jpeg, image/png, image/webp" onchange="handleImageUpload(this, '${p.replace(/'/g, "\\'")}', ${slot})"/>
+            ${imgUrl ? `<button class="btn btn-red" style="width:100%" onclick="deleteImage('${p.replace(/'/g, "\\'")}', ${slot})">Hapus</button>` : ''}
+          </div>
+          `;
+        }).join('')}
+      </div>
+    </div>`;
+  });
+  container.innerHTML = html;
+}
+
+async function handleImageUpload(input, productName, slot) {
+  if (!input.files || !input.files[0]) return;
+  const file = input.files[0];
+  
+  // Convert to Base64
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const base64 = e.target.result;
+    
+    // Show loading
+    const wrap = input.parentElement.querySelector('div:nth-child(2)');
+    wrap.innerHTML = '<div class="spinner"></div>';
+    
+    try {
+      const res = await fetch('/api/upload-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productName, slot, base64 })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      
+      if (!window.productImagesData[productName]) window.productImagesData[productName] = [null, null, null];
+      window.productImagesData[productName][slot] = data.fileName;
+      renderGambarList();
+    } catch (err) {
+      alert('Gagal upload: ' + err.message);
+      renderGambarList();
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+async function deleteImage(productName, slot) {
+  if (!confirm('Hapus gambar ini?')) return;
+  try {
+    const res = await fetch('/api/delete-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productName, slot })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    
+    if (window.productImagesData[productName]) window.productImagesData[productName][slot] = null;
+    renderGambarList();
+  } catch (err) {
+    alert('Gagal hapus: ' + err.message);
+  }
+}
+
+function renderOrders(){
+  const list=document.getElementById('orderListTable');
+  if(!orders.length){
+    list.innerHTML='<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--muted)">Belum ada data order</td></tr>';
+    return;
+  }
+  
+  const getWeight = s => ({'order':1,'diproses':2,'terkirim':3,'retur':4,'batal':5}[s]||99);
+  const sorted = [...orders].sort((a,b) => {
+    const wa = getWeight(a.status), wb = getWeight(b.status);
+    if(wa!==wb) return wa-wb;
+    return new Date(b.timestamp) - new Date(a.timestamp); 
+  });
+
+  list.innerHTML = sorted.map(o => {
+    let badgeClass = 'badge-order';
+    let badgeText = 'BARU (ORDER)';
+    if(o.status === 'diproses') { badgeClass = 'badge-diproses'; badgeText = 'ESCALATED - PROSES'; }
+    if(o.status === 'terkirim') { badgeClass = 'badge-terkirim'; badgeText = 'SOLVED / TERKIRIM'; }
+    if(o.status === 'retur') { badgeClass = 'badge-retur'; badgeText = 'RETUR'; }
+    if(o.status === 'batal') { badgeClass = 'badge-batal'; badgeText = 'BATAL'; }
+
+    return `
+    <tr>
+      <td>
+        <div style="font-weight:600;color:var(--blue);margin-bottom:4px">ORD-${o.id.substring(o.id.length-6)}</div>
+        <div style="font-size:0.7rem;color:var(--muted)">${ft(o.timestamp)}</div>
+      </td>
+      <td>
+        <div style="font-weight:600;margin-bottom:4px">${x(o.nama)}</div>
+        <div style="font-size:0.75rem;color:var(--muted)">${o.hp}</div>
+      </td>
+      <td><div style="font-size:0.8rem;font-weight:500">${x(o.produk)}</div></td>
+      <td><div style="font-size:0.75rem;line-height:1.5;max-width:250px">${x(o.alamat)}</div></td>
+      <td>
+        <select class="badge ${badgeClass} badge-select" onchange="updateOrderStatus('${o.id}',this.value)">
+          <option value="order" ${o.status==='order'?'selected':''}>NEW TICKET</option>
+          <option value="diproses" ${o.status==='diproses'?'selected':''}>PROSES</option>
+          <option value="terkirim" ${o.status==='terkirim'?'selected':''}>SOLVED</option>
+          <option value="retur" ${o.status==='retur'?'selected':''}>RETUR</option>
+          <option value="batal" ${o.status==='batal'?'selected':''}>BATAL</option>
+        </select>
+      </td>
+      <td>
+        <button class="btn-red" onclick="deleteOrder('${o.id}')">Hapus</button>
+      </td>
+    </tr>
+  `}).join('');
+}
+
+async function updateOrderStatus(id, status){
+  await fetch('/api/orders/'+id+'/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})});
+}
+async function deleteOrder(id){
+  if(!confirm('Hapus data order ini?')) return;
+  await fetch('/api/orders/'+id,{method:'DELETE'});
+  orders = orders.filter(o=>o.id!==id);
+  renderOrders();
+}
+
+function downloadExcel() {
+  if (!orders.length) return alert('Belum ada data order untuk didownload');
+  const headers = ['Tanggal', 'Status', 'Nama Pelanggan', 'No HP', 'Produk', 'Alamat Lengkap'];
+  const rows = orders.map(o => {
+    // Escape quote dengan double quote agar CSV tidak rusak jika ada koma di alamat
+    const escapeCSV = (str) => '"' + String(str).replace(/"/g, '""') + '"';
+    return [
+      escapeCSV(ft(o.timestamp)), 
+      escapeCSV(o.status), 
+      escapeCSV(o.nama), 
+      escapeCSV(o.hp), 
+      escapeCSV(o.produk), 
+      escapeCSV(o.alamat)
+    ];
+  });
+  
+  const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + [headers.join(','), ...rows.map(e => e.join(','))].join("\n");
+  const encodedUri = encodeURI(csvContent);
+  const link = document.createElement("a");
+  link.setAttribute("href", encodedUri);
+  link.setAttribute("download", "Data_Order_WhatsApp_AI.csv");
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+async function doSend(){
+  const number=document.getElementById('sendNum').value.trim();
+  const message=document.getElementById('sendMsg').value.trim();
+  if(!number||!message)return alert('Isi nomor dan pesan!');
+  const r=await fetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({number,message})}).then(r=>r.json());
+  if(r.ok){document.getElementById('sendMsg').value='';alert('✅ Terkirim!');}
+  else alert('❌ '+r.error);
+}
+
+async function doLogout(){if(!confirm('Logout dari WhatsApp?'))return;await fetch('/api/logout',{method:'POST'});}
+function showSetup(){document.getElementById('setup').style.display='flex';}
+
+async function doRetryFailed(){
+  if(!confirm('Coba ulang membalas semua pesan yang tertunda?')) return;
+  const r = await fetch('/api/retry',{method:'POST'}).then(r=>r.json()).catch(()=>({ok:false}));
+  if(r.ok) alert('✅ Proses coba ulang sedang berjalan di latar belakang!');
+  else alert('❌ Gagal memicu retry');
+}
+
+async function submitKeys(key1,key2,key3){
+  if(!key1&&!key2&&!key3)return{ok:false,error:'Isi minimal API Key 1'};
+  if(key1&&key1.length<10)return{ok:false,error:'API Key 1 terlalu pendek'};
+  return await fetch('/api/savekey',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key1,key2,key3})}).then(r=>r.json()).catch(e=>({ok:false,error:e.message}));
+}
+
+// Dipakai di popup setup awal (pertama kali buka app, belum ada key sama sekali)
+async function saveKeySetup(){
+  const key1=document.getElementById('setupKeyInput1').value.trim();
+  const key2=document.getElementById('setupKeyInput2').value.trim();
+  const key3=document.getElementById('setupKeyInput3').value.trim();
+  const err=document.getElementById('setupKeyErr');
+  const r=await submitKeys(key1,key2,key3);
+  if(r.ok){document.getElementById('setup').style.display='none';err.textContent='';loadKeyStatus();}
+  else err.textContent='❌ '+(r.error||'Gagal menyimpan');
+}
+
+// Dipakai di tab 🔑 API Key dashboard (untuk update/ganti key kapan saja)
+async function saveKey(){
+  const key1=document.getElementById('keyInput1').value.trim();
+  const key2=document.getElementById('keyInput2').value.trim();
+  const key3=document.getElementById('keyInput3').value.trim();
+  const err=document.getElementById('keyErr');
+  const r=await submitKeys(key1,key2,key3);
+  if(r.ok){err.classList.remove('err');err.style.color='var(--green2)';err.textContent='✅ Tersimpan!';loadKeyStatus();setTimeout(()=>err.textContent='',3000);}
+  else{err.style.color='var(--red)';err.textContent='❌ '+(r.error||'Gagal menyimpan');}
+}
+
+async function testKey(slot){
+  const el=document.getElementById('testOk'+slot);
+  el.classList.remove('err');
+  el.textContent='⏳ Menguji koneksi ke Gemini...';
+  const r=await fetch('/api/testkey',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({slot})}).then(r=>r.json()).catch(e=>({ok:false,error:e.message}));
+  if(r.ok){
+    el.classList.remove('err');
+    el.textContent='✅ Berhasil! Respons: "'+r.reply+'"';
+  } else {
+    el.classList.add('err');
+    el.textContent='❌ '+r.error;
+  }
+}
+
+async function loadKeyStatus(){
+  const s=await fetch('/api/keystatus').then(r=>r.json()).catch(()=>null);
+  const badge=document.getElementById('activeKeyBadge');
+  if(!s||!badge)return;
+  const labels=s.filled.map((f,i)=>{
+    const num=i+1, isActive=i===s.activeIndex;
+    if(!f)return`Key ${num}: <span style="color:var(--muted)">kosong</span>`;
+    return isActive?`Key ${num}: <span style="color:var(--green2)">● aktif sekarang</span>`:`Key ${num}: <span style="color:var(--muted)">tersedia</span>`;
+  });
+  badge.innerHTML='<b>Status Key:</b><br>'+labels.join('<br>');
+}
+
+function flash(id,msg){const el=document.getElementById(id);el.textContent=msg;setTimeout(()=>el.textContent='',3000);}
+function x(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function ft(iso){try{return new Date(iso).toLocaleString('id-ID',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}catch(e){return''}}
+init();
+</script>
+</body>
+</html>
