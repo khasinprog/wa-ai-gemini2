@@ -6,8 +6,24 @@ const fs         = require('fs');
 const path       = require('path');
 const cors       = require('cors');
 const pino       = require('pino');
+const crypto     = require('crypto');
 
 require('dotenv').config();
+
+// Auto-generate ADMIN_PASSWORD if missing
+if (!process.env.ADMIN_PASSWORD) {
+  const generatedPassword = crypto.randomBytes(6).toString('hex');
+  process.env.ADMIN_PASSWORD = generatedPassword;
+  const envPath = path.join(__dirname, '.env');
+  fs.appendFileSync(envPath, `\nADMIN_PASSWORD=${generatedPassword}\n`);
+  console.log('\n\x1b[33m========================================================\x1b[0m');
+  console.log('\x1b[31m[KEAMANAN]\x1b[0m \x1b[33mPassword Admin untuk Web Dashboard dibuat otomatis!\x1b[0m');
+  console.log(`\x1b[32mPASSWORD: ${generatedPassword}\x1b[0m`);
+  console.log('\x1b[33mHarap catat password ini. Anda bisa mengubahnya di file .env\x1b[0m');
+  console.log('\x1b[33m========================================================\n\x1b[0m');
+}
+
+const SERVER_AUTH_TOKEN = crypto.randomBytes(32).toString('hex');
 
 let makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion;
 
@@ -23,6 +39,16 @@ const app    = express();
 const server = http.createServer(app);
 const io     = new Server(server, { cors: { origin: '*' } });
 
+// Auth middleware for Socket.io
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+  if (token === SERVER_AUTH_TOKEN) {
+    next();
+  } else {
+    next(new Error("Unauthorized"));
+  }
+});
+
 app.use(cors());
 app.use(express.json({limit: '10mb'}));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -35,6 +61,25 @@ const AUTH_DIR = path.join(DATA_DIR, 'auth');
 const IMAGES_DIR = path.join(DATA_DIR, 'images');
 
 app.use('/images', express.static(IMAGES_DIR));
+
+// Endpoint Login
+app.post('/api/login', (req, res) => {
+  const { password } = req.body;
+  if (password === process.env.ADMIN_PASSWORD) {
+    res.json({ token: SERVER_AUTH_TOKEN });
+  } else {
+    res.status(401).json({ error: 'Password salah' });
+  }
+});
+
+// Middleware auth untuk semua rute API setelah login
+app.use('/api', (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || authHeader !== `Bearer ${SERVER_AUTH_TOKEN}`) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+  }
+  next();
+});
 
 // Buffer pesan per pengirim: kalau customer kirim beberapa bubble berurutan
 // dalam waktu singkat (misal "Halo, mau tanya X" lalu "cek harga" beberapa
@@ -128,7 +173,13 @@ function isOpHour() {
   const [sh, sm] = settings.opHours.start.split(':').map(Number);
   const [eh, em] = settings.opHours.end.split(':').map(Number);
   const cur = now.getHours() * 60 + now.getMinutes();
-  return cur >= sh * 60 + sm && cur <= eh * 60 + em;
+  const start = sh * 60 + sm;
+  const end = eh * 60 + em;
+  if (start <= end) {
+    return cur >= start && cur <= end;
+  }
+  // rentang melewati tengah malam
+  return cur >= start || cur <= end;
 }
 
 function isWhitelisted(num) {
@@ -351,6 +402,7 @@ function extractOrder(replyText, fromJid) {
       // 5 menit sudah sangat cukup untuk menangkal duplikat dari chat beruntun/AI error).
       const isDuplicate = orders.some(o => 
         o.jid === fromJid && 
+        o.produk === order.produk &&
         (Date.now() - new Date(o.timestamp).getTime() < 300000)
       );
       
@@ -427,7 +479,8 @@ async function aiReply(message, name, history, signal) {
 
 async function retryFailedMessages() {
   if (!settings.autoReply) return;
-  const failedEntries = messages.filter(m => !m.replied);
+  const nowTime = Date.now();
+  const failedEntries = messages.filter(m => !m.replied && (nowTime - new Date(m.timestamp).getTime() < 7200000));
   if (!failedEntries.length) return;
 
   console.log(`♻️ Mencoba membalas ulang ${failedEntries.length} pesan yang tertunda...`);
@@ -437,6 +490,7 @@ async function retryFailedMessages() {
     const nextTask = prevTask.then(async () => {
       // Pastikan belum dibalas manual saat antre
       if (entry.replied) return;
+      if (!isOpHour() || !isWhitelisted(entry.from)) return;
 
       const history = messages.filter(m => m.from === entry.from && m.id !== entry.id).slice(0, 8).reverse();
       let reply = await aiReply(entry.body, entry.senderName, history);
@@ -448,10 +502,37 @@ async function retryFailedMessages() {
          await sleep(2000); 
          try { await sock.sendPresenceUpdate('paused', entry.from); } catch(e) {}
          
-         await sock.sendMessage(entry.from, { text: reply });
+         let cleanReply = reply;
+         const imgMatches = [...reply.matchAll(/\[KIRIM_GAMBAR:(.*?)\]/gi)];
+         const productsToImage = [];
+         for (const match of imgMatches) {
+           productsToImage.push(match[1].trim());
+           cleanReply = cleanReply.replace(match[0], '').trim();
+         }
+
+         await sock.sendMessage(entry.from, { text: cleanReply });
+         
+         for (const productToImage of productsToImage) {
+           if (settings.productImages && settings.productImages[productToImage]) {
+             for (const filename of settings.productImages[productToImage]) {
+               if (filename) {
+                  const imgPath = path.join(IMAGES_DIR, filename);
+                  if (fs.existsSync(imgPath)) {
+                    try {
+                      const imgBuffer = fs.readFileSync(imgPath);
+                      const ext = filename.split('.').pop().toLowerCase();
+                      const mimetype = ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg');
+                      await sock.sendMessage(entry.from, { image: imgBuffer, mimetype: mimetype });
+                    } catch(e) { console.error('Gagal kirim gambar retry:', e); }
+                  }
+               }
+             }
+           }
+         }
+
          entry.replied = true;
-         entry.aiReply = reply;
-         save(MSG_FILE, messages.slice(-300));
+         entry.aiReply = cleanReply;
+         save(MSG_FILE, messages);
          io.emit('message_updated', entry);
          console.log(`🤖 AI (Retry) -> ${entry.from}: ${reply}`);
       }
@@ -551,7 +632,8 @@ async function initWA() {
 
       // 1. Munculkan langsung di dashboard dan history
       messages.unshift(entry);
-      save(MSG_FILE, messages.slice(-300));
+      if (messages.length > 300) messages = messages.slice(0, 300);
+      save(MSG_FILE, messages);
       io.emit('new_message', entry);
 
       // 2. Masukkan proses AI ke dalam antrean (queue) khusus user ini
@@ -592,7 +674,7 @@ async function initWA() {
                console.log(`⚠️ Pesan untuk ${senderName} batal dikirim karena di-preempt saat delay.`);
                entry.replied = true;
                entry.aiReply = '(Dibatalkan karena pesan susulan)';
-               save(MSG_FILE, messages.slice(-300));
+               save(MSG_FILE, messages);
                return; 
             }
 
@@ -603,26 +685,30 @@ async function initWA() {
 
             // Cek tag [KIRIM_GAMBAR:Nama Produk]
             let cleanReply = reply;
-            const imgMatch = reply.match(/\[KIRIM_GAMBAR:(.*?)\]/i);
-            let productToImage = null;
-            if (imgMatch) {
-              productToImage = imgMatch[1].trim();
-              cleanReply = reply.replace(imgMatch[0], '').trim();
+            const imgMatches = [...reply.matchAll(/\[KIRIM_GAMBAR:(.*?)\]/gi)];
+            const productsToImage = [];
+            for (const match of imgMatches) {
+              productsToImage.push(match[1].trim());
+              cleanReply = cleanReply.replace(match[0], '').trim();
             }
 
             await sock.sendMessage(from, { text: cleanReply }, { quoted: quotedMsg });
             
             // Kirim gambar jika diminta dan tersedia
-            if (productToImage && settings.productImages && settings.productImages[productToImage]) {
-              for (const filename of settings.productImages[productToImage]) {
-                if (filename) {
-                   const imgPath = path.join(IMAGES_DIR, filename);
-                   if (fs.existsSync(imgPath)) {
-                     try {
-                       const imgBuffer = fs.readFileSync(imgPath);
-                       await sock.sendMessage(from, { image: imgBuffer });
-                     } catch(e) { console.error('Gagal kirim gambar:', e); }
-                   }
+            for (const productToImage of productsToImage) {
+              if (settings.productImages && settings.productImages[productToImage]) {
+                for (const filename of settings.productImages[productToImage]) {
+                  if (filename) {
+                     const imgPath = path.join(IMAGES_DIR, filename);
+                     if (fs.existsSync(imgPath)) {
+                       try {
+                         const imgBuffer = fs.readFileSync(imgPath);
+                         const ext = filename.split('.').pop().toLowerCase();
+                         const mimetype = ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg');
+                         await sock.sendMessage(from, { image: imgBuffer, mimetype: mimetype });
+                       } catch(e) { console.error('Gagal kirim gambar:', e); }
+                     }
+                  }
                 }
               }
             }
@@ -630,7 +716,7 @@ async function initWA() {
             // Update entry dengan balasan AI
             entry.replied = true; 
             entry.aiReply = cleanReply;
-            save(MSG_FILE, messages.slice(-300));
+            save(MSG_FILE, messages);
             io.emit('message_updated', entry);
             console.log(`🤖 AI (delay ${Math.round(delayMs/1000)}s): ${cleanReply}`);
             
@@ -643,7 +729,7 @@ async function initWA() {
                console.log(`⚠️ Proses fetch untuk ${senderName} dibatalkan karena ada pesan susulan.`);
                entry.replied = true;
                entry.aiReply = '(Dibatalkan karena pesan susulan)';
-               save(MSG_FILE, messages.slice(-300));
+               save(MSG_FILE, messages);
             } else {
               console.log('⚠️ AI tidak membalas (cek error di atas atau quota)');
             }
@@ -669,7 +755,7 @@ async function initWA() {
             if (entryToUpdate) {
               entryToUpdate.replied = true;
               entryToUpdate.aiReply = '(Dibalas manual oleh Admin)';
-              save(MSG_FILE, messages.slice(-300));
+              save(MSG_FILE, messages);
               io.emit('message_updated', entryToUpdate);
             }
             continue;
