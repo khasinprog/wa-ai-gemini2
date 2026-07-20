@@ -6,24 +6,8 @@ const fs         = require('fs');
 const path       = require('path');
 const cors       = require('cors');
 const pino       = require('pino');
-const crypto     = require('crypto');
 
 require('dotenv').config();
-
-// Auto-generate ADMIN_PASSWORD if missing
-if (!process.env.ADMIN_PASSWORD) {
-  const generatedPassword = crypto.randomBytes(6).toString('hex');
-  process.env.ADMIN_PASSWORD = generatedPassword;
-  const envPath = path.join(__dirname, '.env');
-  fs.appendFileSync(envPath, `\nADMIN_PASSWORD=${generatedPassword}\n`);
-  console.log('\n\x1b[33m========================================================\x1b[0m');
-  console.log('\x1b[31m[KEAMANAN]\x1b[0m \x1b[33mPassword Admin untuk Web Dashboard dibuat otomatis!\x1b[0m');
-  console.log(`\x1b[32mPASSWORD: ${generatedPassword}\x1b[0m`);
-  console.log('\x1b[33mHarap catat password ini. Anda bisa mengubahnya di file .env\x1b[0m');
-  console.log('\x1b[33m========================================================\n\x1b[0m');
-}
-
-const SERVER_AUTH_TOKEN = crypto.randomBytes(32).toString('hex');
 
 let makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion;
 
@@ -39,16 +23,6 @@ const app    = express();
 const server = http.createServer(app);
 const io     = new Server(server, { cors: { origin: '*' } });
 
-// Auth middleware for Socket.io
-io.use((socket, next) => {
-  const token = socket.handshake.auth.token;
-  if (token === SERVER_AUTH_TOKEN) {
-    next();
-  } else {
-    next(new Error("Unauthorized"));
-  }
-});
-
 app.use(cors());
 app.use(express.json({limit: '10mb'}));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -61,25 +35,6 @@ const AUTH_DIR = path.join(DATA_DIR, 'auth');
 const IMAGES_DIR = path.join(DATA_DIR, 'images');
 
 app.use('/images', express.static(IMAGES_DIR));
-
-// Endpoint Login
-app.post('/api/login', (req, res) => {
-  const { password } = req.body;
-  if (password === process.env.ADMIN_PASSWORD) {
-    res.json({ token: SERVER_AUTH_TOKEN });
-  } else {
-    res.status(401).json({ error: 'Password salah' });
-  }
-});
-
-// Middleware auth untuk semua rute API setelah login
-app.use('/api', (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || authHeader !== `Bearer ${SERVER_AUTH_TOKEN}`) {
-    return res.status(401).json({ error: 'Unauthorized: Invalid token' });
-  }
-  next();
-});
 
 // Buffer pesan per pengirim: kalau customer kirim beberapa bubble berurutan
 // dalam waktu singkat (misal "Halo, mau tanya X" lalu "cek harga" beberapa
@@ -103,7 +58,7 @@ const DEF = {
   whitelist: [],
   knowledgeBase: '',
   followUp: '',
-  modelName: 'gemini-2.0-flash',
+  modelName: 'gemini-2.5-flash',
   temperature: 0.7,
   adminNumber: '085210127796', // nomor superadmin - kirim on/off ke nomor bot untuk kontrol auto-reply
   debounceSeconds: 6, // tunggu berapa detik sejak pesan terakhir sebelum digabung & diproses AI
@@ -122,59 +77,48 @@ try { if (fs.existsSync(ORDER_FILE)) orders  = JSON.parse(fs.readFileSync(ORDER_
 
 const save = (file, data) => { try { fs.writeFileSync(file, JSON.stringify(data, null, 2)); } catch(e) {} };
 
-// ── Multi API Key (rotasi dinamis key Gemini) ────────────────────
-// Tambah key cukup di .env: GEMINI_API_KEY_1, GEMINI_API_KEY_2, dst.
-// Tidak perlu ubah kode / frontend — otomatis terbaca semua.
-let activeKeyIndex = 0;
-
-// ── Rotasi key sequential sederhana ─────────────────────────────
-// Logika: Key 1 → 2 → 3 ... → N → (semua habis) → istirahat 3 menit → mulai lagi
-let seqKeyIndex = 0;         // posisi key saat ini di array valid keys
-let cycleRestUntil = 0;      // timestamp ms sampai kapan sistem istirahat
-const CYCLE_REST_MS = 3 * 60 * 1000; // 3 menit istirahat setelah semua key habis
-
-function isInCycleRest() {
-  return cycleRestUntil > 0 && Date.now() < cycleRestUntil;
-}
-
+// ── Multi API Key (rotasi 3 key Gemini) ──────────────────────────
+// Urutan: key1 -> key2 -> key3 -> key1 -> ...
+// Pindah ke key berikutnya kalau key yang aktif gagal terus setelah MAX_RETRY percobaan.
+let activeKeyIndex = 0; // 0 = key1, 1 = key2, 2 = key3
 
 function getApiKeys() {
-  const keys = [];
-  let i = 1;
-  while (true) {
-    const val = process.env[`GEMINI_API_KEY_${i}`];
-    if (val === undefined) break;
-    keys.push(val.trim());
-    i++;
-  }
-  if (keys.length === 0 && process.env.GEMINI_API_KEY) {
-    keys.push(process.env.GEMINI_API_KEY.trim());
-  }
-  return keys;
+  return [
+    process.env.GEMINI_API_KEY_1 || '',
+    process.env.GEMINI_API_KEY_2 || '',
+    process.env.GEMINI_API_KEY_3 || '',
+  ];
 }
 
-
-
-function getKeyStatus(idx) {
-  if (isInCycleRest()) return idx === seqKeyIndex ? 'quota' : 'standby';
-  return idx === seqKeyIndex ? 'active' : 'standby';
-}
-
-function emitKeyStatuses() {
+function getActiveKey() {
   const keys = getApiKeys();
-  const payload = {
-    keys: keys.map((k, i) => ({
-      slot: i + 1,
-      filled: !!(k && k.length >= 10),
-      status: getKeyStatus(i),
-      cooldownUntil: isInCycleRest() ? cycleRestUntil : 0,
-    })),
-    log: [],
-  };
-  io.emit('key_status_update', payload);
+  // Lewati slot yang kosong, cari key valid mulai dari activeKeyIndex
+  for (let i = 0; i < keys.length; i++) {
+    const idx = (activeKeyIndex + i) % keys.length;
+    if (keys[idx] && keys[idx].length >= 10) {
+      activeKeyIndex = idx;
+      return { key: keys[idx], index: idx };
+    }
+  }
+  return { key: '', index: -1 };
 }
 
-
+function rotateToNextKey() {
+  const keys = getApiKeys();
+  const filledCount = keys.filter(k => k && k.length >= 10).length;
+  if (filledCount <= 1) return false; // gak ada key lain buat dipindah
+  const prevIndex = activeKeyIndex;
+  for (let i = 1; i <= keys.length; i++) {
+    const idx = (activeKeyIndex + i) % keys.length;
+    if (keys[idx] && keys[idx].length >= 10) {
+      activeKeyIndex = idx;
+      break;
+    }
+  }
+  console.log(`🔄 Rotasi API Key: dari Key ${prevIndex + 1} ke Key ${activeKeyIndex + 1}`);
+  io.emit('key_rotated', { from: prevIndex + 1, to: activeKeyIndex + 1 });
+  return true;
+}
 
 let waStatus = 'disconnected', qrData = null, sock = null;
 
@@ -184,13 +128,7 @@ function isOpHour() {
   const [sh, sm] = settings.opHours.start.split(':').map(Number);
   const [eh, em] = settings.opHours.end.split(':').map(Number);
   const cur = now.getHours() * 60 + now.getMinutes();
-  const start = sh * 60 + sm;
-  const end = eh * 60 + em;
-  if (start <= end) {
-    return cur >= start && cur <= end;
-  }
-  // rentang melewati tengah malam
-  return cur >= start || cur <= end;
+  return cur >= sh * 60 + sm && cur <= eh * 60 + em;
 }
 
 function isWhitelisted(num) {
@@ -331,9 +269,12 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 
-// Panggil Gemini REST API langsung dengan key tertentu
-async function callGeminiDirect(key, keySlot, message, name, history, signal) {
-  const model = settings.modelName || 'gemini-2.0-flash';
+// Satu kali panggilan ke Gemini REST API (pakai key yang sedang aktif dari rotasi)
+async function callGemini(message, name, history, signal) {
+  const { key, index } = getActiveKey();
+  if (!key) return { ok: false, fatal: true, error: 'Belum ada API key yang diisi' };
+
+  const model = settings.modelName || 'gemini-2.5-flash';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
   const contents = [];
@@ -364,7 +305,7 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal) {
     });
   } catch (e) {
     if (e.name === 'AbortError') return { ok: false, aborted: true };
-    return { ok: false, error: e.message };
+    return { ok: false, error: e.message, keyIndex: index };
   }
 
   if (!res.ok) {
@@ -373,19 +314,19 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal) {
       const errData = await res.json();
       msg = errData?.error?.message || msg;
     } catch(e) {}
-    return { ok: false, error: msg };
+    return { ok: false, error: msg, keyIndex: index };
   }
 
   const data = await res.json();
   const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
-  if (!text.trim()) return { ok: false, error: 'Respons kosong dari Gemini' };
+  if (!text.trim()) return { ok: false, error: 'Respons kosong dari Gemini', keyIndex: index };
 
   const usage = data.usageMetadata;
   if (usage) {
-    console.log(`📊 [Token] Key ${keySlot + 1} | Prompt: ${usage.promptTokenCount} | Output: ${usage.candidatesTokenCount}`);
+    console.log(`📊 [Token Usage] Prompt: ${usage.promptTokenCount} | Output: ${usage.candidatesTokenCount} | Total: ${usage.totalTokenCount}`);
   }
 
-  return { ok: true, text: text.trim().replace(/^["'`]+|["'`]+$/g, '').trim() };
+  return { ok: true, text: text.trim().replace(/^["'`]+|["'`]+$/g, '').trim(), keyIndex: index };
 }
 
 function extractOrder(replyText, fromJid) {
@@ -410,7 +351,6 @@ function extractOrder(replyText, fromJid) {
       // 5 menit sudah sangat cukup untuk menangkal duplikat dari chat beruntun/AI error).
       const isDuplicate = orders.some(o => 
         o.jid === fromJid && 
-        o.produk === order.produk &&
         (Date.now() - new Date(o.timestamp).getTime() < 300000)
       );
       
@@ -431,72 +371,63 @@ function extractOrder(replyText, fromJid) {
   return cleanReply;
 }
 
-// ── Rotasi key sequential: coba satu per satu tanpa nunggu ───────
+// ── Panggil Gemini dengan retry otomatis 3x per key, lalu rotasi key kalau masih gagal ──
 async function aiReply(message, name, history, signal) {
-  // Kalau sedang istirahat, return null — pesan akan dicoba ulang oleh retryFailedMessages
-  if (isInCycleRest()) {
-    const sisaDetik = Math.ceil((cycleRestUntil - Date.now()) / 1000);
-    console.log(`⏸️ AI sedang istirahat (sisa ${sisaDetik}s), pesan diqueue untuk retry`);
-    return null;
-  }
+  const MAX_RETRY = 3;          // percobaan per key sebelum dianggap "habis"/bermasalah
+  const RETRY_DELAY_MS = 3000;
+  const totalKeys = getApiKeys().filter(k => k && k.length >= 10).length;
+  const MAX_KEY_SWITCH = Math.max(totalKeys, 1); // jangan berputar lebih dari jumlah key yang ada
 
-  const allKeys = getApiKeys();
-  const validKeys = allKeys.map((k, i) => ({ key: k, slot: i })).filter(x => x.key && x.key.length >= 10);
+  for (let keyTry = 1; keyTry <= MAX_KEY_SWITCH; keyTry++) {
+    let lastError = null;
 
-  if (validKeys.length === 0) {
-    console.error('❌ Tidak ada API key yang valid di .env');
-    return null;
-  }
+    for (let attempt = 1; attempt <= MAX_RETRY; attempt++) {
+      try {
+        const result = await callGemini(message, name, history, signal);
 
-  const n = validKeys.length;
+        if (result.ok) return result.text;
+        if (result.aborted) return null; // diam-diam berhenti jika dibatalkan
 
-  // Coba setiap key satu kali, mulai dari seqKeyIndex
-  for (let tried = 0; tried < n; tried++) {
-    if (signal?.aborted) return null;
-    if (isInCycleRest()) return null;
+        if (result.fatal) {
+          console.error('Gemini error (fatal):', result.error);
+          return null;
+        }
 
-    const pos = (seqKeyIndex + tried) % n;
-    const { key, slot } = validKeys[pos];
+        lastError = result.error;
+        console.error(`Gemini error [Key ${result.keyIndex + 1}] (percobaan ${attempt}/${MAX_RETRY}):`, result.error);
 
-    // Update indikator dashboard
-    activeKeyIndex = slot;
-    emitKeyStatuses();
-    console.log(`🔑 Mencoba Key ${slot + 1}...`);
-
-    const result = await callGeminiDirect(key, slot, message, name, history, signal);
-
-    if (result.ok) {
-      seqKeyIndex = pos; // pertahankan di key yang terakhir berhasil
-      return result.text;
+        if (attempt < MAX_RETRY) {
+          console.log(`Mencoba ulang dalam ${RETRY_DELAY_MS / 1000} detik...`);
+          await sleep(RETRY_DELAY_MS);
+          continue;
+        }
+        // Sudah 3x gagal pakai key ini -> lanjut ke rotasi key di bawah
+      } catch(e) {
+        lastError = e.message;
+        console.error(`Gemini fetch error (percobaan ${attempt}/${MAX_RETRY}):`, e.message);
+        if (attempt < MAX_RETRY) {
+          await sleep(RETRY_DELAY_MS);
+          continue;
+        }
+      }
     }
-    if (result.aborted) return null;
 
-    console.error(`❌ Key ${slot + 1} gagal: ${result.error?.slice(0, 120)}`);
-    // Langsung lanjut ke key berikutnya, tanpa nunggu
+    // Sampai sini berarti key yang aktif sudah gagal MAX_RETRY kali (atau error non-retryable).
+    // Kalau ini error quota/limit, atau memang sudah mentok retry - coba pindah ke key lain.
+    if (keyTry < MAX_KEY_SWITCH) {
+      const switched = rotateToNextKey();
+      if (!switched) break; // gak ada key lain, berhenti
+      console.log(`⏭️  Lanjut coba dengan Key ${activeKeyIndex + 1}...`);
+    } else {
+      console.error(`❌ Semua API key (${totalKeys}) sudah dicoba dan gagal. Terakhir:`, lastError);
+    }
   }
-
-  // Semua key sudah dicoba dan gagal → masuk rest period
-  seqKeyIndex = 0; // reset ke Key 1 untuk siklus berikutnya
-  cycleRestUntil = Date.now() + CYCLE_REST_MS;
-  console.warn(`⏸️ Semua ${n} key sudah dicoba habis → istirahat ${CYCLE_REST_MS / 60000} menit, lanjut dari Key 1`);
-  io.emit('cycle_rest', { restUntil: cycleRestUntil });
-  emitKeyStatuses();
   return null;
 }
 
 async function retryFailedMessages() {
   if (!settings.autoReply) return;
-
-  // Kalau sedang istirahat, skip — tunggu rest selesai
-  if (isInCycleRest()) {
-    const sisaDetik = Math.ceil((cycleRestUntil - Date.now()) / 1000);
-    console.log(`⏸️ Retry ditunda — sistem istirahat (sisa ${sisaDetik}s)`);
-    return;
-  }
-
-  const MAX_RETRY_COUNT = 5; // maksimal 5 kali coba, lalu berhenti agar tidak bakar quota
-  const nowTime = Date.now();
-  const failedEntries = messages.filter(m => !m.replied && (nowTime - new Date(m.timestamp).getTime() < 7200000) && (m.retryCount || 0) < MAX_RETRY_COUNT);
+  const failedEntries = messages.filter(m => !m.replied);
   if (!failedEntries.length) return;
 
   console.log(`♻️ Mencoba membalas ulang ${failedEntries.length} pesan yang tertunda...`);
@@ -506,12 +437,8 @@ async function retryFailedMessages() {
     const nextTask = prevTask.then(async () => {
       // Pastikan belum dibalas manual saat antre
       if (entry.replied) return;
-      if (!isOpHour() || !isWhitelisted(entry.from)) return;
 
       const history = messages.filter(m => m.from === entry.from && m.id !== entry.id).slice(0, 8).reverse();
-      // Tambah hitungan retry
-      entry.retryCount = (entry.retryCount || 0) + 1;
-
       let reply = await aiReply(entry.body, entry.senderName, history);
       
       if (reply) {
@@ -521,48 +448,12 @@ async function retryFailedMessages() {
          await sleep(2000); 
          try { await sock.sendPresenceUpdate('paused', entry.from); } catch(e) {}
          
-         let cleanReply = reply;
-         const imgMatches = [...reply.matchAll(/\[KIRIM_GAMBAR:(.*?)\]/gi)];
-         const productsToImage = [];
-         for (const match of imgMatches) {
-           productsToImage.push(match[1].trim());
-           cleanReply = cleanReply.replace(match[0], '').trim();
-         }
-
-         await sock.sendMessage(entry.from, { text: cleanReply });
-         
-         for (const productToImage of productsToImage) {
-           if (settings.productImages && settings.productImages[productToImage]) {
-             for (const filename of settings.productImages[productToImage]) {
-               if (filename) {
-                  const imgPath = path.join(IMAGES_DIR, filename);
-                  if (fs.existsSync(imgPath)) {
-                    try {
-                      const imgBuffer = fs.readFileSync(imgPath);
-                      const ext = filename.split('.').pop().toLowerCase();
-                      const mimetype = ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg');
-                      await sock.sendMessage(entry.from, { image: imgBuffer, mimetype: mimetype });
-                    } catch(e) { console.error('Gagal kirim gambar retry:', e); }
-                  }
-               }
-             }
-           }
-         }
-
+         await sock.sendMessage(entry.from, { text: reply });
          entry.replied = true;
-         entry.aiReply = cleanReply;
-         save(MSG_FILE, messages);
+         entry.aiReply = reply;
+         save(MSG_FILE, messages.slice(-300));
          io.emit('message_updated', entry);
          console.log(`🤖 AI (Retry) -> ${entry.from}: ${reply}`);
-      } else if (entry.retryCount >= MAX_RETRY_COUNT) {
-        // Sudah MAX_RETRY_COUNT kali gagal, hentikan retry agar tidak bakar quota
-        entry.replied = true;
-        entry.aiReply = '(gagal setelah 5 percobaan - quota habis)';
-        save(MSG_FILE, messages);
-        console.warn(`⚠️ Pesan dari ${entry.from} dihentikan setelah ${MAX_RETRY_COUNT}x gagal`);
-      } else {
-        // Belum sampai limit, simpan retryCount yang sudah diupdate
-        save(MSG_FILE, messages);
       }
     }).catch(e => console.error('Retry error:', e.message));
     
@@ -660,8 +551,7 @@ async function initWA() {
 
       // 1. Munculkan langsung di dashboard dan history
       messages.unshift(entry);
-      if (messages.length > 300) messages = messages.slice(0, 300);
-      save(MSG_FILE, messages);
+      save(MSG_FILE, messages.slice(-300));
       io.emit('new_message', entry);
 
       // 2. Masukkan proses AI ke dalam antrean (queue) khusus user ini
@@ -702,7 +592,7 @@ async function initWA() {
                console.log(`⚠️ Pesan untuk ${senderName} batal dikirim karena di-preempt saat delay.`);
                entry.replied = true;
                entry.aiReply = '(Dibatalkan karena pesan susulan)';
-               save(MSG_FILE, messages);
+               save(MSG_FILE, messages.slice(-300));
                return; 
             }
 
@@ -713,30 +603,26 @@ async function initWA() {
 
             // Cek tag [KIRIM_GAMBAR:Nama Produk]
             let cleanReply = reply;
-            const imgMatches = [...reply.matchAll(/\[KIRIM_GAMBAR:(.*?)\]/gi)];
-            const productsToImage = [];
-            for (const match of imgMatches) {
-              productsToImage.push(match[1].trim());
-              cleanReply = cleanReply.replace(match[0], '').trim();
+            const imgMatch = reply.match(/\[KIRIM_GAMBAR:(.*?)\]/i);
+            let productToImage = null;
+            if (imgMatch) {
+              productToImage = imgMatch[1].trim();
+              cleanReply = reply.replace(imgMatch[0], '').trim();
             }
 
             await sock.sendMessage(from, { text: cleanReply }, { quoted: quotedMsg });
             
             // Kirim gambar jika diminta dan tersedia
-            for (const productToImage of productsToImage) {
-              if (settings.productImages && settings.productImages[productToImage]) {
-                for (const filename of settings.productImages[productToImage]) {
-                  if (filename) {
-                     const imgPath = path.join(IMAGES_DIR, filename);
-                     if (fs.existsSync(imgPath)) {
-                       try {
-                         const imgBuffer = fs.readFileSync(imgPath);
-                         const ext = filename.split('.').pop().toLowerCase();
-                         const mimetype = ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg');
-                         await sock.sendMessage(from, { image: imgBuffer, mimetype: mimetype });
-                       } catch(e) { console.error('Gagal kirim gambar:', e); }
-                     }
-                  }
+            if (productToImage && settings.productImages && settings.productImages[productToImage]) {
+              for (const filename of settings.productImages[productToImage]) {
+                if (filename) {
+                   const imgPath = path.join(IMAGES_DIR, filename);
+                   if (fs.existsSync(imgPath)) {
+                     try {
+                       const imgBuffer = fs.readFileSync(imgPath);
+                       await sock.sendMessage(from, { image: imgBuffer });
+                     } catch(e) { console.error('Gagal kirim gambar:', e); }
+                   }
                 }
               }
             }
@@ -744,7 +630,7 @@ async function initWA() {
             // Update entry dengan balasan AI
             entry.replied = true; 
             entry.aiReply = cleanReply;
-            save(MSG_FILE, messages);
+            save(MSG_FILE, messages.slice(-300));
             io.emit('message_updated', entry);
             console.log(`🤖 AI (delay ${Math.round(delayMs/1000)}s): ${cleanReply}`);
             
@@ -757,7 +643,7 @@ async function initWA() {
                console.log(`⚠️ Proses fetch untuk ${senderName} dibatalkan karena ada pesan susulan.`);
                entry.replied = true;
                entry.aiReply = '(Dibatalkan karena pesan susulan)';
-               save(MSG_FILE, messages);
+               save(MSG_FILE, messages.slice(-300));
             } else {
               console.log('⚠️ AI tidak membalas (cek error di atas atau quota)');
             }
@@ -783,7 +669,7 @@ async function initWA() {
             if (entryToUpdate) {
               entryToUpdate.replied = true;
               entryToUpdate.aiReply = '(Dibalas manual oleh Admin)';
-              save(MSG_FILE, messages);
+              save(MSG_FILE, messages.slice(-300));
               io.emit('message_updated', entryToUpdate);
             }
             continue;
@@ -863,13 +749,6 @@ app.get('/api/keystatus', (_, res) => {
   res.json({
     filled: keys.map(k => !!(k && k.length >= 10)),
     activeIndex: activeKeyIndex,
-    statuses: keys.map((k, i) => ({
-      slot: i + 1,
-      filled: !!(k && k.length >= 10),
-      status: getKeyStatus(i),
-      cooldownUntil: isInCycleRest() ? cycleRestUntil : 0,
-    })),
-    log: [],
   });
 });
 
@@ -958,7 +837,7 @@ app.post('/api/format-kb', async (req, res) => {
   const { key, index } = getActiveKey();
   if (!key) return res.status(400).json({ error: 'Belum ada API key yang diisi' });
 
-  const model = settings.modelName || 'gemini-2.0-flash';
+  const model = settings.modelName || 'gemini-2.5-flash';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
   const systemPrompt = `Kamu adalah asisten pembuat database produk. Tugas HANYAMU adalah mengonversi teks mentah yang diberikan user ke dalam format khusus.
@@ -1063,14 +942,14 @@ app.post('/api/savekey', (req, res) => {
   res.json({ ok: true });
 });
 
-// Test koneksi salah satu API key (slot 1/2/..N) - berguna untuk debugging cepat
+// Test koneksi salah satu API key (slot 1/2/3) - berguna untuk debugging cepat
 app.post('/api/testkey', async (req, res) => {
-  const slot = Number(req.body?.slot) || 1; // nomor slot sesuai urutan di .env
+  const slot = Number(req.body?.slot) || 1; // 1, 2, atau 3
   const keys = getApiKeys();
   const key = keys[slot - 1];
   if (!key) return res.json({ ok: false, error: `Key ${slot} belum diisi` });
   try {
-    const model = settings.modelName || 'gemini-2.0-flash';
+    const model = settings.modelName || 'gemini-2.5-flash';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
     const r = await fetch(url, {
       method: 'POST',
@@ -1116,8 +995,8 @@ server.listen(PORT, async () => {
   await loadBaileys();
   initWA();
   
-  // Jalankan pengecekan rutin pesan tertunda setiap 5 menit (dikurangi agar tidak terlalu agresif)
-  setInterval(retryFailedMessages, 5 * 60 * 1000);
+  // Jalankan pengecekan rutin pesan tertunda setiap 2 menit
+  setInterval(retryFailedMessages, 2 * 60 * 1000);
 });
 
 process.on('uncaughtException',  e => console.error('Error:', e.message));
