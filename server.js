@@ -494,8 +494,9 @@ async function retryFailedMessages() {
     return;
   }
 
+  const MAX_RETRY_COUNT = 5; // maksimal 5 kali coba, lalu berhenti agar tidak bakar quota
   const nowTime = Date.now();
-  const failedEntries = messages.filter(m => !m.replied && (nowTime - new Date(m.timestamp).getTime() < 7200000));
+  const failedEntries = messages.filter(m => !m.replied && (nowTime - new Date(m.timestamp).getTime() < 7200000) && (m.retryCount || 0) < MAX_RETRY_COUNT);
   if (!failedEntries.length) return;
 
   console.log(`♻️ Mencoba membalas ulang ${failedEntries.length} pesan yang tertunda...`);
@@ -508,6 +509,9 @@ async function retryFailedMessages() {
       if (!isOpHour() || !isWhitelisted(entry.from)) return;
 
       const history = messages.filter(m => m.from === entry.from && m.id !== entry.id).slice(0, 8).reverse();
+      // Tambah hitungan retry
+      entry.retryCount = (entry.retryCount || 0) + 1;
+
       let reply = await aiReply(entry.body, entry.senderName, history);
       
       if (reply) {
@@ -550,6 +554,15 @@ async function retryFailedMessages() {
          save(MSG_FILE, messages);
          io.emit('message_updated', entry);
          console.log(`🤖 AI (Retry) -> ${entry.from}: ${reply}`);
+      } else if (entry.retryCount >= MAX_RETRY_COUNT) {
+        // Sudah MAX_RETRY_COUNT kali gagal, hentikan retry agar tidak bakar quota
+        entry.replied = true;
+        entry.aiReply = '(gagal setelah 5 percobaan - quota habis)';
+        save(MSG_FILE, messages);
+        console.warn(`⚠️ Pesan dari ${entry.from} dihentikan setelah ${MAX_RETRY_COUNT}x gagal`);
+      } else {
+        // Belum sampai limit, simpan retryCount yang sudah diupdate
+        save(MSG_FILE, messages);
       }
     }).catch(e => console.error('Retry error:', e.message));
     
