@@ -150,32 +150,10 @@ function getApiKeys() {
   if (keys.length === 0 && process.env.GEMINI_API_KEY) {
     keys.push(process.env.GEMINI_API_KEY.trim());
   }
-  // Sesuaikan panjang keyCooldowns
-  while (keyCooldowns.length < keys.length) keyCooldowns.push(0);
-  if (keyCooldowns.length > keys.length) keyCooldowns = keyCooldowns.slice(0, keys.length);
   return keys;
 }
 
-function isKeyCooling(idx) {
-  return keyCooldowns[idx] > 0 && Date.now() < keyCooldowns[idx];
-}
 
-function getKeyStatus(idx) {
-  if (idx === activeKeyIndex) return 'active';
-  if (isKeyCooling(idx)) return 'quota';
-  return 'standby';
-}
-
-function addRotationLog(fromIdx, toIdx, reason, waitMs = 0) {
-  keyRotationLog.unshift({
-    time: new Date().toISOString(),
-    from: fromIdx + 1,
-    to: toIdx + 1,
-    reason,   // 'quota' | 'all-cooling-wait' | 'error'
-    waitMs,
-  });
-  if (keyRotationLog.length > 30) keyRotationLog = keyRotationLog.slice(0, 30);
-}
 
 function getKeyStatus(idx) {
   if (isInCycleRest()) return idx === seqKeyIndex ? 'quota' : 'standby';
