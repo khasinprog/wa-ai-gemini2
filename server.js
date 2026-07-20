@@ -127,27 +127,16 @@ const save = (file, data) => { try { fs.writeFileSync(file, JSON.stringify(data,
 // Tidak perlu ubah kode / frontend — otomatis terbaca semua.
 let activeKeyIndex = 0;
 
-// keyCooldowns[i] = timestamp (ms) kapan cooldown key i berakhir. 0 = tidak cooldown.
-// Lebih akurat dari flag string karena tiap key punya timer sendiri.
-let keyCooldowns = [];
+// ── Rotasi key sequential sederhana ─────────────────────────────
+// Logika: Key 1 → 2 → 3 ... → N → (semua habis) → istirahat 3 menit → mulai lagi
+let seqKeyIndex = 0;         // posisi key saat ini di array valid keys
+let cycleRestUntil = 0;      // timestamp ms sampai kapan sistem istirahat
+const CYCLE_REST_MS = 3 * 60 * 1000; // 3 menit istirahat setelah semua key habis
 
-// Log rotasi: [{time, from, to, reason, waitMs}] — untuk tampilan history di dashboard
-let keyRotationLog = [];
-
-const QUOTA_COOLDOWN_MS = 62000; // 62 detik (sedikit lebih dari 60 agar aman)
-
-// Key yang tidak bisa pakai model saat ini (misal akun baru tidak dapat akses model lama)
-// Di-reset otomatis kalau model berubah
-let keysBannedForModel = new Set();
-let lastBannedModel = '';
-
-function resetBannedKeysIfModelChanged() {
-  const currentModel = settings.modelName || 'gemini-2.5-flash';
-  if (currentModel !== lastBannedModel) {
-    keysBannedForModel.clear();
-    lastBannedModel = currentModel;
-  }
+function isInCycleRest() {
+  return cycleRestUntil > 0 && Date.now() < cycleRestUntil;
 }
+
 
 function getApiKeys() {
   const keys = [];
@@ -188,6 +177,11 @@ function addRotationLog(fromIdx, toIdx, reason, waitMs = 0) {
   if (keyRotationLog.length > 30) keyRotationLog = keyRotationLog.slice(0, 30);
 }
 
+function getKeyStatus(idx) {
+  if (isInCycleRest()) return idx === seqKeyIndex ? 'quota' : 'standby';
+  return idx === seqKeyIndex ? 'active' : 'standby';
+}
+
 function emitKeyStatuses() {
   const keys = getApiKeys();
   const payload = {
@@ -195,69 +189,14 @@ function emitKeyStatuses() {
       slot: i + 1,
       filled: !!(k && k.length >= 10),
       status: getKeyStatus(i),
-      cooldownUntil: keyCooldowns[i] || 0, // timestamp Ms - frontend hitung countdown
+      cooldownUntil: isInCycleRest() ? cycleRestUntil : 0,
     })),
-    log: keyRotationLog,
+    log: [],
   };
   io.emit('key_status_update', payload);
 }
 
-function getActiveKey() {
-  resetBannedKeysIfModelChanged();
-  const keys = getApiKeys();
-  // Cari key valid mulai dari activeKeyIndex, prioritas yang tidak cooling dan tidak banned
-  for (let i = 0; i < keys.length; i++) {
-    const idx = (activeKeyIndex + i) % keys.length;
-    if (keys[idx] && keys[idx].length >= 10 && !isKeyCooling(idx) && !keysBannedForModel.has(idx)) {
-      activeKeyIndex = idx;
-      return { key: keys[idx], index: idx };
-    }
-  }
-  // Semua cooling/banned — return kosong, aiReply akan handle tunggu
-  return { key: '', index: -1 };
-}
 
-function rotateToNextKey(reason = 'quota') {
-  const keys = getApiKeys();
-  const filled = keys.map((k, i) => ({ i, valid: !!(k && k.length >= 10) })).filter(x => x.valid);
-  if (filled.length === 0) return { ok: false };
-
-  const prevIndex = activeKeyIndex;
-
-  // 1. Coba cari key yang tidak cooling dan tidak banned
-  for (let i = 1; i <= keys.length; i++) {
-    const idx = (activeKeyIndex + i) % keys.length;
-    if (keys[idx] && keys[idx].length >= 10 && !isKeyCooling(idx) && !keysBannedForModel.has(idx)) {
-      activeKeyIndex = idx;
-      addRotationLog(prevIndex, activeKeyIndex, reason);
-      console.log(`🔄 Rotasi: Key ${prevIndex + 1} → Key ${activeKeyIndex + 1} (${reason})`);
-      io.emit('key_rotated', { from: prevIndex + 1, to: activeKeyIndex + 1 });
-      emitKeyStatuses();
-      return { ok: true, waitMs: 0 };
-    }
-  }
-
-  // 2. Semua cooling — cari yang paling cepat selesai cooldown
-  let minCooldownUntil = Infinity;
-  let minIdx = -1;
-  for (let i = 1; i <= keys.length; i++) {
-    const idx = (activeKeyIndex + i) % keys.length;
-    if (keys[idx] && keys[idx].length >= 10) {
-      const cd = keyCooldowns[idx] || 0;
-      if (cd < minCooldownUntil) { minCooldownUntil = cd; minIdx = idx; }
-    }
-  }
-
-  if (minIdx === -1) return { ok: false };
-
-  const waitMs = Math.max(0, minCooldownUntil - Date.now()) + 200; // +200ms buffer
-  activeKeyIndex = minIdx;
-  addRotationLog(prevIndex, activeKeyIndex, 'all-cooling-wait', waitMs);
-  console.log(`⏳ Semua key cooling, tunggu ${Math.ceil(waitMs/1000)}s lalu Key ${activeKeyIndex + 1}...`);
-  io.emit('key_rotated', { from: prevIndex + 1, to: activeKeyIndex + 1 });
-  emitKeyStatuses();
-  return { ok: true, waitMs };
-}
 
 let waStatus = 'disconnected', qrData = null, sock = null;
 
@@ -414,11 +353,8 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 
-// Satu kali panggilan ke Gemini REST API (pakai key yang sedang aktif dari rotasi)
-async function callGemini(message, name, history, signal) {
-  const { key, index } = getActiveKey();
-  if (!key) return { ok: false, fatal: true, error: 'Belum ada API key yang diisi' };
-
+// Panggil Gemini REST API langsung dengan key tertentu
+async function callGeminiDirect(key, keySlot, message, name, history, signal) {
   const model = settings.modelName || 'gemini-2.5-flash';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
@@ -450,7 +386,7 @@ async function callGemini(message, name, history, signal) {
     });
   } catch (e) {
     if (e.name === 'AbortError') return { ok: false, aborted: true };
-    return { ok: false, error: e.message, keyIndex: index };
+    return { ok: false, error: e.message };
   }
 
   if (!res.ok) {
@@ -459,25 +395,19 @@ async function callGemini(message, name, history, signal) {
       const errData = await res.json();
       msg = errData?.error?.message || msg;
     } catch(e) {}
-    return { ok: false, error: msg, keyIndex: index };
+    return { ok: false, error: msg };
   }
 
   const data = await res.json();
   const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
-  if (!text.trim()) return { ok: false, error: 'Respons kosong dari Gemini', keyIndex: index };
+  if (!text.trim()) return { ok: false, error: 'Respons kosong dari Gemini' };
 
   const usage = data.usageMetadata;
   if (usage) {
-    console.log(`📊 [Token Usage] Prompt: ${usage.promptTokenCount} | Output: ${usage.candidatesTokenCount} | Total: ${usage.totalTokenCount}`);
+    console.log(`📊 [Token] Key ${keySlot + 1} | Prompt: ${usage.promptTokenCount} | Output: ${usage.candidatesTokenCount}`);
   }
 
-  // Tandai key ini berhasil (pastikan statusnya bersih)
-  if (keyStatuses[index] === 'quota') {
-    keyStatuses[index] = 'standby';
-    emitKeyStatuses();
-  }
-
-  return { ok: true, text: text.trim().replace(/^["'`]+|["'`]+$/g, '').trim(), keyIndex: index };
+  return { ok: true, text: text.trim().replace(/^["'`]+|["'`]+$/g, '').trim() };
 }
 
 function extractOrder(replyText, fromJid) {
@@ -523,131 +453,66 @@ function extractOrder(replyText, fromJid) {
   return cleanReply;
 }
 
-// ── Panggil Gemini dengan retry + rotasi key pintar ──────────────
-// Quota error → catat cooldown timestamp per key, pilih key paling cepat tersedia
-// Semua key cooling → tunggu yang paling cepat selesai (tidak drop pesan)
-// Model unavailable → tandai key sebagai banned untuk model ini, skip permanen
-function isQuotaError(errMsg) {
-  if (!errMsg) return false;
-  const s = String(errMsg).toLowerCase();
-  return s.includes('429') || s.includes('resource_exhausted') || s.includes('quota') || s.includes('rate limit') || s.includes('too many requests');
-}
-
-function isModelUnavailableError(errMsg) {
-  if (!errMsg) return false;
-  const s = String(errMsg).toLowerCase();
-  return s.includes('no longer available') || s.includes('is not found') || s.includes('not supported for generatecontent');
-}
-
+// ── Rotasi key sequential: coba satu per satu tanpa nunggu ───────
 async function aiReply(message, name, history, signal) {
-  const MAX_RETRY = 3;       // retry per key untuk error non-quota
-  const RETRY_DELAY_MS = 3000;
-  const MAX_WAIT_MS = 90000; // maksimal tunggu 90 detik kalau semua cooling
-
-  // Hanya hitung percobaan NYATA ke API (bukan siklus tunggu cooldown)
-  let actualAttempts = 0;
-  const numKeys = getApiKeys().filter(k => k && k.length >= 10).length || 1;
-  const MAX_ACTUAL = numKeys * MAX_RETRY * 3 + 5; // lebih longgar
-
-  while (actualAttempts < MAX_ACTUAL) {
-    if (signal?.aborted) return null;
-
-    // Ambil key yang aktif (yang tidak cooling)
-    const { key, index } = getActiveKey();
-
-    if (!key) {
-      // Semua key sedang cooling — cari yang paling cepat selesai lalu tunggu
-      const rotate = rotateToNextKey('all-cooling-wait');
-      if (!rotate.ok) {
-        console.error('❌ Tidak ada API key yang valid.');
-        return null;
-      }
-      if (rotate.waitMs > 0) {
-        const waitSec = Math.ceil(rotate.waitMs / 1000);
-        const cappedWait = Math.min(rotate.waitMs, MAX_WAIT_MS);
-        console.log(`⏳ Menunggu ${waitSec}s untuk Key ${activeKeyIndex + 1} selesai cooldown...`);
-        emitKeyStatuses();
-        await sleep(cappedWait);
-      }
-      continue; // siklus tunggu TIDAK dihitung sebagai percobaan
-    }
-
-    // Ada key tersedia — coba pakai (dengan retry untuk error non-quota)
-    let lastError = null;
-    let quotaHit = false;
-
-    for (let attempt = 1; attempt <= MAX_RETRY; attempt++) {
-      if (signal?.aborted) return null;
-
-      actualAttempts++; // hitung percobaan nyata di sini
-      try {
-        const result = await callGemini(message, name, history, signal);
-
-        if (result.ok) return result.text;
-        if (result.aborted) return null;
-        if (result.fatal) { console.error('Gemini fatal:', result.error); return null; }
-
-        lastError = result.error;
-        console.error(`Gemini error [Key ${result.keyIndex + 1}] (percobaan ${attempt}/${MAX_RETRY}):`, result.error);
-
-        if (isModelUnavailableError(result.error)) {
-          // Key ini tidak kompatibel dengan model saat ini — tandai permanen, skip tanpa cooldown
-          keysBannedForModel.add(result.keyIndex);
-          console.warn(`🚫 Key ${result.keyIndex + 1} tidak kompatibel dengan model ini → diskip permanen untuk sesi ini`);
-          emitKeyStatuses();
-          break; // langsung rotasi ke key berikutnya tanpa retry
-        }
-
-        if (isQuotaError(result.error)) {
-          // Catat cooldown timestamp untuk key ini
-          keyCooldowns[result.keyIndex] = Date.now() + QUOTA_COOLDOWN_MS;
-          console.warn(`⚠️  Key ${result.keyIndex + 1} kena quota → cooldown ${QUOTA_COOLDOWN_MS/1000}s`);
-          emitKeyStatuses();
-          quotaHit = true;
-          break; // keluar dari retry loop, rotasi di luar
-        }
-
-        if (attempt < MAX_RETRY) {
-          console.log(`Mencoba ulang dalam ${RETRY_DELAY_MS / 1000}s...`);
-          await sleep(RETRY_DELAY_MS);
-        }
-      } catch(e) {
-        lastError = e.message;
-        console.error(`Gemini fetch error (percobaan ${attempt}/${MAX_RETRY}):`, e.message);
-        if (attempt < MAX_RETRY) await sleep(RETRY_DELAY_MS);
-      }
-    }
-
-    if (quotaHit) {
-      // Rotasi ke key berikutnya yang tersedia / tunggu yang paling cepat
-      const rotate = rotateToNextKey('quota');
-      if (!rotate.ok) {
-        console.error('❌ Semua key habis dan tidak bisa rotasi.');
-        return null;
-      }
-      if (rotate.waitMs > 0) {
-        const cappedWait = Math.min(rotate.waitMs, MAX_WAIT_MS);
-        await sleep(cappedWait);
-      }
-    } else if (lastError) {
-      // Error non-quota sudah habis MAX_RETRY — rotasi ke key lain
-      const rotate = rotateToNextKey('error');
-      if (!rotate.ok) break;
-      if (rotate.waitMs > 0) await sleep(Math.min(rotate.waitMs, MAX_WAIT_MS));
-    }
+  // Kalau sedang istirahat, return null — pesan akan dicoba ulang oleh retryFailedMessages
+  if (isInCycleRest()) {
+    const sisaDetik = Math.ceil((cycleRestUntil - Date.now()) / 1000);
+    console.log(`⏸️ AI sedang istirahat (sisa ${sisaDetik}s), pesan diqueue untuk retry`);
+    return null;
   }
 
-  console.error('❌ aiReply menyerah setelah terlalu banyak percobaan.');
+  const allKeys = getApiKeys();
+  const validKeys = allKeys.map((k, i) => ({ key: k, slot: i })).filter(x => x.key && x.key.length >= 10);
+
+  if (validKeys.length === 0) {
+    console.error('❌ Tidak ada API key yang valid di .env');
+    return null;
+  }
+
+  const n = validKeys.length;
+
+  // Coba setiap key satu kali, mulai dari seqKeyIndex
+  for (let tried = 0; tried < n; tried++) {
+    if (signal?.aborted) return null;
+    if (isInCycleRest()) return null;
+
+    const pos = (seqKeyIndex + tried) % n;
+    const { key, slot } = validKeys[pos];
+
+    // Update indikator dashboard
+    activeKeyIndex = slot;
+    emitKeyStatuses();
+    console.log(`🔑 Mencoba Key ${slot + 1}...`);
+
+    const result = await callGeminiDirect(key, slot, message, name, history, signal);
+
+    if (result.ok) {
+      seqKeyIndex = pos; // pertahankan di key yang terakhir berhasil
+      return result.text;
+    }
+    if (result.aborted) return null;
+
+    console.error(`❌ Key ${slot + 1} gagal: ${result.error?.slice(0, 120)}`);
+    // Langsung lanjut ke key berikutnya, tanpa nunggu
+  }
+
+  // Semua key sudah dicoba dan gagal → masuk rest period
+  seqKeyIndex = 0; // reset ke Key 1 untuk siklus berikutnya
+  cycleRestUntil = Date.now() + CYCLE_REST_MS;
+  console.warn(`⏸️ Semua ${n} key sudah dicoba habis → istirahat ${CYCLE_REST_MS / 60000} menit, lanjut dari Key 1`);
+  io.emit('cycle_rest', { restUntil: cycleRestUntil });
+  emitKeyStatuses();
   return null;
 }
 
 async function retryFailedMessages() {
   if (!settings.autoReply) return;
 
-  // Jangan retry kalau semua key sedang cooling — tunggu giliran berikutnya
-  const { key: activeKey } = getActiveKey();
-  if (!activeKey) {
-    console.log('⏸️ Retry ditunda — semua API key sedang cooldown.');
+  // Kalau sedang istirahat, skip — tunggu rest selesai
+  if (isInCycleRest()) {
+    const sisaDetik = Math.ceil((cycleRestUntil - Date.now()) / 1000);
+    console.log(`⏸️ Retry ditunda — sistem istirahat (sisa ${sisaDetik}s)`);
     return;
   }
 
