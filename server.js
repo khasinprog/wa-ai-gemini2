@@ -136,6 +136,19 @@ let keyRotationLog = [];
 
 const QUOTA_COOLDOWN_MS = 62000; // 62 detik (sedikit lebih dari 60 agar aman)
 
+// Key yang tidak bisa pakai model saat ini (misal akun baru tidak dapat akses model lama)
+// Di-reset otomatis kalau model berubah
+let keysBannedForModel = new Set();
+let lastBannedModel = '';
+
+function resetBannedKeysIfModelChanged() {
+  const currentModel = settings.modelName || 'gemini-2.5-flash';
+  if (currentModel !== lastBannedModel) {
+    keysBannedForModel.clear();
+    lastBannedModel = currentModel;
+  }
+}
+
 function getApiKeys() {
   const keys = [];
   let i = 1;
@@ -190,30 +203,31 @@ function emitKeyStatuses() {
 }
 
 function getActiveKey() {
+  resetBannedKeysIfModelChanged();
   const keys = getApiKeys();
-  // Cari key valid mulai dari activeKeyIndex, prioritas yang tidak cooling
+  // Cari key valid mulai dari activeKeyIndex, prioritas yang tidak cooling dan tidak banned
   for (let i = 0; i < keys.length; i++) {
     const idx = (activeKeyIndex + i) % keys.length;
-    if (keys[idx] && keys[idx].length >= 10 && !isKeyCooling(idx)) {
+    if (keys[idx] && keys[idx].length >= 10 && !isKeyCooling(idx) && !keysBannedForModel.has(idx)) {
       activeKeyIndex = idx;
       return { key: keys[idx], index: idx };
     }
   }
-  // Semua cooling — return kosong, aiReply akan handle tunggu
+  // Semua cooling/banned — return kosong, aiReply akan handle tunggu
   return { key: '', index: -1 };
 }
 
 function rotateToNextKey(reason = 'quota') {
   const keys = getApiKeys();
   const filled = keys.map((k, i) => ({ i, valid: !!(k && k.length >= 10) })).filter(x => x.valid);
-  if (filled.length <= 1) return { ok: false };
+  if (filled.length === 0) return { ok: false };
 
   const prevIndex = activeKeyIndex;
 
-  // 1. Coba cari key yang tidak cooling sama sekali
+  // 1. Coba cari key yang tidak cooling dan tidak banned
   for (let i = 1; i <= keys.length; i++) {
     const idx = (activeKeyIndex + i) % keys.length;
-    if (keys[idx] && keys[idx].length >= 10 && !isKeyCooling(idx)) {
+    if (keys[idx] && keys[idx].length >= 10 && !isKeyCooling(idx) && !keysBannedForModel.has(idx)) {
       activeKeyIndex = idx;
       addRotationLog(prevIndex, activeKeyIndex, reason);
       console.log(`🔄 Rotasi: Key ${prevIndex + 1} → Key ${activeKeyIndex + 1} (${reason})`);
@@ -512,10 +526,17 @@ function extractOrder(replyText, fromJid) {
 // ── Panggil Gemini dengan retry + rotasi key pintar ──────────────
 // Quota error → catat cooldown timestamp per key, pilih key paling cepat tersedia
 // Semua key cooling → tunggu yang paling cepat selesai (tidak drop pesan)
+// Model unavailable → tandai key sebagai banned untuk model ini, skip permanen
 function isQuotaError(errMsg) {
   if (!errMsg) return false;
   const s = String(errMsg).toLowerCase();
   return s.includes('429') || s.includes('resource_exhausted') || s.includes('quota') || s.includes('rate limit') || s.includes('too many requests');
+}
+
+function isModelUnavailableError(errMsg) {
+  if (!errMsg) return false;
+  const s = String(errMsg).toLowerCase();
+  return s.includes('no longer available') || s.includes('is not found') || s.includes('not supported for generatecontent');
 }
 
 async function aiReply(message, name, history, signal) {
@@ -523,11 +544,12 @@ async function aiReply(message, name, history, signal) {
   const RETRY_DELAY_MS = 3000;
   const MAX_WAIT_MS = 90000; // maksimal tunggu 90 detik kalau semua cooling
 
-  // Loop tanpa batas putaran — terus coba sampai berhasil atau abort/fatal
-  let totalAttempts = 0;
-  const MAX_TOTAL = getApiKeys().filter(k => k && k.length >= 10).length * MAX_RETRY * 2 + 5;
+  // Hanya hitung percobaan NYATA ke API (bukan siklus tunggu cooldown)
+  let actualAttempts = 0;
+  const numKeys = getApiKeys().filter(k => k && k.length >= 10).length || 1;
+  const MAX_ACTUAL = numKeys * MAX_RETRY * 3 + 5; // lebih longgar
 
-  while (totalAttempts++ < MAX_TOTAL) {
+  while (actualAttempts < MAX_ACTUAL) {
     if (signal?.aborted) return null;
 
     // Ambil key yang aktif (yang tidak cooling)
@@ -547,7 +569,7 @@ async function aiReply(message, name, history, signal) {
         emitKeyStatuses();
         await sleep(cappedWait);
       }
-      continue; // setelah tunggu, loop ulang
+      continue; // siklus tunggu TIDAK dihitung sebagai percobaan
     }
 
     // Ada key tersedia — coba pakai (dengan retry untuk error non-quota)
@@ -557,6 +579,7 @@ async function aiReply(message, name, history, signal) {
     for (let attempt = 1; attempt <= MAX_RETRY; attempt++) {
       if (signal?.aborted) return null;
 
+      actualAttempts++; // hitung percobaan nyata di sini
       try {
         const result = await callGemini(message, name, history, signal);
 
@@ -566,6 +589,14 @@ async function aiReply(message, name, history, signal) {
 
         lastError = result.error;
         console.error(`Gemini error [Key ${result.keyIndex + 1}] (percobaan ${attempt}/${MAX_RETRY}):`, result.error);
+
+        if (isModelUnavailableError(result.error)) {
+          // Key ini tidak kompatibel dengan model saat ini — tandai permanen, skip tanpa cooldown
+          keysBannedForModel.add(result.keyIndex);
+          console.warn(`🚫 Key ${result.keyIndex + 1} tidak kompatibel dengan model ini → diskip permanen untuk sesi ini`);
+          emitKeyStatuses();
+          break; // langsung rotasi ke key berikutnya tanpa retry
+        }
 
         if (isQuotaError(result.error)) {
           // Catat cooldown timestamp untuk key ini
@@ -612,6 +643,14 @@ async function aiReply(message, name, history, signal) {
 
 async function retryFailedMessages() {
   if (!settings.autoReply) return;
+
+  // Jangan retry kalau semua key sedang cooling — tunggu giliran berikutnya
+  const { key: activeKey } = getActiveKey();
+  if (!activeKey) {
+    console.log('⏸️ Retry ditunda — semua API key sedang cooldown.');
+    return;
+  }
+
   const nowTime = Date.now();
   const failedEntries = messages.filter(m => !m.replied && (nowTime - new Date(m.timestamp).getTime() < 7200000));
   if (!failedEntries.length) return;
@@ -1221,8 +1260,8 @@ server.listen(PORT, async () => {
   await loadBaileys();
   initWA();
   
-  // Jalankan pengecekan rutin pesan tertunda setiap 2 menit
-  setInterval(retryFailedMessages, 2 * 60 * 1000);
+  // Jalankan pengecekan rutin pesan tertunda setiap 5 menit (dikurangi agar tidak terlalu agresif)
+  setInterval(retryFailedMessages, 5 * 60 * 1000);
 });
 
 process.on('uncaughtException',  e => console.error('Error:', e.message));
