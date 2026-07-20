@@ -854,9 +854,9 @@ app.get('/api/keystatus', (_, res) => {
       slot: i + 1,
       filled: !!(k && k.length >= 10),
       status: getKeyStatus(i),
-      cooldownUntil: keyCooldowns[i] || 0,
+      cooldownUntil: isInCycleRest() ? cycleRestUntil : 0,
     })),
-    log: keyRotationLog,
+    log: [],
   });
 });
 
