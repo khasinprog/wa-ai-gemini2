@@ -12,6 +12,38 @@
 --radius:8px;}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display:flex}
+/* Key Status Grid */
+.key-status-section{margin-bottom:14px}
+.key-status-title{font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
+.key-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.key-status-card{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--s2);font-size:.75rem;font-weight:500;transition:border-color .2s}
+.key-status-card.active{border-color:#10B981;background:#f0fdf4}
+.key-status-card.quota{border-color:#F59E0B;background:#fffbeb}
+.key-status-card.standby{border-color:var(--border)}
+.key-status-card.empty{opacity:.5}
+.ks-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.ks-dot.active{background:#10B981}
+.ks-dot.quota{background:#F59E0B;animation:pulse-dot 1.2s ease-in-out infinite}
+.ks-dot.standby{background:#94a3b8}
+.ks-dot.empty{background:#cbd5e1}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.3}}
+.ks-label{flex:1;color:var(--text)}
+.ks-badge{font-size:.65rem;font-weight:700;padding:2px 6px;border-radius:10px;flex-shrink:0}
+.ks-badge.active{background:#dcfce7;color:#15803d}
+.ks-badge.quota{background:#fef3c7;color:#b45309}
+.ks-badge.standby{background:var(--s3);color:var(--muted)}
+.ks-badge.empty{background:var(--s3);color:var(--muted)}
+/* Rotation Log */
+.rot-log-section{margin-top:14px}
+.rot-log-title{font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
+.rot-log-list{display:flex;flex-direction:column;gap:4px;max-height:160px;overflow-y:auto}
+.rot-log-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:6px;background:var(--s2);border:1px solid var(--border);font-size:.72rem;}
+.rot-log-item.quota{border-left:3px solid var(--yellow)}
+.rot-log-item.wait{border-left:3px solid var(--blue)}
+.rot-log-item.error{border-left:3px solid var(--red)}
+.rot-log-time{color:var(--muted);flex-shrink:0;font-size:.65rem}
+.rot-log-desc{flex:1;color:var(--text)}
+.rot-log-wait{color:var(--blue);flex-shrink:0;font-size:.65rem}
 .app-layout{display:flex;width:100%;height:100%;}
 .sidebar{width:65px;background:#1b2b4d;color:#fff;display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;white-space:nowrap;transition:width 0.3s ease;z-index:100;position:relative}
 .sidebar:hover{width:260px;}
@@ -129,9 +161,21 @@ input:checked+.slider:before{transform:translateX(18px)}
 .setup-input:focus{border-color:var(--blue);background:var(--s1)}
 .setup-err{font-size:.7rem;color:var(--red);margin-top:8px;min-height:14px;line-height:1.5;word-break:break-word}
 ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:4px}
+#loginOverlay{position:fixed;inset:0;background:rgba(15,23,42,.95);z-index:9999;display:flex;align-items:center;justify-content:center}
 </style>
 </head>
 <body>
+
+<div id="loginOverlay">
+  <div class="setup-box">
+    <div class="setup-ico">🔒</div>
+    <div class="setup-title">Dashboard Terkunci</div>
+    <div class="setup-sub">Masukkan password admin untuk mengakses kontrol panel.</div>
+    <input type="password" id="loginPassword" class="setup-input" placeholder="Password..." onkeypress="if(event.key==='Enter') doLogin()" />
+    <button class="btn btn-primary" style="width:100%;margin-top:10px" onclick="doLogin()">Masuk</button>
+    <div class="setup-err" id="loginErr"></div>
+  </div>
+</div>
 
 <div id="setup">
   <div class="setup-box">
@@ -262,8 +306,9 @@ input:checked+.slider:before{transform:translateX(18px)}
         </div>
         <div class="fg"><label class="lbl">Model Gemini</label>
           <select id="modelName" onchange="patch('modelName',this.value)">
+            <option value="gemini-2.0-flash">gemini-2.0-flash (Kompatibel akun baru)</option>
             <option value="gemini-2.5-flash">gemini-2.5-flash (Rekomendasi)</option>
-            <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (Termurah & tercepat)</option>
+            <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (Termurah &amp; tercepat)</option>
             <option value="gemini-2.5-pro">gemini-2.5-pro (Paling pintar)</option>
             <option value="gemini-3.5-flash">gemini-3.5-flash (Flash terbaru)</option>
           </select>
@@ -346,13 +391,17 @@ Garansi: 6 bulan"></textarea>
       </div>
     </div>
 
-    
-    </div>
-
     <div class="tab-content" id="tab-key" style="flex:1">
       <div class="tab-panel">
-        <div class="ts" style="margin-bottom:12px;line-height:1.6">💡 Isi sampai 3 API Key Gemini. Kalau Key 1 gagal terus (3x percobaan), sistem otomatis pindah ke Key 2, lalu Key 3, lalu balik lagi ke Key 1 — bot tetap bisa balas chat tanpa berhenti.</div>
-        <div id="activeKeyBadge" class="ts" style="margin-bottom:12px;padding:8px 10px;background:var(--s2);border-radius:var(--radius);border:1px solid var(--border)"></div>
+        <div class="ts" style="margin-bottom:12px;line-height:1.6">💡 Rotasi otomatis: kalau satu key kena quota, sistem langsung pindah ke key berikutnya. Key yang kena quota reset otomatis tiap 60 detik.</div>
+
+        <!-- Status Grid 2 Kolom -->
+        <div class="key-status-section">
+          <div class="key-status-title">Status API Key</div>
+          <div class="key-status-grid" id="keyStatusGrid">
+            <div class="key-status-card" style="grid-column:1/-1;justify-content:center;color:var(--muted)">⏳ Memuat status...</div>
+          </div>
+        </div>
 
         <div class="fg"><label class="lbl">API Key 1 (utama)</label>
           <input type="text" id="keyInput1" placeholder="Paste API Key Gemini #1"/>
@@ -374,6 +423,14 @@ Garansi: 6 bulan"></textarea>
 
         <button class="btn btn-green" onclick="saveKey()">💾 Simpan Semua Key</button>
         <div class="setup-err" id="keyErr"></div>
+
+        <!-- Log Rotasi -->
+        <div class="rot-log-section">
+          <div class="rot-log-title">🔄 History Rotasi Key</div>
+          <div class="rot-log-list" id="rotLogList">
+            <div style="color:var(--muted);font-size:.72rem;padding:6px">Belum ada rotasi...</div>
+          </div>
+        </div>
       </div>
 
     </div>
@@ -425,19 +482,76 @@ Garansi: 6 bulan"></textarea>
 </div>
 
 <script>
-const socket=io();
-let allMessages=[],orders=[],contacts={},activeContact=null;
-socket.on('status',setStatus);
-socket.on('qr',showQR);
-socket.on('new_message',msg=>{allMessages.unshift(msg);processContacts();if(activeContact===msg.from)renderChat(msg.from);});
-socket.on('settings_updated',s=>{document.getElementById('arToggle').checked=s.autoReply??true;});
-socket.on('new_order',o=>{orders.unshift(o);renderOrders();});
-socket.on('order_updated',o=>{
-  const idx=orders.findIndex(x=>x.id===o.id);
-  if(idx>-1){orders[idx]=o;renderOrders();}
-});
+// Otentikasi Fetch Override
+const originalFetch = window.fetch;
+window.fetch = async function() {
+  let [resource, config] = arguments;
+  if(typeof resource === 'string' && resource.startsWith('/api/') && resource !== '/api/login') {
+    config = config || {};
+    config.headers = config.headers || {};
+    config.headers['Authorization'] = 'Bearer ' + localStorage.getItem('authToken');
+  }
+  const response = await originalFetch(resource, config);
+  if (response.status === 401 && resource !== '/api/login') {
+    document.getElementById('loginOverlay').style.display = 'flex';
+  }
+  return response;
+};
 
-async function init(){
+async function doLogin() {
+  const pwd = document.getElementById('loginPassword').value;
+  const err = document.getElementById('loginErr');
+  err.textContent = '';
+  try {
+    const res = await originalFetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      localStorage.setItem('authToken', data.token);
+      document.getElementById('loginOverlay').style.display = 'none';
+      initApp();
+    } else {
+      err.textContent = '❌ ' + (data.error || 'Password salah');
+    }
+  } catch (e) {
+    err.textContent = '❌ Koneksi gagal';
+  }
+}
+
+let socket,allMessages=[],orders=[],contacts={},activeContact=null;
+
+async function initApp() {
+  socket = io({ auth: { token: localStorage.getItem('authToken') } });
+  
+  socket.on('connect_error', (err) => {
+    if (err.message === 'Unauthorized') {
+      document.getElementById('loginOverlay').style.display = 'flex';
+    }
+  });
+
+  socket.on('status',setStatus);
+  socket.on('qr',showQR);
+  socket.on('new_message',msg=>{allMessages.unshift(msg);processContacts();if(activeContact===msg.from)renderChat(msg.from);});
+  socket.on('settings_updated',s=>{document.getElementById('arToggle').checked=s.autoReply??true;});
+  socket.on('new_order',o=>{orders.unshift(o);renderOrders();});
+  socket.on('order_updated',o=>{
+    const idx=orders.findIndex(x=>x.id===o.id);
+    if(idx>-1){orders[idx]=o;renderOrders();}
+  });
+  socket.on('key_rotated',({from,to})=>{
+    loadKeyStatus();
+  });
+  socket.on('key_status_update', payload => {
+    // payload bisa berupa array (format lama) atau {keys, log} (format baru)
+    const statuses = Array.isArray(payload) ? payload : payload?.keys;
+    const log = payload?.log;
+    if (statuses) renderKeyStatusGrid(statuses);
+    if (log) renderRotationLog(log);
+  });
+
   const kr=await fetch('/api/haskey').then(r=>r.json()).catch(()=>({ok:false}));
   if(!kr.ok)showSetup();
   const[sr,mr,or,set]=await Promise.all([
@@ -452,11 +566,17 @@ async function init(){
   loadKeyStatus();
 }
 
+if (!localStorage.getItem('authToken')) {
+  document.getElementById('loginOverlay').style.display = 'flex';
+} else {
+  initApp();
+}
+
 function applySettings(s){
   if(!s)return;
   document.getElementById('arToggle').checked=s.autoReply??true;
   document.getElementById('persona').value=s.persona||'';
-  document.getElementById('modelName').value=s.modelName||'gemini-2.5-flash';
+  document.getElementById('modelName').value=s.modelName||'gemini-2.0-flash';
   document.getElementById('lang').value=s.language||'Indonesia';
   document.getElementById('tone').value=s.tone||'Santai';
   document.getElementById('temp').value=s.temperature??0.7;
@@ -670,31 +790,40 @@ async function handleImageUpload(input, productName, slot) {
   if (!input.files || !input.files[0]) return;
   const file = input.files[0];
   
-  // Convert to Base64
   const reader = new FileReader();
-  reader.onload = async (e) => {
-    const base64 = e.target.result;
-    
-    // Show loading
-    const wrap = input.parentElement.querySelector('div:nth-child(2)');
-    wrap.innerHTML = '<div class="spinner"></div>';
-    
-    try {
-      const res = await fetch('/api/upload-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productName, slot, base64 })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+      const base64 = canvas.toDataURL('image/jpeg', 0.9);
       
-      if (!window.productImagesData[productName]) window.productImagesData[productName] = [null, null, null];
-      window.productImagesData[productName][slot] = data.fileName;
-      renderGambarList();
-    } catch (err) {
-      alert('Gagal upload: ' + err.message);
-      renderGambarList();
-    }
+      const wrap = input.parentElement.querySelector('div:nth-child(2)');
+      wrap.innerHTML = '<div class="spinner"></div>';
+      
+      try {
+        const res = await fetch('/api/upload-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ productName, slot, base64 })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        
+        if (!window.productImagesData[productName]) window.productImagesData[productName] = [null, null, null];
+        window.productImagesData[productName][slot] = data.fileName;
+        renderGambarList();
+      } catch (err) {
+        alert('Gagal upload: ' + err.message);
+        renderGambarList();
+      }
+    };
+    img.src = e.target.result;
   };
   reader.readAsDataURL(file);
 }
@@ -864,16 +993,74 @@ async function testKey(slot){
   }
 }
 
+// Simpan data key terakhir untuk countdown tick
+let _lastKeyStatuses = [];
+
+function renderKeyStatusGrid(statuses) {
+  const grid = document.getElementById('keyStatusGrid');
+  if (!grid || !statuses || !statuses.length) return;
+  _lastKeyStatuses = statuses;
+  _renderKeyCards();
+}
+
+function _renderKeyCards() {
+  const grid = document.getElementById('keyStatusGrid');
+  if (!grid || !_lastKeyStatuses.length) return;
+  const now = Date.now();
+  grid.innerHTML = _lastKeyStatuses.map(k => {
+    if (!k.filled) return `
+      <div class="key-status-card empty">
+        <span class="ks-dot empty"></span>
+        <span class="ks-label">Key ${k.slot}</span>
+        <span class="ks-badge empty">Kosong</span>
+      </div>`;
+    let st = k.status;
+    // Cek ulang status cooldown dari timestamp (lebih akurat dari status yg dikirim)
+    if (st === 'quota' && k.cooldownUntil && now >= k.cooldownUntil) st = 'standby';
+    let label = st === 'active' ? 'Aktif' : st === 'quota' ? 'Cooldown' : 'Standby';
+    let extra = '';
+    if (st === 'quota' && k.cooldownUntil) {
+      const remSec = Math.max(0, Math.ceil((k.cooldownUntil - now) / 1000));
+      label = `${remSec}s`;
+      extra = `<span class="ks-badge quota">${remSec}s</span>`;
+    }
+    return `
+      <div class="key-status-card ${st}">
+        <span class="ks-dot ${st}"></span>
+        <span class="ks-label">Key ${k.slot}</span>
+        ${extra || `<span class="ks-badge ${st}">${label}</span>`}
+      </div>`;
+  }).join('');
+}
+
+// Tick setiap detik untuk update countdown secara lokal tanpa polling server
+setInterval(_renderKeyCards, 1000);
+
+function renderRotationLog(log) {
+  const el = document.getElementById('rotLogList');
+  if (!el) return;
+  if (!log || !log.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:.72rem;padding:6px">Belum ada rotasi...</div>';
+    return;
+  }
+  const reasonLabel = r => r === 'quota' ? '🟡 Quota habis' : r === 'all-cooling-wait' ? '⏳ Semua cooling' : '🔴 Error';
+  const cls = r => r === 'quota' ? 'quota' : r === 'all-cooling-wait' ? 'wait' : 'error';
+  el.innerHTML = log.map(e => {
+    const t = new Date(e.time).toLocaleTimeString('id-ID', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const wait = e.waitMs > 0 ? `<span class="rot-log-wait">tunggu ${Math.ceil(e.waitMs/1000)}s</span>` : '';
+    return `<div class="rot-log-item ${cls(e.reason)}">
+      <span class="rot-log-time">${t}</span>
+      <span class="rot-log-desc">${reasonLabel(e.reason)} → Key ${e.from} ➜ Key ${e.to}</span>
+      ${wait}
+    </div>`;
+  }).join('');
+}
+
 async function loadKeyStatus(){
-  const s=await fetch('/api/keystatus').then(r=>r.json()).catch(()=>null);
-  const badge=document.getElementById('activeKeyBadge');
-  if(!s||!badge)return;
-  const labels=s.filled.map((f,i)=>{
-    const num=i+1, isActive=i===s.activeIndex;
-    if(!f)return`Key ${num}: <span style="color:var(--muted)">kosong</span>`;
-    return isActive?`Key ${num}: <span style="color:var(--green2)">● aktif sekarang</span>`:`Key ${num}: <span style="color:var(--muted)">tersedia</span>`;
-  });
-  badge.innerHTML='<b>Status Key:</b><br>'+labels.join('<br>');
+  const s = await fetch('/api/keystatus').then(r=>r.json()).catch(()=>null);
+  if (!s) return;
+  if (s.statuses) renderKeyStatusGrid(s.statuses);
+  if (s.log) renderRotationLog(s.log);
 }
 
 function flash(id,msg){const el=document.getElementById(id);el.textContent=msg;setTimeout(()=>el.textContent='',3000);}
