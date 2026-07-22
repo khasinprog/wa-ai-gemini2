@@ -103,7 +103,7 @@ const DEF = {
   whitelist: [],
   knowledgeBase: '',
   followUp: '',
-  modelName: 'gemini-2.0-flash',
+  modelName: 'gemini-3.5-flash-lite',
   temperature: 0.7,
   adminNumber: '085210127796', // nomor superadmin - kirim on/off ke nomor bot untuk kontrol auto-reply
   debounceSeconds: 6, // tunggu berapa detik sejak pesan terakhir sebelum digabung & diproses AI
@@ -125,18 +125,7 @@ const save = (file, data) => { try { fs.writeFileSync(file, JSON.stringify(data,
 // ── Multi API Key (rotasi dinamis key Gemini) ────────────────────
 // Tambah key cukup di .env: GEMINI_API_KEY_1, GEMINI_API_KEY_2, dst.
 // Tidak perlu ubah kode / frontend — otomatis terbaca semua.
-let activeKeyIndex = 0;
-
-// ── Rotasi key sequential sederhana ─────────────────────────────
-// Logika: Key 1 → 2 → 3 ... → N → (semua habis) → istirahat 3 menit → mulai lagi
-let seqKeyIndex = 0;         // posisi key saat ini di array valid keys
-let cycleRestUntil = 0;      // timestamp ms sampai kapan sistem istirahat
-const CYCLE_REST_MS = 3 * 60 * 1000; // 3 menit istirahat setelah semua key habis
-
-function isInCycleRest() {
-  return cycleRestUntil > 0 && Date.now() < cycleRestUntil;
-}
-
+let activeKeyIndex = 0; // index (di array getApiKeys() mentah) dari key yang terakhir dipakai — dipakai dashboard
 
 function getApiKeys() {
   const keys = [];
@@ -153,25 +142,130 @@ function getApiKeys() {
   return keys;
 }
 
+// ── Rate-limit REAKTIF per key ────────────────────────────────────
+// Tidak ada lagi prediksi/hitung kuota RPM/RPD sebelum request dikirim.
+// Semua key dianggap "ON" (available) sampai terbukti kena limit lewat
+// response error 429 dari Gemini API. Status per key:
+//   status: 'ON' | 'WAITING_RPM' | 'OFF_RPD'
+//   retry_at: timestamp ms (null kalau status 'ON')
+// Index array ini mengikuti urutan valid keys (key yang terisi di .env),
+// bukan nomor slot mentah — supaya round-robin tidak melompat-lompat
+// karena slot kosong.
+let apiKeyStates = [];
+let lastUsedKeyIndex = 0; // posisi (di validKeys) terakhir yang dicoba, buat round-robin
 
+function ensureKeyStates(n) {
+  while (apiKeyStates.length < n) apiKeyStates.push({ status: 'ON', retry_at: null });
+  if (apiKeyStates.length > n) apiKeyStates.length = n;
+}
 
-function getKeyStatus(idx) {
-  if (isInCycleRest()) return idx === seqKeyIndex ? 'quota' : 'standby';
-  return idx === seqKeyIndex ? 'active' : 'standby';
+function getValidKeys() {
+  return getApiKeys()
+    .map((k, i) => ({ key: k, slot: i }))
+    .filter(x => x.key && x.key.length >= 10);
+}
+
+// Hitung timestamp (ms) tengah malam BERIKUTNYA di zona waktu Pacific Time.
+// Dipakai sebagai retry_at saat key kena limit harian (RPD), karena kuota
+// harian Gemini API di-reset jam 00:00 Pacific Time.
+function getNextMidnightPT() {
+  const tz = 'America/Los_Angeles';
+  const now = new Date();
+
+  // Ambil tanggal hari ini menurut kalender PT (bukan kalender lokal server).
+  const todayPT = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(now); // "YYYY-MM-DD"
+  const [y, m, d] = todayPT.split('-').map(Number);
+
+  // Tebakan awal: perlakukan "besok jam 00:00" seolah-olah itu sudah UTC.
+  const guessUTC = Date.UTC(y, m - 1, d + 1, 0, 0, 0);
+
+  // Cari tahu offset PT yang berlaku di sekitar waktu itu (otomatis
+  // menangani PST/PDT) dengan membaca ulang jam PT pada instant guessUTC.
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  const parts = dtf.formatToParts(new Date(guessUTC)).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+  const ptReadingAsUTC = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour === 24 ? 0 : +parts.hour, +parts.minute, +parts.second);
+  const offsetMs = guessUTC - ptReadingAsUTC;
+
+  let target = guessUTC + offsetMs;
+  // Jaga-jaga (mis. dipanggil tepat di sekitar pergantian hari): pastikan hasilnya di masa depan.
+  if (target <= now.getTime()) target += 24 * 60 * 60 * 1000;
+  return target;
+}
+
+// Ambil key yang tersedia (status 'ON'), round-robin mulai dari key
+// terakhir yang dipakai. Key yang retry_at-nya sudah lewat otomatis
+// di-refresh jadi 'ON' di sini (lazy refresh, bukan timer terpisah).
+function getAvailableKey() {
+  const validKeys = getValidKeys();
+  const n = validKeys.length;
+  if (n === 0) return null;
+  ensureKeyStates(n);
+
+  const now = Date.now();
+  for (let tried = 0; tried < n; tried++) {
+    const pos = (lastUsedKeyIndex + tried) % n;
+    const state = apiKeyStates[pos];
+
+    if (state.status !== 'ON' && state.retry_at !== null && now >= state.retry_at) {
+      state.status = 'ON';
+      state.retry_at = null;
+    }
+
+    if (state.status === 'ON') {
+      lastUsedKeyIndex = (pos + 1) % n; // key berikutnya jadi starting point round-robin selanjutnya
+      return { key: validKeys[pos].key, slot: validKeys[pos].slot, pos };
+    }
+  }
+  return null; // semua key habis
+}
+
+// Tandai key kena limit berdasarkan quotaId & retryDelay dari response 429.
+function markKeyLimited(pos, quotaId, retryDelaySec) {
+  const state = apiKeyStates[pos];
+  if (!state) return;
+
+  if (quotaId && quotaId.includes('PerDay')) {
+    state.status = 'OFF_RPD';
+    state.retry_at = getNextMidnightPT();
+  } else if (quotaId && quotaId.includes('PerMinute')) {
+    state.status = 'WAITING_RPM';
+    const delaySec = (typeof retryDelaySec === 'number' && !isNaN(retryDelaySec) && retryDelaySec > 0) ? retryDelaySec : 60;
+    state.retry_at = Date.now() + delaySec * 1000;
+  } else {
+    // quotaId tidak dikenali — tetap perlakukan sebagai limit sementara (RPM-style) demi keamanan.
+    state.status = 'WAITING_RPM';
+    const delaySec = (typeof retryDelaySec === 'number' && !isNaN(retryDelaySec) && retryDelaySec > 0) ? retryDelaySec : 60;
+    state.retry_at = Date.now() + delaySec * 1000;
+  }
+}
+
+// Susun status tiap key (mentah, sesuai urutan slot .env) buat dashboard.
+function computeKeyStatuses() {
+  const rawKeys = getApiKeys();
+  const validKeys = getValidKeys();
+  ensureKeyStates(validKeys.length);
+
+  let validPos = -1;
+  return rawKeys.map((k, i) => {
+    const filled = !!(k && k.length >= 10);
+    if (!filled) return { slot: i + 1, filled: false, status: 'standby', cooldownUntil: 0 };
+    validPos++;
+    const state = apiKeyStates[validPos] || { status: 'ON', retry_at: null };
+    let status;
+    if (state.status !== 'ON') status = 'quota';
+    else status = (i === activeKeyIndex) ? 'active' : 'standby';
+    return { slot: i + 1, filled: true, status, cooldownUntil: state.retry_at || 0 };
+  });
 }
 
 function emitKeyStatuses() {
-  const keys = getApiKeys();
-  const payload = {
-    keys: keys.map((k, i) => ({
-      slot: i + 1,
-      filled: !!(k && k.length >= 10),
-      status: getKeyStatus(i),
-      cooldownUntil: isInCycleRest() ? cycleRestUntil : 0,
-    })),
-    log: [],
-  };
-  io.emit('key_status_update', payload);
+  io.emit('key_status_update', { keys: computeKeyStatuses(), log: [] });
 }
 
 
@@ -333,7 +427,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Panggil Gemini REST API langsung dengan key tertentu
 async function callGeminiDirect(key, keySlot, message, name, history, signal) {
-  const model = settings.modelName || 'gemini-2.0-flash';
+  const model = settings.modelName || 'gemini-3.5-flash-lite';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
   const contents = [];
@@ -369,10 +463,38 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal) {
 
   if (!res.ok) {
     let msg = 'HTTP ' + res.status;
+    let errData = null;
     try {
-      const errData = await res.json();
+      errData = await res.json();
       msg = errData?.error?.message || msg;
     } catch(e) {}
+
+    if (res.status === 429) {
+      // Parse detail error 429: cari quotaId (RPM vs RPD) dan retryDelay (RetryInfo)
+      let quotaId = null;
+      let retryDelaySec = null;
+      try {
+        const details = errData?.error?.details || [];
+        for (const d of details) {
+          if (!quotaId && Array.isArray(d.violations)) {
+            for (const v of d.violations) {
+              if (v?.quotaId) { quotaId = v.quotaId; break; }
+            }
+          }
+          if (retryDelaySec === null && typeof d?.['@type'] === 'string' && d['@type'].includes('RetryInfo') && d.retryDelay) {
+            const rd = d.retryDelay;
+            if (typeof rd === 'string') {
+              const m = rd.match(/^(\d+(?:\.\d+)?)s?$/);
+              if (m) retryDelaySec = parseFloat(m[1]);
+            } else if (typeof rd === 'number') {
+              retryDelaySec = rd;
+            }
+          }
+        }
+      } catch(e) {}
+      return { ok: false, status429: true, quotaId, retryDelaySec, error: msg };
+    }
+
     return { ok: false, error: msg };
   }
 
@@ -431,68 +553,57 @@ function extractOrder(replyText, fromJid) {
   return cleanReply;
 }
 
-// ── Rotasi key sequential: coba satu per satu tanpa nunggu ───────
+// ── Rotasi key REAKTIF: anggap semua key 'ON' sampai terbukti kena 429 ──
 async function aiReply(message, name, history, signal) {
-  // Kalau sedang istirahat, return null — pesan akan dicoba ulang oleh retryFailedMessages
-  if (isInCycleRest()) {
-    const sisaDetik = Math.ceil((cycleRestUntil - Date.now()) / 1000);
-    console.log(`⏸️ AI sedang istirahat (sisa ${sisaDetik}s), pesan diqueue untuk retry`);
-    return null;
-  }
-
-  const allKeys = getApiKeys();
-  const validKeys = allKeys.map((k, i) => ({ key: k, slot: i })).filter(x => x.key && x.key.length >= 10);
-
-  if (validKeys.length === 0) {
+  if (getValidKeys().length === 0) {
     console.error('❌ Tidak ada API key yang valid di .env');
     return null;
   }
 
-  const n = validKeys.length;
-
-  // Coba setiap key satu kali, mulai dari seqKeyIndex
-  for (let tried = 0; tried < n; tried++) {
+  while (true) {
     if (signal?.aborted) return null;
-    if (isInCycleRest()) return null;
 
-    const pos = (seqKeyIndex + tried) % n;
-    const { key, slot } = validKeys[pos];
+    const picked = getAvailableKey();
+    if (!picked) {
+      // Semua key sedang WAITING_RPM / OFF_RPD → jangan kirim request sama sekali,
+      // pesan akan dicoba lagi oleh retryFailedMessages.
+      console.warn('⏸️ Semua API key sedang kena limit → pesan diqueue untuk retry');
+      emitKeyStatuses();
+      return null;
+    }
 
-    // Update indikator dashboard
-    activeKeyIndex = slot;
+    activeKeyIndex = picked.slot;
     emitKeyStatuses();
-    console.log(`🔑 Mencoba Key ${slot + 1}...`);
+    console.log(`🔑 Mencoba Key ${picked.slot + 1}...`);
 
-    const result = await callGeminiDirect(key, slot, message, name, history, signal);
+    const result = await callGeminiDirect(picked.key, picked.slot, message, name, history, signal);
 
     if (result.ok) {
-      seqKeyIndex = pos; // pertahankan di key yang terakhir berhasil
+      emitKeyStatuses();
       return result.text;
     }
     if (result.aborted) return null;
 
-    console.error(`❌ Key ${slot + 1} gagal: ${result.error?.slice(0, 120)}`);
-    // Langsung lanjut ke key berikutnya, tanpa nunggu
-  }
+    if (result.status429) {
+      markKeyLimited(picked.pos, result.quotaId, result.retryDelaySec);
+      const st = apiKeyStates[picked.pos];
+      console.warn(`⚠️ Key ${picked.slot + 1} kena limit (${result.quotaId || 'tidak diketahui'}) → ${st.status}, retry_at=${new Date(st.retry_at).toISOString()}`);
+      emitKeyStatuses();
+      continue; // otomatis coba key lain untuk pesan yang sama
+    }
 
-  // Semua key sudah dicoba dan gagal → masuk rest period
-  seqKeyIndex = 0; // reset ke Key 1 untuk siklus berikutnya
-  cycleRestUntil = Date.now() + CYCLE_REST_MS;
-  console.warn(`⏸️ Semua ${n} key sudah dicoba habis → istirahat ${CYCLE_REST_MS / 60000} menit, lanjut dari Key 1`);
-  io.emit('cycle_rest', { restUntil: cycleRestUntil });
-  emitKeyStatuses();
-  return null;
+    // Error selain 429 → lempar seperti biasa, jangan diperlakukan sebagai rate limit
+    console.error(`❌ Key ${picked.slot + 1} gagal (bukan rate limit): ${result.error?.slice(0, 200)}`);
+    throw new Error(result.error || 'Gagal memanggil Gemini API');
+  }
 }
 
 async function retryFailedMessages() {
   if (!settings.autoReply) return;
 
-  // Kalau sedang istirahat, skip — tunggu rest selesai
-  if (isInCycleRest()) {
-    const sisaDetik = Math.ceil((cycleRestUntil - Date.now()) / 1000);
-    console.log(`⏸️ Retry ditunda — sistem istirahat (sisa ${sisaDetik}s)`);
-    return;
-  }
+  // Tidak ada lagi "cycle rest" global — tiap pesan langsung dicoba lagi;
+  // kalau semua key masih kena limit, aiReply() akan return null lagi (lihat di bawah)
+  // dan pesan tetap diqueue untuk retry berikutnya.
 
   const MAX_RETRY_COUNT = 5; // maksimal 5 kali coba, lalu berhenti agar tidak bakar quota
   const nowTime = Date.now();
@@ -863,12 +974,7 @@ app.get('/api/keystatus', (_, res) => {
   res.json({
     filled: keys.map(k => !!(k && k.length >= 10)),
     activeIndex: activeKeyIndex,
-    statuses: keys.map((k, i) => ({
-      slot: i + 1,
-      filled: !!(k && k.length >= 10),
-      status: getKeyStatus(i),
-      cooldownUntil: isInCycleRest() ? cycleRestUntil : 0,
-    })),
+    statuses: computeKeyStatuses(),
     log: [],
   });
 });
@@ -959,7 +1065,7 @@ app.post('/api/format-kb', async (req, res) => {
   const key = allKeys.find(k => k && k.length >= 10);
   if (!key) return res.status(400).json({ error: 'Belum ada API key yang diisi' });
 
-  const model = settings.modelName || 'gemini-2.0-flash';
+  const model = settings.modelName || 'gemini-3.5-flash-lite';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
   const systemPrompt = `Kamu adalah asisten pembuat database produk. Tugas HANYAMU adalah mengonversi teks mentah yang diberikan user ke dalam format khusus.
@@ -1035,9 +1141,13 @@ app.post('/api/retry', (req, res) => {
   res.json({ ok: true });
 });
 
+const MAX_API_KEY_SLOTS = 15; // jumlah slot key yang didukung form dashboard/setup (GEMINI_API_KEY_1..15)
+
 app.post('/api/savekey', (req, res) => {
-  const { key1, key2, key3 } = req.body;
-  if (!key1 && !key2 && !key3) return res.status(400).json({ error: 'Isi minimal 1 API key' });
+  const body = req.body || {};
+  const anyFilled = Array.from({ length: MAX_API_KEY_SLOTS }, (_, i) => body[`key${i + 1}`]).some(v => v);
+  if (!anyFilled) return res.status(400).json({ error: 'Isi minimal 1 API key' });
+  if (body.key1 && body.key1.length < 10) return res.status(400).json({ error: 'API Key 1 terlalu pendek' });
 
   const envPath = path.join(__dirname, '.env');
   let env = '';
@@ -1051,16 +1161,19 @@ app.post('/api/savekey', (req, res) => {
       : envStr + `\n${name}=${v}`;
   };
 
-  env = setEnvVar(env, 'GEMINI_API_KEY_1', key1);
-  env = setEnvVar(env, 'GEMINI_API_KEY_2', key2);
-  env = setEnvVar(env, 'GEMINI_API_KEY_3', key3);
+  for (let i = 1; i <= MAX_API_KEY_SLOTS; i++) {
+    const val = body[`key${i}`];
+    env = setEnvVar(env, `GEMINI_API_KEY_${i}`, val);
+    if (val !== undefined) process.env[`GEMINI_API_KEY_${i}`] = (val || '').trim();
+  }
   fs.writeFileSync(envPath, env.trim() + '\n');
 
-  if (key1 !== undefined) process.env.GEMINI_API_KEY_1 = (key1 || '').trim();
-  if (key2 !== undefined) process.env.GEMINI_API_KEY_2 = (key2 || '').trim();
-  if (key3 !== undefined) process.env.GEMINI_API_KEY_3 = (key3 || '').trim();
-
   activeKeyIndex = 0; // reset balik ke key1 tiap kali ada update key
+  // Key yang diganti bisa jadi key yang benar-benar baru (belum pernah kena limit),
+  // jadi status rate-limit lama (posisi array apiKeyStates) tidak valid lagi.
+  apiKeyStates = [];
+  lastUsedKeyIndex = 0;
+  emitKeyStatuses();
   res.json({ ok: true });
 });
 
@@ -1071,7 +1184,7 @@ app.post('/api/testkey', async (req, res) => {
   const key = keys[slot - 1];
   if (!key) return res.json({ ok: false, error: `Key ${slot} belum diisi` });
   try {
-    const model = settings.modelName || 'gemini-2.0-flash';
+    const model = settings.modelName || 'gemini-3.5-flash-lite';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
     const r = await fetch(url, {
       method: 'POST',

@@ -181,14 +181,10 @@ input:checked+.slider:before{transform:translateX(18px)}
   <div class="setup-box">
     <div class="setup-ico">🔑</div>
     <div class="setup-title">Masukkan Gemini API Key</div>
-    <div class="setup-sub">Gratis di Google AI Studio! Isi Key 1 minimal, Key 2 & 3 opsional untuk rotasi otomatis saat key habis.</div>
+    <div class="setup-sub">Gratis di Google AI Studio! Isi minimal 1 key. Bisa isi lebih dari satu untuk rotasi otomatis saat key habis — pisahkan dengan tanda koma (mendukung sampai 15 key).</div>
     <a class="setup-link" onclick="window.open('https://aistudio.google.com/apikey','_blank')">→ Dapatkan API Key gratis di aistudio.google.com</a>
-    <div class="lbl" style="text-align:left">API Key 1 (utama)</div>
-    <input class="setup-input" id="setupKeyInput1" type="text" placeholder="Paste API Key Gemini #1"/>
-    <div class="lbl" style="text-align:left">API Key 2 (opsional)</div>
-    <input class="setup-input" id="setupKeyInput2" type="text" placeholder="Paste API Key Gemini #2"/>
-    <div class="lbl" style="text-align:left">API Key 3 (opsional)</div>
-    <input class="setup-input" id="setupKeyInput3" type="text" placeholder="Paste API Key Gemini #3"/>
+    <div class="lbl" style="text-align:left">API Key (pisahkan dengan koma)</div>
+    <textarea class="setup-input" id="setupKeyTextarea" rows="4" style="resize:vertical;font-family:inherit" placeholder="apikey1,apikey2,apikey3,..."></textarea>
     <button class="btn btn-green" onclick="saveKeySetup()">Simpan & Lanjutkan</button>
     <div class="setup-err" id="setupKeyErr"></div>
   </div>
@@ -307,10 +303,12 @@ input:checked+.slider:before{transform:translateX(18px)}
         <div class="fg"><label class="lbl">Model Gemini</label>
           <select id="modelName" onchange="patch('modelName',this.value)">
             <option value="gemini-2.0-flash">gemini-2.0-flash (Kompatibel akun baru)</option>
-            <option value="gemini-2.5-flash">gemini-2.5-flash (Rekomendasi)</option>
-            <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (Termurah &amp; tercepat)</option>
+            <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+            <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
             <option value="gemini-2.5-pro">gemini-2.5-pro (Paling pintar)</option>
-            <option value="gemini-3.5-flash">gemini-3.5-flash (Flash terbaru)</option>
+            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+            <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Rekomendasi &amp; Default)</option>
           </select>
         </div>
         <div class="fg"><label class="lbl">Bahasa</label>
@@ -403,26 +401,23 @@ Garansi: 6 bulan"></textarea>
           </div>
         </div>
 
-        <div class="fg"><label class="lbl">API Key 1 (utama)</label>
-          <input type="text" id="keyInput1" placeholder="Paste API Key Gemini #1"/>
+        <div class="fg"><label class="lbl">API Key (pisahkan dengan koma, maks 15 key)</label>
+          <textarea id="keyTextarea" rows="4" style="resize:vertical;font-family:inherit" placeholder="apikey1,apikey2,apikey3,..."></textarea>
+          <div class="ts" style="margin-top:5px;line-height:1.6">Isi ulang key yang ingin diganti/ditambah lalu simpan. Urutan sesuai koma = Key 1, Key 2, dst.</div>
         </div>
-        <button class="btn btn-blue" style="font-size:.7rem;padding:6px;margin-bottom:6px" onclick="testKey(1)">🧪 Test Key 1</button>
-        <div class="save-ok" id="testOk1" style="margin-bottom:10px"></div>
-
-        <div class="fg"><label class="lbl">API Key 2 (opsional)</label>
-          <input type="text" id="keyInput2" placeholder="Paste API Key Gemini #2"/>
-        </div>
-        <button class="btn btn-blue" style="font-size:.7rem;padding:6px;margin-bottom:6px" onclick="testKey(2)">🧪 Test Key 2</button>
-        <div class="save-ok" id="testOk2" style="margin-bottom:10px"></div>
-
-        <div class="fg"><label class="lbl">API Key 3 (opsional)</label>
-          <input type="text" id="keyInput3" placeholder="Paste API Key Gemini #3"/>
-        </div>
-        <button class="btn btn-blue" style="font-size:.7rem;padding:6px;margin-bottom:6px" onclick="testKey(3)">🧪 Test Key 3</button>
-        <div class="save-ok" id="testOk3" style="margin-bottom:14px"></div>
-
         <button class="btn btn-green" onclick="saveKey()">💾 Simpan Semua Key</button>
         <div class="setup-err" id="keyErr"></div>
+
+        <div class="fg" style="margin-top:12px">
+          <label class="lbl">Test Koneksi Key</label>
+          <div style="display:flex;gap:6px">
+            <select id="testKeySlot" style="flex:1">
+              <!-- diisi otomatis oleh JS untuk slot 1..15 -->
+            </select>
+            <button class="btn btn-blue" style="font-size:.7rem;padding:6px 10px" onclick="testKey(parseInt(document.getElementById('testKeySlot').value))">🧪 Test</button>
+          </div>
+          <div class="save-ok" id="testOkSlot" style="margin-top:6px"></div>
+        </div>
 
         <!-- Log Rotasi -->
         <div class="rot-log-section">
@@ -576,7 +571,7 @@ function applySettings(s){
   if(!s)return;
   document.getElementById('arToggle').checked=s.autoReply??true;
   document.getElementById('persona').value=s.persona||'';
-  document.getElementById('modelName').value=s.modelName||'gemini-2.0-flash';
+  document.getElementById('modelName').value=s.modelName||'gemini-3.5-flash-lite';
   document.getElementById('lang').value=s.language||'Indonesia';
   document.getElementById('tone').value=s.tone||'Santai';
   document.getElementById('temp').value=s.temperature??0.7;
@@ -951,36 +946,59 @@ async function doRetryFailed(){
   else alert('❌ Gagal memicu retry');
 }
 
-async function submitKeys(key1,key2,key3){
-  if(!key1&&!key2&&!key3)return{ok:false,error:'Isi minimal API Key 1'};
-  if(key1&&key1.length<10)return{ok:false,error:'API Key 1 terlalu pendek'};
-  return await fetch('/api/savekey',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key1,key2,key3})}).then(r=>r.json()).catch(e=>({ok:false,error:e.message}));
+const MAX_API_KEY_SLOTS = 15; // jumlah maksimal key yang didukung (GEMINI_API_KEY_1..15)
+
+// Isi dropdown pemilih slot untuk fitur "Test Koneksi Key" di tab dashboard
+function renderTestKeySlotOptions(){
+  const sel = document.getElementById('testKeySlot');
+  if(!sel) return;
+  let html = '';
+  for(let i=1;i<=MAX_API_KEY_SLOTS;i++) html += `<option value="${i}">Key ${i}</option>`;
+  sel.innerHTML = html;
+}
+renderTestKeySlotOptions();
+
+// Pecah teks "apikey1,apikey2,apikey3,..." jadi array key (dibersihkan spasi, baris baru, entri kosong dibuang),
+// lalu dipotong maksimal MAX_API_KEY_SLOTS dan dipadatkan ke panjang tetap supaya urutan slot konsisten.
+function parseKeyList(text){
+  const list = (text || '')
+    .split(/[,\n]/)
+    .map(k => k.trim())
+    .filter(k => k.length > 0)
+    .slice(0, MAX_API_KEY_SLOTS);
+  const keys = [];
+  for(let i=0;i<MAX_API_KEY_SLOTS;i++) keys.push(list[i] || '');
+  return keys;
+}
+
+async function submitKeys(keys){
+  if(!keys.some(k=>k))return{ok:false,error:'Isi minimal 1 API Key'};
+  if(keys[0]&&keys[0].length<10)return{ok:false,error:'API Key 1 terlalu pendek'};
+  const body = {};
+  keys.forEach((k,idx)=>{ body['key'+(idx+1)] = k; });
+  return await fetch('/api/savekey',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).catch(e=>({ok:false,error:e.message}));
 }
 
 // Dipakai di popup setup awal (pertama kali buka app, belum ada key sama sekali)
 async function saveKeySetup(){
-  const key1=document.getElementById('setupKeyInput1').value.trim();
-  const key2=document.getElementById('setupKeyInput2').value.trim();
-  const key3=document.getElementById('setupKeyInput3').value.trim();
+  const keys = parseKeyList(document.getElementById('setupKeyTextarea').value);
   const err=document.getElementById('setupKeyErr');
-  const r=await submitKeys(key1,key2,key3);
+  const r=await submitKeys(keys);
   if(r.ok){document.getElementById('setup').style.display='none';err.textContent='';loadKeyStatus();}
   else err.textContent='❌ '+(r.error||'Gagal menyimpan');
 }
 
 // Dipakai di tab 🔑 API Key dashboard (untuk update/ganti key kapan saja)
 async function saveKey(){
-  const key1=document.getElementById('keyInput1').value.trim();
-  const key2=document.getElementById('keyInput2').value.trim();
-  const key3=document.getElementById('keyInput3').value.trim();
+  const keys = parseKeyList(document.getElementById('keyTextarea').value);
   const err=document.getElementById('keyErr');
-  const r=await submitKeys(key1,key2,key3);
+  const r=await submitKeys(keys);
   if(r.ok){err.classList.remove('err');err.style.color='var(--green2)';err.textContent='✅ Tersimpan!';loadKeyStatus();setTimeout(()=>err.textContent='',3000);}
   else{err.style.color='var(--red)';err.textContent='❌ '+(r.error||'Gagal menyimpan');}
 }
 
 async function testKey(slot){
-  const el=document.getElementById('testOk'+slot);
+  const el=document.getElementById('testOkSlot');
   el.classList.remove('err');
   el.textContent='⏳ Menguji koneksi ke Gemini...';
   const r=await fetch('/api/testkey',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({slot})}).then(r=>r.json()).catch(e=>({ok:false,error:e.message}));
