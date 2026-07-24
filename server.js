@@ -1,11 +1,9 @@
 const express    = require('express');
 const http       = require('http');
 const { Server } = require('socket.io');
-const qrcode     = require('qrcode');
 const fs         = require('fs');
 const path       = require('path');
 const cors       = require('cors');
-const pino       = require('pino');
 const crypto     = require('crypto');
 
 require('dotenv').config();
@@ -25,14 +23,25 @@ if (!process.env.ADMIN_PASSWORD) {
 
 const SERVER_AUTH_TOKEN = crypto.randomBytes(32).toString('hex');
 
-let makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion;
+// ── WhatsApp Cloud API (Meta) config ──────────────────────────────
+// WHATSAPP_TOKEN   : System User access token permanen (Meta App Dashboard > System Users)
+// PHONE_NUMBER_ID  : Phone Number ID hasil Embedded Signup (bukan nomor telepon itu sendiri)
+// WEBHOOK_VERIFY_TOKEN : token bebas buatan sendiri, dipakai saat handshake verifikasi webhook
+// META_APP_SECRET  : App Dashboard > Settings > Basic > App Secret, dipakai validasi signature
+// GRAPH_API_VERSION: versi Graph API, boleh dikosongkan (pakai default)
+const WHATSAPP_TOKEN      = process.env.WHATSAPP_TOKEN || '';
+const PHONE_NUMBER_ID     = process.env.PHONE_NUMBER_ID || '';
+const WEBHOOK_VERIFY_TOKEN = process.env.WEBHOOK_VERIFY_TOKEN || '';
+const META_APP_SECRET     = process.env.META_APP_SECRET || '';
+const GRAPH_API_VERSION   = process.env.GRAPH_API_VERSION || 'v23.0';
+const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}`;
+const waConfigured = !!(WHATSAPP_TOKEN && PHONE_NUMBER_ID);
 
-async function loadBaileys() {
-  const B = await import('@whiskeysockets/baileys');
-  makeWASocket              = B.default || B.makeWASocket;
-  useMultiFileAuthState     = B.useMultiFileAuthState;
-  DisconnectReason          = B.DisconnectReason;
-  fetchLatestBaileysVersion = B.fetchLatestBaileysVersion;
+if (!waConfigured) {
+  console.log('\x1b[33m[PERINGATAN]\x1b[0m WHATSAPP_TOKEN / PHONE_NUMBER_ID belum diisi di .env — bot belum bisa kirim pesan lewat WhatsApp Cloud API.');
+}
+if (!WEBHOOK_VERIFY_TOKEN || !META_APP_SECRET) {
+  console.log('\x1b[33m[PERINGATAN]\x1b[0m WEBHOOK_VERIFY_TOKEN / META_APP_SECRET belum diisi di .env — verifikasi webhook & validasi signature belum aktif.');
 }
 
 const app    = express();
@@ -50,14 +59,17 @@ io.use((socket, next) => {
 });
 
 app.use(cors());
-app.use(express.json({limit: '10mb'}));
+// Simpan raw body juga (dibutuhkan buat verifikasi X-Hub-Signature-256 dari Meta)
+app.use(express.json({
+  limit: '10mb',
+  verify: (req, res, buf) => { req.rawBody = buf; }
+}));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const DATA_DIR = path.join(__dirname, 'data');
 const MSG_FILE = path.join(DATA_DIR, 'messages.json');
 const SET_FILE = path.join(DATA_DIR, 'settings.json');
 const ORDER_FILE = path.join(DATA_DIR, 'orders.json');
-const AUTH_DIR = path.join(DATA_DIR, 'auth');
 const IMAGES_DIR = path.join(DATA_DIR, 'images');
 
 app.use('/images', express.static(IMAGES_DIR));
@@ -85,14 +97,32 @@ app.use('/api', (req, res, next) => {
 // dalam waktu singkat (misal "Halo, mau tanya X" lalu "cek harga" beberapa
 // detik kemudian), kita tunggu sebentar dan gabungkan semuanya jadi SATU
 // pesan sebelum diproses AI, supaya tidak terbalas dobel/parsial.
-// Key: JID pengirim, Value: { texts: [], timer, lastMsgObj }
+// Key: wa_id pengirim (digit saja, format Cloud API), Value: { texts: [], timer, lastWamid }
 // Durasi tunggu & delay balas diatur lewat settings.debounceSeconds /
 // settings.replyDelayMin / settings.replyDelayMax (bisa diubah di dashboard).
 const pendingBuffers = new Map();
 const userLocks = new Map(); // Menyimpan antrean promise per pengirim
-const activeProcessing = new Map(); // fromJid -> { controller, timeoutId, resolveDelay }
+const activeProcessing = new Map(); // from -> { controller, timeoutId, resolveDelay }
 
-[DATA_DIR, AUTH_DIR, IMAGES_DIR].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
+// Dedup pesan masuk berdasarkan wamid — webhook Meta bisa mengirim ulang
+// event yang sama (misal kalau respon kita telat), jadi kita tolak wamid
+// yang sudah pernah diproses. Disimpan sebagai array (FIFO) supaya gampang dibatasi ukurannya.
+const processedWamids = [];
+const processedWamidsSet = new Set();
+function markWamidProcessed(id) {
+  if (!id) return;
+  processedWamidsSet.add(id);
+  processedWamids.push(id);
+  if (processedWamids.length > 2000) {
+    const old = processedWamids.shift();
+    processedWamidsSet.delete(old);
+  }
+}
+function isWamidProcessed(id) {
+  return !!id && processedWamidsSet.has(id);
+}
+
+[DATA_DIR, IMAGES_DIR].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
 
 const DEF = {
   autoReply: true,
@@ -107,8 +137,8 @@ const DEF = {
   temperature: 0.7,
   adminNumber: '085210127796', // nomor superadmin - kirim on/off ke nomor bot untuk kontrol auto-reply
   debounceSeconds: 6, // tunggu berapa detik sejak pesan terakhir sebelum digabung & diproses AI
-  replyDelayMin: 15, // minimal durasi pura-pura ngetik
-  replyDelayMax: 25, // maksimal durasi pura-pura ngetik
+  replyDelayMin: 10, // delay untuk balasan SINGKAT (di bawah REPLY_LENGTH_THRESHOLD karakter)
+  replyDelayMax: 15, // delay untuk balasan PANJANG (di atas REPLY_LENGTH_THRESHOLD karakter)
   productImages: {}
 };
 
@@ -126,6 +156,7 @@ const save = (file, data) => { try { fs.writeFileSync(file, JSON.stringify(data,
 // Tambah key cukup di .env: GEMINI_API_KEY_1, GEMINI_API_KEY_2, dst.
 // Tidak perlu ubah kode / frontend — otomatis terbaca semua.
 let activeKeyIndex = 0; // index (di array getApiKeys() mentah) dari key yang terakhir dipakai — dipakai dashboard
+
 
 function getApiKeys() {
   const keys = [];
@@ -270,7 +301,85 @@ function emitKeyStatuses() {
 
 
 
-let waStatus = 'disconnected', qrData = null, sock = null;
+// ── WhatsApp Cloud API: kirim & terima pesan lewat Graph API Meta ──
+
+async function graphFetch(pathSuffix, options = {}) {
+  const url = `${GRAPH_BASE}${pathSuffix}`;
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+      ...(options.headers || {}),
+    },
+  });
+  let data = null;
+  try { data = await res.json(); } catch(e) {}
+  if (!res.ok) {
+    const msg = data?.error?.message || `HTTP ${res.status}`;
+    const err = new Error(msg);
+    err.graphError = data?.error;
+    throw err;
+  }
+  return data;
+}
+
+// Kirim pesan teks. quotedWamid opsional — kalau diisi, pesan akan tampil
+// sebagai "reply" ke pesan customer tersebut (setara fitur `quoted` di Baileys).
+async function sendWhatsAppText(to, text, quotedWamid) {
+  if (!waConfigured) { console.error('❌ WhatsApp Cloud API belum dikonfigurasi (WHATSAPP_TOKEN/PHONE_NUMBER_ID kosong)'); return null; }
+  const body = {
+    messaging_product: 'whatsapp',
+    to,
+    type: 'text',
+    text: { body: text, preview_url: false },
+  };
+  if (quotedWamid) body.context = { message_id: quotedWamid };
+  return graphFetch('/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+}
+
+// Upload file lokal (gambar produk) ke Graph API, hasilnya media id yang
+// dipakai untuk mengirim gambar (Cloud API tidak menerima buffer langsung).
+async function uploadWhatsAppMedia(filePath, mimetype) {
+  const fileBuffer = fs.readFileSync(filePath);
+  const blob = new Blob([fileBuffer], { type: mimetype });
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('file', blob, path.basename(filePath));
+  form.append('type', mimetype);
+  const data = await graphFetch('/media', { method: 'POST', body: form });
+  return data?.id || null;
+}
+
+async function sendWhatsAppImageByPath(to, filePath, mimetype) {
+  const mediaId = await uploadWhatsAppMedia(filePath, mimetype);
+  if (!mediaId) throw new Error('Upload media ke WhatsApp gagal (tidak dapat media id)');
+  const body = { messaging_product: 'whatsapp', to, type: 'image', image: { id: mediaId } };
+  return graphFetch('/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+}
+
+// Tandai pesan sudah dibaca, sekalian tampilkan indikator "sedang mengetik"
+// (fitur typing_indicator Cloud API — otomatis hilang begitu kita kirim balasan
+// atau setelah ±25 detik). Best-effort, jangan sampai bikin proses utama gagal.
+async function markAsReadWithTyping(wamid, withTyping = true) {
+  if (!waConfigured || !wamid) return;
+  const body = { messaging_product: 'whatsapp', status: 'read', message_id: wamid };
+  if (withTyping) body.typing_indicator = { type: 'text' };
+  try { await graphFetch('/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
+  catch(e) { /* non-fatal */ }
+}
+
+// Verifikasi X-Hub-Signature-256 dari Meta supaya payload webhook dipastikan asli
+function isValidMetaSignature(req) {
+  if (!META_APP_SECRET) return true; // kalau belum diisi, skip (tetap bisa jalan pas awal testing)
+  const signatureHeader = req.get('X-Hub-Signature-256');
+  if (!signatureHeader || !req.rawBody) return false;
+  const expectedHash = crypto.createHmac('sha256', META_APP_SECRET).update(req.rawBody).digest('hex');
+  const expected = `sha256=${expectedHash}`;
+  const a = Buffer.from(signatureHeader);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
 
 function isOpHour() {
   if (!settings.opHours?.enabled) return true;
@@ -423,7 +532,6 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage) {
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-
 
 // Panggil Gemini REST API langsung dengan key tertentu
 async function callGeminiDirect(key, keySlot, message, name, history, signal) {
@@ -597,7 +705,6 @@ async function aiReply(message, name, history, signal) {
     throw new Error(result.error || 'Gagal memanggil Gemini API');
   }
 }
-
 async function retryFailedMessages() {
   if (!settings.autoReply) return;
 
@@ -628,9 +735,8 @@ async function retryFailedMessages() {
       if (reply) {
          reply = extractOrder(reply, entry.from);
 
-         try { await sock.sendPresenceUpdate('composing', entry.from); } catch(e) {}
+         try { await markAsReadWithTyping(entry.wamid, true); } catch(e) {}
          await sleep(2000); 
-         try { await sock.sendPresenceUpdate('paused', entry.from); } catch(e) {}
          
          let cleanReply = reply;
          const imgMatches = [...reply.matchAll(/\[KIRIM_GAMBAR:(.*?)\]/gi)];
@@ -640,7 +746,7 @@ async function retryFailedMessages() {
            cleanReply = cleanReply.replace(match[0], '').trim();
          }
 
-         await sock.sendMessage(entry.from, { text: cleanReply });
+         await sendWhatsAppText(entry.from, cleanReply, entry.wamid);
          
          for (const productToImage of productsToImage) {
            if (settings.productImages && settings.productImages[productToImage]) {
@@ -649,11 +755,10 @@ async function retryFailedMessages() {
                   const imgPath = path.join(IMAGES_DIR, filename);
                   if (fs.existsSync(imgPath)) {
                     try {
-                      const imgBuffer = fs.readFileSync(imgPath);
                       const ext = filename.split('.').pop().toLowerCase();
                       const mimetype = ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg');
-                      await sock.sendMessage(entry.from, { image: imgBuffer, mimetype: mimetype });
-                    } catch(e) { console.error('Gagal kirim gambar retry:', e); }
+                      await sendWhatsAppImageByPath(entry.from, imgPath, mimetype);
+                    } catch(e) { console.error('Gagal kirim gambar retry:', e.message); }
                   }
                }
              }
@@ -681,292 +786,257 @@ async function retryFailedMessages() {
   }
 }
 
-async function initWA() {
-  try {
-    console.log('Menginisialisasi WhatsApp...');
+// Panjang teks (karakter) yang jadi ambang batas "balasan singkat" vs "balasan panjang".
+// Di bawah ambang ini -> pakai settings.replyDelayMin, di atas -> settings.replyDelayMax.
+const REPLY_LENGTH_THRESHOLD = 80;
 
-    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-    const logger = pino({ level: 'silent' });
+// Hitung delay (ms) sebelum kirim balasan, berdasarkan panjang teks balasannya:
+// balasan singkat (basa-basi/harga) terasa wajar dibalas cepat, balasan panjang
+// (penjelasan produk dsb) wajar kalau "diketik" lebih lama. Diberi jitter kecil
+// (±2 detik) supaya tidak terasa kaku/persis sama setiap kali.
+function getReplyDelayMs(text) {
+  const shortSec = Math.max(0, Number(settings.replyDelayMin) ?? 10);
+  const longSec  = Math.max(shortSec, Number(settings.replyDelayMax) ?? 15);
+  const baseSec  = (text?.length || 0) > REPLY_LENGTH_THRESHOLD ? longSec : shortSec;
+  const jitterSec = (Math.random() * 4) - 2; // -2..+2 detik
+  const sec = Math.max(1, baseSec + jitterSec);
+  return sec * 1000;
+}
 
-    // Catatan: versi default Baileys ternyata ditolak server WhatsApp (error 405,
-    // QR tidak muncul sama sekali). Jadi kita pakai fetchLatestBaileysVersion()
-    // lagi supaya koneksi diterima.
-    //
-    // Soal ikon "!" / "may be using old version" di Linked Devices (HP):
-    // Ini BUKAN bug di kode ini. Baileys adalah client pihak ketiga (bukan WA
-    // resmi), jadi WhatsApp selalu menandainya begitu meski versi protokol sudah
-    // yang terbaru (lihat isLatest di log bawah). Tidak ada cara untuk
-    // menghilangkan label ini selama pakai Baileys - fungsinya tetap normal.
-    let version, isLatest;
-    try {
-      const v = await fetchLatestBaileysVersion();
-      version = v.version;
-      isLatest = v.isLatest;
-      console.log(`WA Protocol Version: ${version.join('.')} (isLatest: ${isLatest})`);
-    } catch(e) {
-      console.log('Gagal ambil versi terbaru, pakai default bawaan library.');
-    }
+// Proses satu "giliran" pelanggan (bisa gabungan beberapa bubble yang
+// dikirim berurutan dalam window debounce) lalu kirim balasan AI.
+async function processCustomerMessage(from, senderName, combinedBody, lastWamid) {
+  // PREEMPTION: Batalkan proses AI sebelumnya dari user ini jika masih berjalan
+  if (activeProcessing.has(from)) {
+    const currentTask = activeProcessing.get(from);
+    if (currentTask.controller) currentTask.controller.abort();
+    if (currentTask.timeoutId) clearTimeout(currentTask.timeoutId);
+    if (currentTask.resolveDelay) currentTask.resolveDelay(); // cegah promise menggantung
+    activeProcessing.delete(from);
+    console.log(`⚡ Menghentikan proses AI sebelumnya untuk ${senderName} karena ada pesan baru masuk.`);
+  }
 
-    sock = makeWASocket({
-      ...(version ? { version } : {}),
-      auth: state, logger,
-      printQRInTerminal: false,
-      browser: ['Chrome (Linux)', 'Chrome', '128.0.0.0'],
-      connectTimeoutMs: 60000,
-      markOnlineOnConnect: true,
-      syncFullHistory: false,
-    });
+  const entry = {
+    id: Date.now(), from, senderName, body: combinedBody, wamid: lastWamid,
+    timestamp: new Date().toISOString(),
+    replied: false, aiReply: null,
+  };
 
-    sock.ev.on('creds.update', saveCreds);
+  // 1. Munculkan langsung di dashboard dan history
+  messages.unshift(entry);
+  if (messages.length > 300) messages = messages.slice(0, 300);
+  save(MSG_FILE, messages);
+  io.emit('new_message', entry);
 
-    sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
-      if (qr) {
-        console.log('QR siap! Silakan scan.');
-        qrData = await qrcode.toDataURL(qr).catch(() => null);
-        waStatus = 'waiting_qr';
-        io.emit('qr', qrData);
-        io.emit('status', waStatus);
-      }
-      if (connection === 'open') {
-        console.log('✅ WhatsApp terhubung!');
-        waStatus = 'connected'; qrData = null;
-        io.emit('status', 'connected');
-        io.emit('qr', null);
-        
-        // Coba ulang pesan yang gagal saat server baru connect
-        setTimeout(retryFailedMessages, 3000);
-      }
-      if (connection === 'close') {
-        const code = lastDisconnect?.error?.output?.statusCode;
-        console.log('WA terputus. Kode:', code);
-        waStatus = 'disconnected'; qrData = null;
-        io.emit('status', 'disconnected');
-        if (code !== DisconnectReason?.loggedOut) {
-          setTimeout(initWA, 5000);
-        } else {
-          try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); fs.mkdirSync(AUTH_DIR, { recursive: true }); } catch(e) {}
-          setTimeout(initWA, 3000);
+  // 2. Masukkan proses AI ke dalam antrean (queue) khusus user ini
+  const prevTask = userLocks.get(from) || Promise.resolve();
+  
+  const nextTask = prevTask.then(async () => {
+    if (settings.autoReply && isOpHour() && isWhitelisted(from)) {
+      const controller = new AbortController();
+      const taskState = { controller, timeoutId: null };
+      activeProcessing.set(from, taskState);
+
+      try { await markAsReadWithTyping(lastWamid, true); } catch(e) {}
+
+      // Fetch history here. Pesan sebelumnya yang batal terbalas akan terbaca di sini!
+      const history = messages.filter(m => m.from === from && m.id !== entry.id).slice(0, 8).reverse();
+      let reply = await aiReply(combinedBody, senderName, history, controller.signal);
+
+      if (reply) {
+        reply = extractOrder(reply, from);
+
+        // Cek tag [KIRIM_GAMBAR:Nama Produk] & bersihkan dulu SEBELUM hitung delay,
+        // supaya panjang teks yang dipakai untuk menentukan delay itu akurat
+        // (tag gambar bukan bagian dari isi balasan yang dibaca customer).
+        let cleanReply = reply;
+        const imgMatches = [...reply.matchAll(/\[KIRIM_GAMBAR:(.*?)\]/gi)];
+        const productsToImage = [];
+        for (const match of imgMatches) {
+          productsToImage.push(match[1].trim());
+          cleanReply = cleanReply.replace(match[0], '').trim();
         }
-      }
-    });
 
-    // Proses satu "giliran" pelanggan (bisa gabungan beberapa bubble yang
-    // dikirim berurutan dalam window debounce) lalu kirim balasan AI.
-    async function processCustomerMessage(from, senderName, combinedBody, quotedMsg, allKeys) {
-      // PREEMPTION: Batalkan proses AI sebelumnya dari user ini jika masih berjalan
-      if (activeProcessing.has(from)) {
-        const currentTask = activeProcessing.get(from);
-        if (currentTask.controller) currentTask.controller.abort();
-        if (currentTask.timeoutId) clearTimeout(currentTask.timeoutId);
-        if (currentTask.resolveDelay) currentTask.resolveDelay(); // cegah promise menggantung
+        const delayMs = getReplyDelayMs(cleanReply);
+        
+        // Simpan timeoutId dan resolve agar bisa di-clear/dibatalkan jika ada pesan baru
+        await new Promise(resolve => {
+          taskState.resolveDelay = resolve;
+          taskState.timeoutId = setTimeout(() => {
+            taskState.resolveDelay = null;
+            resolve();
+          }, delayMs);
+        });
+
+        // Jika dibatalkan saat sedang delay, jangan kirim pesannya!
+        if (controller.signal.aborted) {
+           console.log(`⚠️ Pesan untuk ${senderName} batal dikirim karena di-preempt saat delay.`);
+           entry.replied = true;
+           entry.aiReply = '(Dibatalkan karena pesan susulan)';
+           save(MSG_FILE, messages);
+           return; 
+        }
+
+        // Hapus dari activeProcessing karena sudah mau dikirim
         activeProcessing.delete(from);
-        console.log(`⚡ Menghentikan proses AI sebelumnya untuk ${senderName} karena ada pesan baru masuk.`);
-      }
 
-      const entry = {
-        id: Date.now(), from, senderName, body: combinedBody,
-        timestamp: new Date().toISOString(),
-        replied: false, aiReply: null,
-      };
-
-      // 1. Munculkan langsung di dashboard dan history
-      messages.unshift(entry);
-      if (messages.length > 300) messages = messages.slice(0, 300);
-      save(MSG_FILE, messages);
-      io.emit('new_message', entry);
-
-      // 2. Masukkan proses AI ke dalam antrean (queue) khusus user ini
-      const prevTask = userLocks.get(from) || Promise.resolve();
-      
-      const nextTask = prevTask.then(async () => {
-        if (settings.autoReply && isOpHour() && isWhitelisted(from)) {
-          const controller = new AbortController();
-          const taskState = { controller, timeoutId: null };
-          activeProcessing.set(from, taskState);
-
-          try { await sock.readMessages(allKeys); } catch(e) {}
-
-          // Fetch history here. Pesan sebelumnya yang batal terbalas akan terbaca di sini!
-          const history = messages.filter(m => m.from === from && m.id !== entry.id).slice(0, 8).reverse();
-          let reply = await aiReply(combinedBody, senderName, history, controller.signal);
-
-          if (reply) {
-            reply = extractOrder(reply, from);
-
-            try { await sock.sendPresenceUpdate('composing', from); } catch(e) {}
-
-            const minS = Math.max(0, Number(settings.replyDelayMin) ?? 15);
-            const maxS = Math.max(minS, Number(settings.replyDelayMax) ?? 25);
-            const delayMs = minS * 1000 + Math.random() * (maxS - minS) * 1000;
-            
-            // Simpan timeoutId dan resolve agar bisa di-clear/dibatalkan jika ada pesan baru
-            await new Promise(resolve => {
-              taskState.resolveDelay = resolve;
-              taskState.timeoutId = setTimeout(() => {
-                taskState.resolveDelay = null;
-                resolve();
-              }, delayMs);
-            });
-
-            // Jika dibatalkan saat sedang delay, jangan kirim pesannya!
-            if (controller.signal.aborted) {
-               console.log(`⚠️ Pesan untuk ${senderName} batal dikirim karena di-preempt saat delay.`);
-               entry.replied = true;
-               entry.aiReply = '(Dibatalkan karena pesan susulan)';
-               save(MSG_FILE, messages);
-               return; 
-            }
-
-            try { await sock.sendPresenceUpdate('paused', from); } catch(e) {}
-
-            // Hapus dari activeProcessing karena sudah mau dikirim
-            activeProcessing.delete(from);
-
-            // Cek tag [KIRIM_GAMBAR:Nama Produk]
-            let cleanReply = reply;
-            const imgMatches = [...reply.matchAll(/\[KIRIM_GAMBAR:(.*?)\]/gi)];
-            const productsToImage = [];
-            for (const match of imgMatches) {
-              productsToImage.push(match[1].trim());
-              cleanReply = cleanReply.replace(match[0], '').trim();
-            }
-
-            await sock.sendMessage(from, { text: cleanReply }, { quoted: quotedMsg });
-            
-            // Kirim gambar jika diminta dan tersedia
-            for (const productToImage of productsToImage) {
-              if (settings.productImages && settings.productImages[productToImage]) {
-                for (const filename of settings.productImages[productToImage]) {
-                  if (filename) {
-                     const imgPath = path.join(IMAGES_DIR, filename);
-                     if (fs.existsSync(imgPath)) {
-                       try {
-                         const imgBuffer = fs.readFileSync(imgPath);
-                         const ext = filename.split('.').pop().toLowerCase();
-                         const mimetype = ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg');
-                         await sock.sendMessage(from, { image: imgBuffer, mimetype: mimetype });
-                       } catch(e) { console.error('Gagal kirim gambar:', e); }
-                     }
-                  }
-                }
+        await sendWhatsAppText(from, cleanReply, lastWamid);
+        
+        // Kirim gambar jika diminta dan tersedia
+        for (const productToImage of productsToImage) {
+          if (settings.productImages && settings.productImages[productToImage]) {
+            for (const filename of settings.productImages[productToImage]) {
+              if (filename) {
+                 const imgPath = path.join(IMAGES_DIR, filename);
+                 if (fs.existsSync(imgPath)) {
+                   try {
+                     const ext = filename.split('.').pop().toLowerCase();
+                     const mimetype = ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg');
+                     await sendWhatsAppImageByPath(from, imgPath, mimetype);
+                   } catch(e) { console.error('Gagal kirim gambar:', e.message); }
+                 }
               }
             }
-            
-            // Update entry dengan balasan AI
-            entry.replied = true; 
-            entry.aiReply = cleanReply;
-            save(MSG_FILE, messages);
-            io.emit('message_updated', entry);
-            console.log(`🤖 AI (delay ${Math.round(delayMs/1000)}s): ${cleanReply}`);
-            
-            // Picu retry untuk pesan tertunda lainnya secara background
-            setTimeout(retryFailedMessages, 5000);
-          } else {
-            activeProcessing.delete(from);
-            // null bisa berarti dibatalkan (AbortError) atau fatal error.
-            if (controller.signal.aborted) {
-               console.log(`⚠️ Proses fetch untuk ${senderName} dibatalkan karena ada pesan susulan.`);
-               entry.replied = true;
-               entry.aiReply = '(Dibatalkan karena pesan susulan)';
-               save(MSG_FILE, messages);
-            } else {
-              console.log('⚠️ AI tidak membalas (cek error di atas atau quota)');
-            }
           }
         }
-      }).catch(e => {
+        
+        // Update entry dengan balasan AI
+        entry.replied = true; 
+        entry.aiReply = cleanReply;
+        save(MSG_FILE, messages);
+        io.emit('message_updated', entry);
+        console.log(`🤖 AI (delay ${Math.round(delayMs/1000)}s): ${cleanReply}`);
+        
+        // Picu retry untuk pesan tertunda lainnya secara background
+        setTimeout(retryFailedMessages, 5000);
+      } else {
         activeProcessing.delete(from);
-        console.error('Error in user queue:', e);
-      });
-
-      userLocks.set(from, nextTask);
-    }
-
-    sock.ev.on('messages.upsert', async ({ messages: msgs, type }) => {
-      if (type !== 'notify') return;
-      for (const msg of msgs) {
-        try {
-          const from = msg.key.remoteJid;
-          if (!from || from.endsWith('@g.us')) continue;
-
-          if (msg.key.fromMe) {
-            const entryToUpdate = messages.find(m => m.from === from && !m.replied);
-            if (entryToUpdate) {
-              entryToUpdate.replied = true;
-              entryToUpdate.aiReply = '(Dibalas manual oleh Admin)';
-              save(MSG_FILE, messages);
-              io.emit('message_updated', entryToUpdate);
-            }
-            continue;
-          }
-          if (!msg.message) continue;
-
-          let m = msg.message;
-          if (m.ephemeralMessage) m = m.ephemeralMessage.message;
-          if (m.viewOnceMessage) m = m.viewOnceMessage.message;
-          if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
-
-          const body =
-            m?.conversation ||
-            m?.extendedTextMessage?.text ||
-            m?.imageMessage?.caption ||
-            m?.videoMessage?.caption || '';
-            
-          if (!body.trim()) continue;
-
-          const senderName = msg.pushName || from.split('@')[0];
-          console.log(`📩 ${senderName}: ${body}`);
-
-          // ── Command superadmin: on/off untuk toggle auto-reply dari nomor admin ──
-          if (isAdminNumber(from)) {
-            const cmd = body.trim().toLowerCase();
-            if (cmd === 'on' || cmd === 'off') {
-              settings.autoReply = (cmd === 'on');
-              save(SET_FILE, settings);
-              io.emit('settings_updated', settings);
-
-              const confirmText = settings.autoReply
-                ? '✅ Bot diaktifkan. Auto-reply AI menyala kembali.'
-                : '⛔ Bot dimatikan. Auto-reply AI nonaktif, semua chat masuk perlu dibalas manual.';
-
-              try { await sock.sendMessage(from, { text: confirmText }); } catch(e) {}
-              console.log(`🔐 Admin command: ${cmd.toUpperCase()} -> autoReply=${settings.autoReply}`);
-              continue; // skip AI reply hanya jika command adalah on/off
-            }
-            // Jika pesan dari admin bukan "on"/"off", biarkan lanjut diproses sebagai chat biasa
-          }
-
-          // ── Buffer & debounce: tunggu beberapa detik untuk menampung bubble
-          // berikutnya dari pengirim yang sama sebelum diproses sebagai satu
-          // pesan gabungan. Ini mencegah customer yang ngetik dalam beberapa
-          // bubble terpisah (misal "Halo mau tanya X" lalu "cek harga") dibalas
-          // dua kali secara terpisah/parsial. ──
-          const existing = pendingBuffers.get(from);
-          if (existing) {
-            clearTimeout(existing.timer);
-            existing.texts.push(body);
-            existing.quotedMsg = msg; // pakai pesan terakhir sebagai quoted reply
-            existing.keys.push(msg.key);
-          }
-          const buffer = existing || { texts: [body], quotedMsg: msg, senderName, keys: [msg.key] };
-          const debounceMs = Math.max(1, Number(settings.debounceSeconds) || 6) * 1000;
-          buffer.timer = setTimeout(() => {
-            pendingBuffers.delete(from);
-            const combinedBody = buffer.texts.join('\n');
-            processCustomerMessage(from, buffer.senderName, combinedBody, buffer.quotedMsg, buffer.keys)
-              .catch(e => console.error('Msg error:', e.message));
-          }, debounceMs);
-          pendingBuffers.set(from, buffer);
-
-        } catch(e) { console.error('Msg error:', e.message); }
+        // null bisa berarti dibatalkan (AbortError) atau fatal error.
+        if (controller.signal.aborted) {
+           console.log(`⚠️ Proses fetch untuk ${senderName} dibatalkan karena ada pesan susulan.`);
+           entry.replied = true;
+           entry.aiReply = '(Dibatalkan karena pesan susulan)';
+           save(MSG_FILE, messages);
+        } else {
+          console.log('⚠️ AI tidak membalas (cek error di atas atau quota)');
+        }
       }
-    });
+    }
+  }).catch(e => {
+    activeProcessing.delete(from);
+    console.error('Error in user queue:', e);
+  });
 
-  } catch(e) {
-    console.error('Init error:', e.message);
-    setTimeout(initWA, 5000);
-  }
+  userLocks.set(from, nextTask);
 }
+
+// ── Webhook WhatsApp Cloud API ─────────────────────────────────────
+
+// 1. Handshake verifikasi — dipanggil Meta sekali waktu setup webhook di App Dashboard
+app.get('/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === WEBHOOK_VERIFY_TOKEN) {
+    console.log('✅ Webhook diverifikasi oleh Meta');
+    return res.status(200).send(challenge);
+  }
+  console.log('❌ Verifikasi webhook gagal — token tidak cocok');
+  return res.sendStatus(403);
+});
+
+// 2. Event masuk (pesan, status pengiriman, dll)
+app.post('/webhook', (req, res) => {
+  // Balas 200 DULUAN secepatnya, biar Meta tidak anggap gagal & kirim ulang
+  res.sendStatus(200);
+
+  if (!isValidMetaSignature(req)) {
+    console.log('⚠️ Signature webhook tidak valid, payload dicurigai palsu — diabaikan');
+    return;
+  }
+
+  try {
+    const entryList = req.body.entry || [];
+    for (const entry of entryList) {
+      for (const change of (entry.changes || [])) {
+        const value = change.value;
+        if (!value) continue;
+
+        const contactName = value.contacts?.[0]?.profile?.name;
+        const msgs = value.messages;
+        if (!msgs || !msgs.length) continue; // bukan pesan masuk (mungkin status update read/delivered)
+
+        for (const msg of msgs) {
+          try {
+            const from = msg.from; // wa_id pengirim, format digit saja mis. "62812xxxxxxxx"
+            const wamid = msg.id;
+            if (isWamidProcessed(wamid)) { console.log('↩️ Wamid sudah pernah diproses, skip:', wamid); continue; }
+            markWamidProcessed(wamid);
+
+            // Tandai dibaca (tidak perlu tunggu hasilnya)
+            markAsReadWithTyping(wamid, false);
+
+            let body = '';
+            if (msg.type === 'text') body = msg.text?.body || '';
+            else if (msg.type === 'image') body = msg.image?.caption || '';
+            else if (msg.type === 'video') body = msg.video?.caption || '';
+            else if (msg.type === 'button') body = msg.button?.text || '';
+            else if (msg.type === 'interactive') body = msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || '';
+
+            if (!body.trim()) { console.log(`ℹ️ Pesan tipe "${msg.type}" tanpa teks/caption, dilewati`); continue; }
+
+            const senderName = contactName || from;
+            console.log(`📩 ${senderName}: ${body}`);
+
+            // ── Command superadmin: on/off untuk toggle auto-reply dari nomor admin ──
+            if (isAdminNumber(from)) {
+              const cmd = body.trim().toLowerCase();
+              if (cmd === 'on' || cmd === 'off') {
+                settings.autoReply = (cmd === 'on');
+                save(SET_FILE, settings);
+                io.emit('settings_updated', settings);
+
+                const confirmText = settings.autoReply
+                  ? '✅ Bot diaktifkan. Auto-reply AI menyala kembali.'
+                  : '⛔ Bot dimatikan. Auto-reply AI nonaktif, semua chat masuk perlu dibalas manual.';
+
+                sendWhatsAppText(from, confirmText).catch(e => console.error(e.message));
+                console.log(`🔐 Admin command: ${cmd.toUpperCase()} -> autoReply=${settings.autoReply}`);
+                continue; // skip AI reply hanya jika command adalah on/off
+              }
+              // Jika pesan dari admin bukan "on"/"off", biarkan lanjut diproses sebagai chat biasa
+            }
+
+            // ── Buffer & debounce: tunggu beberapa detik untuk menampung bubble
+            // berikutnya dari pengirim yang sama sebelum diproses sebagai satu
+            // pesan gabungan. Ini mencegah customer yang ngetik dalam beberapa
+            // bubble terpisah (misal "Halo mau tanya X" lalu "cek harga") dibalas
+            // dua kali secara terpisah/parsial. ──
+            const existing = pendingBuffers.get(from);
+            if (existing) {
+              clearTimeout(existing.timer);
+              existing.texts.push(body);
+              existing.lastWamid = wamid; // pakai wamid terakhir sebagai context reply
+            }
+            const buffer = existing || { texts: [body], lastWamid: wamid, senderName };
+            const debounceMs = Math.max(1, Number(settings.debounceSeconds) || 6) * 1000;
+            buffer.timer = setTimeout(() => {
+              pendingBuffers.delete(from);
+              const combinedBody = buffer.texts.join('\n');
+              processCustomerMessage(from, buffer.senderName, combinedBody, buffer.lastWamid)
+                .catch(e => console.error('Msg error:', e.message));
+            }, debounceMs);
+            pendingBuffers.set(from, buffer);
+
+          } catch(e) { console.error('Msg error:', e.message); }
+        }
+      }
+    }
+  } catch(e) {
+    console.error('Webhook parse error:', e.message);
+  }
+});
 
 // ── API ──
 app.get('/api/keystatus', (_, res) => {
@@ -979,8 +1049,8 @@ app.get('/api/keystatus', (_, res) => {
   });
 });
 
-app.get('/api/status',   (_, res) => res.json({ status: waStatus }));
-app.get('/api/qr',       (_, res) => res.json({ qr: qrData }));
+app.get('/api/status',   (_, res) => res.json({ status: waConfigured ? 'connected' : 'disconnected' }));
+app.get('/api/qr',       (_, res) => res.json({ qr: null })); // Cloud API tidak pakai QR
 app.get('/api/messages', (_, res) => res.json(messages.slice(0, 100)));
 app.get('/api/settings', (_, res) => res.json(settings));
 app.get('/api/haskey', (_, res) => {
@@ -1051,7 +1121,6 @@ app.post('/api/settings', (req, res) => {
   save(SET_FILE, settings);
   res.json({ ok: true });
 });
-
 app.post('/api/format-kb', async (req, res) => {
   const { knowledgeBase, followUp } = req.body;
   if (!knowledgeBase || !knowledgeBase.trim()) {
@@ -1140,7 +1209,6 @@ app.post('/api/retry', (req, res) => {
   retryFailedMessages();
   res.json({ ok: true });
 });
-
 const MAX_API_KEY_SLOTS = 15; // jumlah slot key yang didukung form dashboard/setup (GEMINI_API_KEY_1..15)
 
 app.post('/api/savekey', (req, res) => {
@@ -1199,37 +1267,36 @@ app.post('/api/testkey', async (req, res) => {
     res.json({ ok: false, error: e.message });
   }
 });
-
 app.post('/api/send', async (req, res) => {
   const { number, message } = req.body;
   if (!number || !message) return res.status(400).json({ error: 'Isi number dan message' });
-  if (waStatus !== 'connected') return res.status(400).json({ error: 'WA belum terhubung' });
+  if (!waConfigured) return res.status(400).json({ error: 'WhatsApp Cloud API belum dikonfigurasi (cek WHATSAPP_TOKEN & PHONE_NUMBER_ID di .env)' });
   try {
-    await sock.sendMessage(number.replace(/\D/g, '') + '@s.whatsapp.net', { text: message });
+    await sendWhatsAppText(normalizeIdNumber(number), message);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/logout', async (_, res) => {
-  try { await sock?.logout(); res.json({ ok: true }); }
-  catch(e) { res.status(500).json({ error: e.message }); }
+  // Tidak ada sesi/QR untuk di-logout di WhatsApp Cloud API — nomor terpasang
+  // lewat Embedded Signup di Meta App Dashboard, bukan lewat scan QR di sini.
+  res.json({ ok: true, note: 'WhatsApp Cloud API tidak menggunakan sesi QR. Kelola koneksi nomor dari Meta App Dashboard.' });
 });
 
 io.on('connection', socket => {
   console.log('Browser terhubung ke dashboard');
-  socket.emit('status', waStatus);
-  if (qrData) socket.emit('qr', qrData);
+  socket.emit('status', waConfigured ? 'connected' : 'disconnected');
+  socket.emit('qr', null);
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, async () => {
   console.log('\n==========================================');
-  console.log('  WA AI Assistant berjalan!');
+  console.log('  WA AI Assistant (WhatsApp Cloud API) berjalan!');
   console.log(`  Buka browser: http://localhost:${PORT}`);
+  console.log(`  Webhook URL untuk Meta App Dashboard: https://<domain-kamu>${PORT === 80 ? '' : ''}/webhook`);
   console.log('==========================================\n');
-  await loadBaileys();
-  initWA();
-  
+
   // Jalankan pengecekan rutin pesan tertunda setiap 5 menit (dikurangi agar tidak terlalu agresif)
   setInterval(retryFailedMessages, 5 * 60 * 1000);
 });

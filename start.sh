@@ -22,7 +22,11 @@ echo " [OK] Node.js $(node -v) ditemukan"
 if [ ! -f ".env" ]; then
     echo "GEMINI_API_KEY=" > .env
     echo "PORT=3000" >> .env
-    echo " [OK] File .env dibuat"
+    echo "WHATSAPP_TOKEN=" >> .env
+    echo "PHONE_NUMBER_ID=" >> .env
+    echo "WEBHOOK_VERIFY_TOKEN=" >> .env
+    echo "META_APP_SECRET=" >> .env
+    echo " [OK] File .env dibuat — isi WHATSAPP_TOKEN, PHONE_NUMBER_ID, WEBHOOK_VERIFY_TOKEN, META_APP_SECRET sebelum jalan"
 fi
 
 # Install dependencies kalau belum ada

@@ -251,13 +251,13 @@ input:checked+.slider:before{transform:translateX(18px)}
           <div class="ts" style="margin-top:5px;line-height:1.6">Berapa detik bot menunggu setelah pesan terakhir, untuk menampung kalau pelanggan kirim beberapa bubble berurutan, sebelum digabung & dibalas sekaligus.</div>
         </div>
         <div class="fg">
-          <label class="lbl">Delay Balas Min (detik)</label>
-          <input type="text" id="replyDelayMin" placeholder="15" onchange="patch('replyDelayMin',parseInt(this.value)||0)"/>
+          <label class="lbl">Delay Balasan Singkat (detik)</label>
+          <input type="text" id="replyDelayMin" placeholder="10" onchange="patch('replyDelayMin',parseInt(this.value)||0)"/>
         </div>
         <div class="fg">
-          <label class="lbl">Delay Balas Max (detik)</label>
-          <input type="text" id="replyDelayMax" placeholder="25" onchange="patch('replyDelayMax',parseInt(this.value)||0)"/>
-          <div class="ts" style="margin-top:5px;line-height:1.6">Bot menunggu durasi acak antara Min-Max detik sebelum benar-benar mengirim balasan, supaya terasa natural seperti orang mengetik (bukan langsung dijawab AI).</div>
+          <label class="lbl">Delay Balasan Panjang (detik)</label>
+          <input type="text" id="replyDelayMax" placeholder="15" onchange="patch('replyDelayMax',parseInt(this.value)||0)"/>
+          <div class="ts" style="margin-top:5px;line-height:1.6">Kalau balasan AI pendek (basa-basi/harga singkat), bot menunggu sekitar durasi "Singkat" sebelum kirim. Kalau balasannya panjang (penjelasan produk dll), bot menunggu sekitar durasi "Panjang" — biar terasa natural seperti orang mengetik, bukan langsung dijawab AI. Ada sedikit variasi acak ±2 detik supaya tidak terasa kaku.</div>
         </div>
       </div>
     </div>
@@ -581,8 +581,8 @@ function applySettings(s){
   document.getElementById('knowledgeBase').value=s.knowledgeBase||'';
   document.getElementById('followUp').value=s.followUp||'';
   document.getElementById('debounceSeconds').value=s.debounceSeconds??6;
-  document.getElementById('replyDelayMin').value=s.replyDelayMin??15;
-  document.getElementById('replyDelayMax').value=s.replyDelayMax??25;
+  document.getElementById('replyDelayMin').value=s.replyDelayMin??10;
+  document.getElementById('replyDelayMax').value=s.replyDelayMax??15;
   
   window.productImagesData = s.productImages || {};
   const oh=s.opHours||{};
