@@ -6,7 +6,7 @@ const path       = require('path');
 const cors       = require('cors');
 const crypto     = require('crypto');
 
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 // Auto-generate ADMIN_PASSWORD if missing
 if (!process.env.ADMIN_PASSWORD) {
