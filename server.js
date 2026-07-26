@@ -44,6 +44,15 @@ if (!WEBHOOK_VERIFY_TOKEN || !META_APP_SECRET) {
   console.log('\x1b[33m[PERINGATAN]\x1b[0m WEBHOOK_VERIFY_TOKEN / META_APP_SECRET belum diisi di .env — verifikasi webhook & validasi signature belum aktif.');
 }
 
+// ── MacroDroid bridge (HP Android + WA asli) config ───────────────
+// MACRODROID_BRIDGE_TOKEN : token bebas buatan sendiri, dicek lewat header
+// "X-Bridge-Token" tiap request dari MacroDroid ke /webhook/wa-incoming,
+// supaya endpoint ini tidak bisa dipanggil sembarang orang dari luar.
+const MACRODROID_BRIDGE_TOKEN = process.env.MACRODROID_BRIDGE_TOKEN || '';
+if (!MACRODROID_BRIDGE_TOKEN) {
+  console.log('\x1b[33m[PERINGATAN]\x1b[0m MACRODROID_BRIDGE_TOKEN belum diisi di .env — endpoint /webhook/wa-incoming belum terproteksi token.');
+}
+
 const app    = express();
 const server = http.createServer(app);
 const io     = new Server(server, { cors: { origin: '*' } });
@@ -126,6 +135,11 @@ function isWamidProcessed(id) {
 
 const DEF = {
   autoReply: true,
+  // channel: 'cloudapi' -> kirim balasan lewat WhatsApp Cloud API (Graph API resmi Meta)
+  //          'macrodroid' -> kirim balasan lewat bridge MacroDroid (HP Android + WA asli)
+  // Kedua endpoint webhook tetap aktif; setting ini hanya menentukan mana yang
+  // sedang "dipakai" (dipakai untuk validasi & ditampilkan di dashboard).
+  channel: 'cloudapi',
   persona: 'Kamu adalah asisten CS toko online yang ramah, sopan, dan helpful.',
   language: 'Indonesia',
   tone: 'Santai',
@@ -1038,6 +1052,146 @@ app.post('/webhook', (req, res) => {
   }
 });
 
+// ── Webhook MacroDroid (bridge HP Android + WA asli) ──────────────
+// Dipanggil oleh Macro 1 di HP tiap ada notifikasi WA baru.
+// Request  : { sender, message, senderName? }
+// Response : { reply, images: [...url] }  -> dipakai Macro 2 untuk ketik & kirim balasan
+// Kalau request ini "tertumpuk" karena ada pesan susulan dalam window debounce yang sama,
+// responnya { buffered: true, reply: null } -> MacroDroid TIDAK PERLU kirim apa-apa untuk request ini
+// (baru request TERAKHIR dalam satu window yang benar-benar dapat balasan final).
+const macrodroidBuffers = new Map(); // key: id percakapan, value: { texts, senderName, timer, pendingRes }
+
+// sender dari notifikasi WA Android bisa berupa nomor (digit) atau nama kontak
+// tersimpan. Kalau berupa nomor, normalisasi spy konsisten dgn channel Cloud API
+// (yang selalu memakai wa_id digit); kalau nama kontak, pakai apa adanya sebagai id percakapan.
+function normalizeMacrodroidSender(raw) {
+  const digits = (raw || '').replace(/\D/g, '');
+  if (digits.length >= 8) return normalizeIdNumber(digits);
+  return (raw || '').trim();
+}
+
+app.post('/webhook/wa-incoming', async (req, res) => {
+  try {
+    if (MACRODROID_BRIDGE_TOKEN && req.headers['x-bridge-token'] !== MACRODROID_BRIDGE_TOKEN) {
+      return res.status(401).json({ error: 'Unauthorized: X-Bridge-Token tidak cocok' });
+    }
+    if (settings.channel !== 'macrodroid') {
+      return res.status(409).json({ error: 'Channel MacroDroid tidak sedang aktif. Aktifkan dulu di dashboard (Channel Pengiriman).' });
+    }
+
+    const { sender, message, senderName } = req.body || {};
+    if (!sender || !message) return res.status(400).json({ error: 'Isi sender dan message' });
+
+    const from = normalizeMacrodroidSender(sender);
+    const name = (senderName || sender || '').toString();
+    console.log(`📩 [MacroDroid] ${name}: ${message}`);
+
+    if (!settings.autoReply || !isOpHour() || !isWhitelisted(from)) {
+      return res.json({ reply: null, skipped: true });
+    }
+
+    // Command superadmin: on/off (sama seperti channel Cloud API)
+    if (isAdminNumber(from)) {
+      const cmd = String(message).trim().toLowerCase();
+      if (cmd === 'on' || cmd === 'off') {
+        settings.autoReply = (cmd === 'on');
+        save(SET_FILE, settings);
+        io.emit('settings_updated', settings);
+        const confirmText = settings.autoReply
+          ? '✅ Bot diaktifkan. Auto-reply AI menyala kembali.'
+          : '⛔ Bot dimatikan. Auto-reply AI nonaktif, semua chat masuk perlu dibalas manual.';
+        console.log(`🔐 Admin command (MacroDroid): ${cmd.toUpperCase()} -> autoReply=${settings.autoReply}`);
+        return res.json({ reply: confirmText });
+      }
+    }
+
+    // Buffer/debounce: tumpuk pesan berurutan dari sender yang sama dalam window singkat,
+    // supaya beberapa bubble berturut-turut dibalas sekaligus (bukan dobel/parsial).
+    const existing = macrodroidBuffers.get(from);
+    if (existing) {
+      clearTimeout(existing.timer);
+      existing.texts.push(String(message));
+      // Selesaikan request LAMA yang tertumpuk supaya koneksinya tidak menggantung.
+      if (existing.pendingRes) {
+        try { existing.pendingRes.json({ reply: null, buffered: true }); } catch (e) {}
+      }
+    }
+    const buffer = existing || { texts: [String(message)] };
+    buffer.senderName = name;
+    buffer.pendingRes = res; // request TERBARU yang akan menerima balasan final
+    const debounceMs = Math.max(1, Number(settings.debounceSeconds) || 6) * 1000;
+    buffer.timer = setTimeout(() => flushMacrodroidBuffer(from), debounceMs);
+    macrodroidBuffers.set(from, buffer);
+  } catch (e) {
+    console.error('MacroDroid webhook error:', e.message);
+    try { res.status(500).json({ error: e.message }); } catch (e2) {}
+  }
+});
+
+async function flushMacrodroidBuffer(from) {
+  const buffer = macrodroidBuffers.get(from);
+  if (!buffer) return;
+  macrodroidBuffers.delete(from);
+  const combinedBody = buffer.texts.join('\n');
+  const finalRes = buffer.pendingRes;
+  const senderName = buffer.senderName || from;
+
+  const entry = {
+    id: Date.now(), from, senderName, body: combinedBody, wamid: null,
+    timestamp: new Date().toISOString(), replied: false, aiReply: null, channel: 'macrodroid',
+  };
+  messages.unshift(entry);
+  if (messages.length > 300) messages = messages.slice(0, 300);
+  save(MSG_FILE, messages);
+  io.emit('new_message', entry);
+
+  // Antre per-pengirim (userLocks dipakai bersama dengan channel Cloud API supaya
+  // tidak ada dua balasan AI yang berjalan bersamaan untuk kontak yang sama).
+  const prevTask = userLocks.get(from) || Promise.resolve();
+  const nextTask = prevTask.then(async () => {
+    if (entry.replied) return; // sudah dibalas manual saat antre
+
+    const history = messages.filter(m => m.from === from && m.id !== entry.id).slice(0, 8).reverse();
+    let reply = await aiReply(combinedBody, senderName, history);
+
+    if (!reply) {
+      save(MSG_FILE, messages);
+      console.log('⚠️ [MacroDroid] AI tidak membalas (cek error/quota di atas)');
+      try { finalRes.json({ reply: null, error: 'AI tidak membalas, cek quota/log server' }); } catch (e) {}
+      return;
+    }
+
+    reply = extractOrder(reply, from);
+    let cleanReply = reply;
+    const imgMatches = [...reply.matchAll(/\[KIRIM_GAMBAR:(.*?)\]/gi)];
+    const productsToImage = [];
+    for (const match of imgMatches) {
+      productsToImage.push(match[1].trim());
+      cleanReply = cleanReply.replace(match[0], '').trim();
+    }
+
+    // Kumpulkan URL gambar produk yang diminta (kalau ada) — dikirim sebagai info
+    // tambahan; pengiriman gambar via MacroDroid perlu macro/step terpisah di HP.
+    const imageUrls = [];
+    for (const p of productsToImage) {
+      const files = settings.productImages?.[p];
+      if (files) for (const f of files) if (f) imageUrls.push(`/images/${f}`);
+    }
+
+    entry.replied = true;
+    entry.aiReply = cleanReply;
+    save(MSG_FILE, messages);
+    io.emit('message_updated', entry);
+    console.log(`🤖 AI (MacroDroid) -> ${senderName}: ${cleanReply}`);
+
+    try { finalRes.json({ reply: cleanReply, images: imageUrls }); } catch (e) {}
+  }).catch(e => {
+    console.error('MacroDroid flush error:', e.message);
+    try { finalRes.json({ reply: null, error: e.message }); } catch (e2) {}
+  });
+  userLocks.set(from, nextTask);
+}
+
 // ── API ──
 app.get('/api/keystatus', (_, res) => {
   const keys = getApiKeys();
@@ -1049,7 +1203,11 @@ app.get('/api/keystatus', (_, res) => {
   });
 });
 
-app.get('/api/status',   (_, res) => res.json({ status: waConfigured ? 'connected' : 'disconnected' }));
+app.get('/api/status',   (_, res) => {
+  const channel = settings.channel === 'macrodroid' ? 'macrodroid' : 'cloudapi';
+  const status = channel === 'macrodroid' ? 'connected' : (waConfigured ? 'connected' : 'disconnected');
+  res.json({ status, channel });
+});
 app.get('/api/qr',       (_, res) => res.json({ qr: null })); // Cloud API tidak pakai QR
 app.get('/api/messages', (_, res) => res.json(messages.slice(0, 100)));
 app.get('/api/settings', (_, res) => res.json(settings));
@@ -1270,6 +1428,9 @@ app.post('/api/testkey', async (req, res) => {
 app.post('/api/send', async (req, res) => {
   const { number, message } = req.body;
   if (!number || !message) return res.status(400).json({ error: 'Isi number dan message' });
+  if (settings.channel === 'macrodroid') {
+    return res.status(400).json({ error: 'Kirim manual dari dashboard belum didukung untuk channel MacroDroid (server tidak bisa "mendorong" pesan ke HP secara langsung, HP hanya aktif saat ada notifikasi masuk). Balas manual langsung dari WhatsApp di HP.' });
+  }
   if (!waConfigured) return res.status(400).json({ error: 'WhatsApp Cloud API belum dikonfigurasi (cek WHATSAPP_TOKEN & PHONE_NUMBER_ID di .env)' });
   try {
     await sendWhatsAppText(normalizeIdNumber(number), message);
@@ -1292,9 +1453,11 @@ io.on('connection', socket => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, async () => {
   console.log('\n==========================================');
-  console.log('  WA AI Assistant (WhatsApp Cloud API) berjalan!');
+  console.log('  WA AI Assistant (Cloud API + MacroDroid) berjalan!');
   console.log(`  Buka browser: http://localhost:${PORT}`);
-  console.log(`  Webhook URL untuk Meta App Dashboard: https://<domain-kamu>${PORT === 80 ? '' : ''}/webhook`);
+  console.log(`  Channel aktif saat ini: ${settings.channel === 'macrodroid' ? 'MacroDroid' : 'WhatsApp Cloud API'} (bisa diganti di dashboard)`);
+  console.log(`  Webhook Cloud API (Meta App Dashboard): https://<domain-kamu>/webhook`);
+  console.log(`  Webhook MacroDroid (Macro 1 - HTTP Request): https://<domain-kamu>/webhook/wa-incoming`);
   console.log('==========================================\n');
 
   // Jalankan pengecekan rutin pesan tertunda setiap 5 menit (dikurangi agar tidak terlalu agresif)

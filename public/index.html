@@ -223,6 +223,24 @@ input:checked+.slider:before{transform:translateX(18px)}
         <button class="btn btn-red" style="width:auto;padding:6px 16px;margin-top:6px" onclick="doLogout()">Logout WA</button>
       </div>
       <div class="card">
+        <div class="col-title">📡 Channel Pengiriman</div>
+        <div class="fg">
+          <label class="lbl">Pakai channel</label>
+          <select id="channelSelect" onchange="onChannelChange(this.value)">
+            <option value="cloudapi">☁️ WhatsApp Cloud API (resmi)</option>
+            <option value="macrodroid">🤖 MacroDroid (HP Android)</option>
+          </select>
+        </div>
+        <div class="ts" id="channelHintCloud" style="margin-top:6px;line-height:1.6">
+          Balasan dikirim lewat Graph API Meta. Webhook untuk App Dashboard:<br/>
+          <code id="webhookUrlCloud" style="font-size:.68rem;word-break:break-all"></code>
+        </div>
+        <div class="ts" id="channelHintMacro" style="margin-top:6px;line-height:1.6;display:none">
+          Balasan dikirim lewat HP Android (WA asli + MacroDroid), bukan Graph API. Pakai URL ini di HTTP Request action Macro 1, plus header <b>X-Bridge-Token</b> sesuai <code>MACRODROID_BRIDGE_TOKEN</code> di .env:<br/>
+          <code id="webhookUrlMacro" style="font-size:.68rem;word-break:break-all"></code>
+        </div>
+      </div>
+      <div class="card">
         <div class="col-title">Kontrol</div>
         <div class="toggle-row">
           <div><div class="tl">Auto Reply</div><div class="ts">AI balas otomatis</div></div>
@@ -569,6 +587,10 @@ if (!localStorage.getItem('authToken')) {
 
 function applySettings(s){
   if(!s)return;
+  document.getElementById('channelSelect').value=s.channel||'cloudapi';
+  document.getElementById('webhookUrlCloud').textContent=location.origin+'/webhook';
+  document.getElementById('webhookUrlMacro').textContent=location.origin+'/webhook/wa-incoming';
+  updateChannelHint(s.channel||'cloudapi');
   document.getElementById('arToggle').checked=s.autoReply??true;
   document.getElementById('persona').value=s.persona||'';
   document.getElementById('modelName').value=s.modelName||'gemini-3.5-flash-lite';
@@ -656,6 +678,16 @@ function setStatus(st){
 
 function showQR(qr){if(!qr)return;document.querySelector('.qr-box').innerHTML=`<img src="${qr}" alt="QR"/>`;}
 
+function updateChannelHint(ch){
+  document.getElementById('channelHintCloud').style.display = ch==='macrodroid' ? 'none' : 'block';
+  document.getElementById('channelHintMacro').style.display = ch==='macrodroid' ? 'block' : 'none';
+}
+async function onChannelChange(v){
+  updateChannelHint(v);
+  await patch('channel', v);
+  const sr = await fetch('/api/status').then(r=>r.json()).catch(()=>({status:'disconnected'}));
+  setStatus(sr.status);
+}
 async function patch(k,v){await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({[k]:v})});}
 
 async function saveSettings(){
