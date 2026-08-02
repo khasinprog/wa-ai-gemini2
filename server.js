@@ -147,7 +147,7 @@ const DEF = {
   whitelist: [],
   knowledgeBase: '',
   followUp: '',
-  modelName: 'gemini-3.5-flash-lite',
+  modelName: 'gemini-3.1-flash-lite',
   temperature: 0.7,
   adminNumber: '085210127796', // nomor superadmin - kirim on/off ke nomor bot untuk kontrol auto-reply
   debounceSeconds: 10, // E3: dinaikkan 6→10 karena WABA webhook delivery bisa selisih beberapa detik
@@ -552,7 +552,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Panggil Gemini REST API langsung dengan key tertentu
 async function callGeminiDirect(key, keySlot, message, name, history, signal) {
-  const model = settings.modelName || 'gemini-3.5-flash-lite';
+  const model = settings.modelName || 'gemini-3.1-flash-lite';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
   const contents = [];
@@ -1355,7 +1355,7 @@ app.post('/api/format-kb', async (req, res) => {
   const key = allKeys.find(k => k && k.length >= 10);
   if (!key) return res.status(400).json({ error: 'Belum ada API key yang diisi' });
 
-  const model = settings.modelName || 'gemini-3.5-flash-lite';
+  const model = settings.modelName || 'gemini-3.1-flash-lite';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
   const systemPrompt = `Kamu adalah asisten pembuat database produk. Tugas HANYAMU adalah mengonversi teks mentah yang diberikan user ke dalam format khusus.
@@ -1476,7 +1476,7 @@ app.post('/api/testkey', async (req, res) => {
   const key = keys[slot - 1];
   if (!key) return res.json({ ok: false, error: `Key ${slot} belum diisi` });
   try {
-    const model = settings.modelName || 'gemini-3.5-flash-lite';
+    const model = settings.modelName || 'gemini-3.1-flash-lite';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
     const r = await fetch(url, {
       method: 'POST',

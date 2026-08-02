@@ -169,6 +169,328 @@ input:checked+.slider:before{transform:translateX(18px)}
 .setup-err{font-size:.7rem;color:var(--red);margin-top:8px;min-height:14px;line-height:1.5;word-break:break-word}
 ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:4px}
 #loginOverlay{position:fixed;inset:0;background:rgba(15,23,42,.95);z-index:9999;display:flex;align-items:center;justify-content:center}
+
+/* ================================================================
+   MOBILE PWA — WhatsApp-like Layout (@media max-width: 768px)
+   Hanya mengubah tampilan. Semua fungsi JS asli tidak diubah.
+   ================================================================ */
+@media (max-width: 768px) {
+
+  /* Sembunyikan sidebar desktop, ganti dengan bottom nav */
+  .sidebar { display: none !important; }
+
+  /* Sembunyikan menu navigasi kiri (Menu Data, AI WA, Galeri) di HTML asli */
+  .sidebar-menu { display: none; }
+
+  /* Full height body & app */
+  body { overflow: hidden; }
+  .app-layout { flex-direction: column; height: 100vh; }
+  .main-content { flex: 1; overflow: hidden; position: relative; }
+
+  /* ── Bottom Navigation Bar ── */
+  #mobileBottomNav {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 58px;
+    background: #fff;
+    border-top: 1px solid var(--border);
+    z-index: 200;
+    box-shadow: 0 -2px 12px rgba(0,0,0,.08);
+  }
+  .m-nav-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    font-size: .6rem;
+    font-weight: 600;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 6px 4px;
+    transition: color .2s;
+    border: none;
+    background: transparent;
+  }
+  .m-nav-btn .m-icon { font-size: 1.35rem; line-height: 1; }
+  .m-nav-btn.active { color: #075e54; }
+  .m-nav-btn.active .m-icon { filter: drop-shadow(0 0 4px rgba(7,94,84,.4)); }
+
+  /* Pad konten agar tidak tertutup bottom nav */
+  .view.active { padding-bottom: 58px; }
+
+  /* ── View AI: layout chat mobile ── */
+  #view-ai .main-cols {
+    flex-direction: column;
+    padding: 0;
+    gap: 0;
+    height: 100%;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* Sembunyikan panel kiri (kontrol bot) di tab Chat:
+     di mobile panel ini dipindah ke tab Settings */
+  #view-ai .main-cols > .col:first-child {
+    display: none;
+  }
+
+  /* Panel tengah (daftar kontak + chat) ambil semua lebar */
+  #view-ai .main-cols > .col:nth-child(2) {
+    width: 100% !important;
+    max-width: 100% !important;
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+    display: flex;
+    flex-direction: row;
+    overflow: hidden;
+    position: relative;
+    height: 100%;
+  }
+
+  /* ── Daftar Kontak: tampil full saat tidak ada chat aktif ── */
+  #view-ai .main-cols > .col:nth-child(2) > div:first-child {
+    width: 100% !important;
+    min-width: 100%;
+    border-right: none;
+    background: #fff;
+    transition: transform 0.3s ease;
+    flex-shrink: 0;
+  }
+  #view-ai .main-cols > .col:nth-child(2) > div:last-child {
+    position: absolute;
+    inset: 0;
+    background: #efeae2;
+    transform: translateX(100%);
+    transition: transform 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    z-index: 10;
+  }
+
+  /* Saat kontak dipilih (class .chat-open ditambah JS) — slide in */
+  #view-ai .main-cols > .col:nth-child(2).chat-open > div:first-child {
+    transform: translateX(-100%);
+  }
+  #view-ai .main-cols > .col:nth-child(2).chat-open > div:last-child {
+    transform: translateX(0);
+  }
+
+  /* Header WA — tambah warna hijau khas WA */
+  .chat-header {
+    background: #075e54;
+    padding: 10px 14px;
+    padding-top: max(10px, env(safe-area-inset-top));
+    flex-shrink: 0;
+    border-bottom: none;
+    align-items: center;
+    gap: 10px;
+  }
+  .chat-avatar {
+    background: rgba(255,255,255,.25);
+    color: #fff;
+    font-weight: 700;
+  }
+  .chat-name { color: #fff; font-size: 1rem; }
+  .chat-sub { color: rgba(255,255,255,.75); }
+
+  /* Tombol back di header chat */
+  #mobileChatBack {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: #fff;
+    font-size: 1.4rem;
+    cursor: pointer;
+    padding: 4px 6px;
+    flex-shrink: 0;
+    margin-left: -4px;
+  }
+
+  /* Area pesan — background ala WA */
+  .chat-messages {
+    flex: 1;
+    background: #efeae2;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' opacity='.04'%3E%3Ccircle cx='30' cy='30' r='25' fill='none' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E");
+    padding: 12px 10px;
+  }
+
+  /* Bubble chat ala WA */
+  .bubble.incoming {
+    background: #fff;
+    border: none;
+    border-radius: 0 8px 8px 8px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.13);
+    color: #111;
+    font-size: .875rem;
+  }
+  .bubble.outgoing {
+    background: #d9fdd3;
+    color: #111;
+    border-radius: 8px 0 8px 8px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.13);
+    font-size: .875rem;
+  }
+  .bubble-ai-label {
+    color: #075e54;
+    font-size: .65rem;
+  }
+  .bubble-time { color: #667781; }
+
+  /* Header kontak list ala WA */
+  #view-ai .main-cols > .col:nth-child(2) > div:first-child > div:first-child {
+    background: #075e54;
+    padding: 14px 16px;
+    padding-top: max(14px, env(safe-area-inset-top));
+  }
+  #view-ai .main-cols > .col:nth-child(2) > div:first-child > div:first-child .col-title {
+    color: #fff;
+    font-size: 1rem;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  /* Contact item lebih besar di HP */
+  .contact-item {
+    padding: 14px 16px;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .contact-avatar {
+    width: 46px; height: 46px;
+    background: #d1d7db;
+    font-size: 18px;
+    color: #fff;
+  }
+  .contact-name { font-size: .95rem; }
+  .contact-preview { font-size: .8rem; color: #667781; }
+  .contact-time { font-size: .72rem; color: #667781; }
+
+  /* Panel kanan (AI Settings) di mobile */
+  #view-ai .main-cols > .col:nth-child(3) {
+    display: none;
+  }
+
+  /* ── Mobile Settings View (panel kiri + panel kanan digabung scroll) ── */
+  /* mobileSettingsView menggunakan class .view standar, tidak butuh CSS tambahan */
+
+  /* Sembunyikan header desktop di AI view di mobile */
+  #view-ai header {
+    background: #075e54;
+    padding: 12px 16px;
+    padding-top: max(12px, env(safe-area-inset-top));
+    border-bottom: none;
+  }
+  #view-ai header .data-title { color: #fff; font-size: 1rem; }
+  .status-pill {
+    background: rgba(255,255,255,.15);
+    border-color: transparent;
+    color: #fff;
+    font-size: .7rem;
+  }
+  .status-pill.connected { background: rgba(255,255,255,.2); color: #a7f3d0; border-color: transparent; }
+  .status-pill .dot, .status-pill.connected .dot { background: #a7f3d0; }
+
+  /* Data order: full width scroll horizontal tabel */
+  .data-container { padding: 12px; }
+  .data-header { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .table-wrapper { overflow-x: auto; }
+  .data-table { min-width: 520px; }
+
+  /* Gambar galeri: 2 kolom */
+  #gambarListContainer > div > div > div { width: 90px; }
+  #gambarListContainer > div > div > div > div:nth-child(2) { width: 90px; height: 90px; }
+}
+
+/* Desktop: hide mobile-only elements */
+@media (min-width: 769px) {
+  #mobileBottomNav { display: none !important; }
+  #mobileChatBack { display: none !important; }
+  #mobileSettingsView { display: none !important; }
+  .mob-input-bar { display: none !important; }
+}
+
+/* ── WA-style Input Bar ── */
+/* Tersembunyi secara default, tampil hanya di mobile saat chat terbuka */
+.mob-input-bar {
+  display: none;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #f0f2f5;
+  border-top: 1px solid #e9edef;
+  flex-shrink: 0;
+}
+.mob-input-wrap {
+  flex: 1;
+  background: #fff;
+  border-radius: 22px;
+  padding: 9px 14px;
+  display: flex;
+  align-items: flex-end;
+  box-shadow: 0 1px 2px rgba(0,0,0,.08);
+  min-height: 42px;
+}
+#mobChatInput {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: 'Inter', sans-serif;
+  font-size: .9rem;
+  line-height: 1.5;
+  /* 1 baris = 1.5 * 0.9rem ≈ 21.6px — diatur via JS */
+  max-height: 130px;
+  overflow-y: auto;
+  background: transparent;
+  color: #111;
+  /* Reset height otomatis via JS oninput */
+  height: auto;
+}
+#mobChatInput::placeholder { color: #aaa; }
+.mob-send-btn {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  border-radius: 50%;
+  background: #075e54;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,.2);
+  transition: background .15s;
+  flex-shrink: 0;
+}
+.mob-send-btn:active { background: #054d44; }
+
+/* Tampilkan input bar saat chat-open dan mobile */
+@media (max-width: 768px) {
+  .chat-open .mob-input-bar {
+    display: flex;
+  }
+  /* Pastikan chat-messages tidak kena padding bottom nav saat chat terbuka */
+  .chat-open .chat-messages {
+    padding-bottom: 8px;
+  }
+  /* FIX: Panel kanan (tabs AI/Data/Kirim/Key) wajib hidden di mobile */
+  #view-ai .main-cols > .col:last-child:not(:nth-child(2)) {
+    display: none !important;
+  }
+  /* Pastikan col tengah selalu mengisi sisa height (bukan grid) */
+  #view-ai .main-cols > .col:nth-child(2) {
+    display: flex !important;
+    flex-direction: row !important;
+    grid-template-columns: unset !important;
+  }
+}
 </style>
 </head>
 <body>
@@ -206,6 +528,22 @@ input:checked+.slider:before{transform:translateX(18px)}
       <div class="menu-item" id="menu-gambar" onclick="switchMainView('gambar')">🖼️ Galeri Produk</div>
     </div>
   </aside>
+
+  <!-- Mobile Bottom Navigation (mobile-only, hidden on desktop via CSS) -->
+  <nav id="mobileBottomNav">
+    <button class="m-nav-btn active" id="mnav-chat" onclick="mobileNavTo('chat')">
+      <span class="m-icon">💬</span><span>Chat</span>
+    </button>
+    <button class="m-nav-btn" id="mnav-settings" onclick="mobileNavTo('settings')">
+      <span class="m-icon">⚙️</span><span>Pengaturan</span>
+    </button>
+    <button class="m-nav-btn" id="mnav-data" onclick="mobileNavTo('data')">
+      <span class="m-icon">📊</span><span>Order</span>
+    </button>
+    <button class="m-nav-btn" id="mnav-gambar" onclick="mobileNavTo('gambar')">
+      <span class="m-icon">🖼️</span><span>Galeri</span>
+    </button>
+  </nav>
   <div class="main-content">
     
     <div id="view-ai" class="view active">
@@ -302,11 +640,28 @@ input:checked+.slider:before{transform:translateX(18px)}
     </div>
     <div style="display:flex;flex-direction:column;overflow:hidden">
       <div class="chat-header" id="chatHeader" style="display:none">
+        <!-- Tombol back khusus mobile -->
+        <button id="mobileChatBack" onclick="mobileBackToContacts()" aria-label="Kembali">&#8592;</button>
         <div class="chat-avatar" id="chatAvatar">?</div>
         <div><div class="chat-name" id="chatName">-</div><div class="chat-sub" id="chatSub">-</div></div>
       </div>
       <div class="chat-messages" id="chatMessages">
         <div class="empty-chat"><div class="ei">💬</div><p>Pilih kontak untuk melihat percakapan</p></div>
+      </div>
+      <!-- WA-style input bar (hanya tampil di mobile saat kontak dipilih) -->
+      <div class="mob-input-bar" id="mobInputBar">
+        <div class="mob-input-wrap">
+          <textarea
+            id="mobChatInput"
+            rows="1"
+            placeholder="Tulis pesan..."
+            oninput="mobAutoResize(this)"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();mobSend();}"
+          ></textarea>
+        </div>
+        <button class="mob-send-btn" onclick="mobSend()" id="mobSendBtn" aria-label="Kirim">
+          <svg viewBox="0 0 24 24" fill="white" width="20" height="20"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+        </button>
       </div>
     </div>
   </div>
@@ -331,9 +686,9 @@ input:checked+.slider:before{transform:translateX(18px)}
             <option value="gemini-2.5-flash">gemini-2.5-flash</option>
             <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
             <option value="gemini-2.5-pro">gemini-2.5-pro (Paling pintar)</option>
-            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (Rekomendasi & Default)</option>
             <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-            <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Rekomendasi &amp; Default)</option>
+            <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
           </select>
         </div>
         <div class="fg"><label class="lbl">Bahasa</label>
@@ -498,6 +853,13 @@ Garansi: 6 bulan"></textarea>
         </div>
       </div>
     </div>
+
+    <!-- VIEW SETTINGS MOBILE (panel kiri + panel kanan digabung scroll) -->
+    <!-- Hanya tampil di mobile via CSS. Desktop tidak terpengaruh. -->
+    <div id="mobileSettingsView" class="view" style="overflow-y:auto; padding:12px; padding-bottom:70px; background:var(--bg)">
+      <!-- Konten diisi oleh _injectMobileSettings() saat pertama kali tab Pengaturan dibuka -->
+    </div>
+
   </div>
 </div>
 
@@ -650,7 +1012,16 @@ function renderContacts(){
   }).join('');
 }
 
-function selectContact(jid){activeContact=jid;renderContacts();renderChat(jid);}
+function selectContact(jid){
+  activeContact=jid;
+  renderContacts();
+  renderChat(jid);
+  // Mobile: slide ke panel chat
+  if (window.innerWidth <= 768) {
+    const chatPanel = document.querySelector('#view-ai .main-cols > .col:nth-child(2)');
+    if (chatPanel) chatPanel.classList.add('chat-open');
+  }
+}
 
 function renderChat(jid){
   const c=contacts[jid];if(!c)return;
@@ -669,7 +1040,7 @@ function renderChat(jid){
     ${m.replied && m.aiReply && !m.cancelledEntry ?`
     <div class="bubble-wrap outgoing">
       <div class="bubble outgoing">${x(m.aiReply)}</div>
-      <div class="bubble-ai-label">✨ AI · ${ft(m.timestamp)}</div>
+      <div class="bubble-ai-label">${m.manual ? '👤 Anda' : '✨ AI'} · ${ft(m.timestamp)}</div>
     </div>`
     : m.cancelledEntry ? '' /* pesan yang dibatalkan sistem, tidak perlu tampilkan apa-apa */
     :`<div class="no-reply-note">⚠️ Tidak dibalas (cek pengaturan/quota)</div>`}
@@ -765,6 +1136,108 @@ function switchMainView(view) {
   document.querySelectorAll('.menu-item').forEach(m => m.classList.remove('active'));
   document.getElementById('menu-' + view).classList.add('active');
   if (view === 'gambar') renderGambarList();
+}
+
+// ── Mobile Navigation Functions ─────────────────────────────────────
+// Hanya aktif di layar mobile. Desktop tidak terpengaruh sama sekali.
+
+let _mobileSettingsInjected = false;
+
+function mobileNavTo(tab) {
+  if (window.innerWidth > 768) return; // Hanya mobile
+
+  // Update bottom nav active state
+  document.querySelectorAll('.m-nav-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById('mnav-' + tab);
+  if (btn) btn.classList.add('active');
+
+  if (tab === 'chat') {
+    // Tampilkan view-ai (chat)
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('view-ai').classList.add('active');
+  } else if (tab === 'settings') {
+    // Inject settings sekali, lalu tampilkan
+    if (!_mobileSettingsInjected) {
+      _injectMobileSettings();
+      _mobileSettingsInjected = true;
+    }
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('mobileSettingsView').classList.add('active');
+  } else if (tab === 'data') {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('view-data').classList.add('active');
+  } else if (tab === 'gambar') {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('view-gambar').classList.add('active');
+    renderGambarList();
+  }
+}
+
+function mobileBackToContacts() {
+  // Slide kembali ke daftar kontak
+  const chatPanel = document.querySelector('#view-ai .main-cols > .col:nth-child(2)');
+  if (chatPanel) chatPanel.classList.remove('chat-open');
+  activeContact = null;
+  renderContacts();
+}
+
+function _injectMobileSettings() {
+  // Clone konten dari panel kiri (kontrol bot) dan panel kanan (AI settings tabs)
+  // Inject ke mobileSettingsView supaya bisa di-scroll di mobile
+  const leftPanel  = document.querySelector('#view-ai .main-cols > .col:first-child .col-inner');
+  const rightPanel = document.querySelector('#view-ai .main-cols > .col:nth-child(3)');
+
+  const container = document.getElementById('mobileSettingsView');
+  container.innerHTML = ''; // clear
+
+  if (leftPanel) {
+    const leftWrap = document.createElement('div');
+    leftWrap.style.cssText = 'background:#fff;border-radius:12px;padding:16px;margin-bottom:12px;border:1px solid var(--border)';
+    leftWrap.innerHTML = '<div class="col-title" style="margin-bottom:12px">⚙️ Kontrol Bot</div>' + leftPanel.innerHTML;
+    container.appendChild(leftWrap);
+  }
+
+  if (rightPanel) {
+    const rightWrap = document.createElement('div');
+    rightWrap.style.cssText = 'background:#fff;border-radius:12px;margin-bottom:12px;border:1px solid var(--border);overflow:hidden';
+
+    // Ambil tab-content langsung (tanpa clone, supaya input tetap sync dengan aslinya)
+    // Tampilkan semua tab-content sekaligus (tidak pakai tab bar di mobile)
+    const tabs = rightPanel.querySelectorAll('.tab');
+    const contents = rightPanel.querySelectorAll('.tab-content');
+
+    const tabTitles = { ai:'🤖 AI & Model', kb:'📚 Knowledge Base', send:'📤 Kirim Pesan', key:'🔑 API Key' };
+    contents.forEach((c, i) => {
+      const tabName = c.id.replace('tab-','');
+      const section = document.createElement('div');
+      section.style.cssText = 'border-bottom:1px solid var(--border)';
+      // Header section
+      const hdr = document.createElement('div');
+      hdr.style.cssText = 'padding:12px 16px;font-weight:700;font-size:.8rem;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:space-between;background:var(--s2)';
+      hdr.innerHTML = (tabTitles[tabName] || tabName) + '<span>▼</span>';
+      // Content
+      const body = document.createElement('div');
+      body.style.cssText = 'padding:0;overflow:hidden;max-height:0;transition:max-height .3s ease';
+      // Clone isi supaya tetap scrollable
+      body.appendChild(c.cloneNode(true));
+      body.querySelector('.tab-content').classList.add('active');
+      body.querySelector('.tab-content').style.display = 'block';
+
+      // Accordion toggle
+      hdr.onclick = () => {
+        const isOpen = body.style.maxHeight !== '0px' && body.style.maxHeight !== '';
+        body.style.maxHeight = isOpen ? '0' : '2000px';
+        hdr.querySelector('span').textContent = isOpen ? '▼' : '▲';
+        if (tabName === 'key') loadKeyStatus();
+      };
+
+      section.appendChild(hdr);
+      section.appendChild(body);
+      rightWrap.appendChild(section);
+    });
+
+    container.appendChild(rightWrap);
+  }
 }
 
 function switchTab(name){
@@ -1135,6 +1608,61 @@ if ('serviceWorker' in navigator) {
       .then(reg => console.log('[SW] Terdaftar:', reg.scope))
       .catch(err => console.warn('[SW] Gagal daftar:', err));
   });
+}
+
+// ── Mobile Chat Input Functions ─────────────────────────────────────
+function mobAutoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = (el.scrollHeight) + 'px';
+}
+
+async function mobSend() {
+  if (!activeContact) return;
+  const input = document.getElementById('mobChatInput');
+  const message = input.value.trim();
+  if (!message) return;
+  
+  // Clean up input visual immediately
+  input.value = '';
+  mobAutoResize(input);
+  
+  const btn = document.getElementById('mobSendBtn');
+  btn.style.opacity = '0.5';
+  btn.disabled = true;
+
+  try {
+    const r = await fetch('/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ number: activeContact, message })
+    }).then(r => r.json());
+    
+    if (r.ok) {
+      // Optimistically add to UI as a manual reply
+      const msgObj = {
+        id: 'man-' + Date.now(),
+        from: activeContact,
+        body: '[Anda mengirim pesan]',
+        timestamp: new Date().toISOString(),
+        replied: true,
+        aiReply: message,
+        manual: true // flag khusus
+      };
+      
+      allMessages.unshift(msgObj);
+      if (!contacts[activeContact]) contacts[activeContact] = { name: activeContact, messages: [] };
+      contacts[activeContact].messages.unshift(msgObj);
+      renderChat(activeContact);
+      renderContacts();
+    } else {
+      alert('❌ Gagal mengirim: ' + r.error);
+    }
+  } catch (err) {
+    alert('❌ Koneksi error');
+  }
+  
+  btn.style.opacity = '1';
+  btn.disabled = false;
 }
 </script>
 </body>
