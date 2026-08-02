@@ -4,6 +4,13 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>WA AI Assistant</title>
+<!-- PWA: manifest & Apple meta tags -->
+<link rel="manifest" href="/manifest.json"/>
+<meta name="theme-color" content="#1b2b4d"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="WA AI"/>
+<link rel="apple-touch-icon" href="/icons/icon-192.png"/>
 <script src="/socket.io/socket.io.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
@@ -659,11 +666,13 @@ function renderChat(jid){
       <div class="bubble incoming">${x(m.body)}</div>
       <div class="bubble-time">${ft(m.timestamp)}</div>
     </div>
-    ${m.replied&&m.aiReply?`
+    ${m.replied && m.aiReply && !m.cancelledEntry ?`
     <div class="bubble-wrap outgoing">
       <div class="bubble outgoing">${x(m.aiReply)}</div>
       <div class="bubble-ai-label">✨ AI · ${ft(m.timestamp)}</div>
-    </div>`:`<div class="no-reply-note">⚠️ Tidak dibalas (cek pengaturan/quota)</div>`}
+    </div>`
+    : m.cancelledEntry ? '' /* pesan yang dibatalkan sistem, tidak perlu tampilkan apa-apa */
+    :`<div class="no-reply-note">⚠️ Tidak dibalas (cek pengaturan/quota)</div>`}
   `).join('');
   area.scrollTop=area.scrollHeight;
 }
@@ -1116,7 +1125,17 @@ async function loadKeyStatus(){
 function flash(id,msg){const el=document.getElementById(id);el.textContent=msg;setTimeout(()=>el.textContent='',3000);}
 function x(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function ft(iso){try{return new Date(iso).toLocaleString('id-ID',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}catch(e){return''}}
-init();
+// Note: initApp() sudah dipanggil di atas via conditional (L582-L586)
+// BUG FIX: dihapus pemanggilan init() yang salah (fungsi tidak ada, harusnya initApp())
+
+// ── PWA: Registrasi Service Worker ──────────────────────────────────
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js')
+      .then(reg => console.log('[SW] Terdaftar:', reg.scope))
+      .catch(err => console.warn('[SW] Gagal daftar:', err));
+  });
+}
 </script>
 </body>
 </html>

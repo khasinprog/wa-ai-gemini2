@@ -150,7 +150,7 @@ const DEF = {
   modelName: 'gemini-3.5-flash-lite',
   temperature: 0.7,
   adminNumber: '085210127796', // nomor superadmin - kirim on/off ke nomor bot untuk kontrol auto-reply
-  debounceSeconds: 6, // tunggu berapa detik sejak pesan terakhir sebelum digabung & diproses AI
+  debounceSeconds: 10, // E3: dinaikkan 6→10 karena WABA webhook delivery bisa selisih beberapa detik
   replyDelayMin: 10, // delay untuk balasan SINGKAT (di bawah REPLY_LENGTH_THRESHOLD karakter)
   replyDelayMax: 15, // delay untuk balasan PANJANG (di atas REPLY_LENGTH_THRESHOLD karakter)
   productImages: {}
@@ -466,8 +466,11 @@ function getRelevantKnowledge(message, history = []) {
   });
 
   // Kalau ketemu kecocokan jelas, kirim hanya itu (hemat token).
-  // Kalau tidak ketemu/ambigu, kirim semua sebagai fallback supaya tetap akurat.
-  const chosen = matched.length ? matched : blocks;
+  // E2: Kalau tidak ada match (pertanyaan di luar topik produk), kirim max 3 blok pertama
+  // saja sebagai konteks minimal — jangan kirim semua produk sekaligus supaya tidak
+  // boros token dan AI tidak confused.
+  const MAX_FALLBACK_BLOCKS = 3;
+  const chosen = matched.length ? matched : blocks.slice(0, MAX_FALLBACK_BLOCKS);
   return chosen.map(b => b.text).join('\n\n');
 }
 
@@ -556,7 +559,9 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal) {
   if (history?.length) {
     for (const h of history.slice(-8)) {
       contents.push({ role: 'user', parts: [{ text: h.body }] });
-      if (h.aiReply) contents.push({ role: 'model', parts: [{ text: h.aiReply }] });
+      // B4: Jangan inject model reply dari entry yang di-cancel (cancelledEntry)
+      // supaya string internal tidak bocor ke konteks Gemini
+      if (h.aiReply && !h.cancelledEntry) contents.push({ role: 'model', parts: [{ text: h.aiReply }] });
     }
   }
   contents.push({ role: 'user', parts: [{ text: message }] });
@@ -740,7 +745,12 @@ async function retryFailedMessages() {
       if (entry.replied) return;
       if (!isOpHour() || !isWhitelisted(entry.from)) return;
 
-      const history = messages.filter(m => m.from === entry.from && m.id !== entry.id).slice(0, 8).reverse();
+      // BUG FIX: messages disimpan dengan unshift (terbaru di index 0), harus diurutkan
+      // dari terlama ke terbaru sebelum dikirim ke Gemini sebagai history percakapan.
+      const history = messages
+        .filter(m => m.from === entry.from && m.id !== entry.id && !m.cancelledEntry)
+        .sort((a, b) => a.id - b.id)
+        .slice(-8);
       // Tambah hitungan retry
       entry.retryCount = (entry.retryCount || 0) + 1;
 
@@ -786,15 +796,22 @@ async function retryFailedMessages() {
          console.log(`🤖 AI (Retry) -> ${entry.from}: ${reply}`);
       } else if (entry.retryCount >= MAX_RETRY_COUNT) {
         // Sudah MAX_RETRY_COUNT kali gagal, hentikan retry agar tidak bakar quota
+        // BUG FIX (B3): jangan tulis string status ke aiReply — hanya null + flag
+        // supaya tidak bocor ke history percakapan Gemini.
         entry.replied = true;
-        entry.aiReply = '(gagal setelah 5 percobaan - quota habis)';
+        entry.aiReply = null;
+        entry.cancelledEntry = true;
         save(MSG_FILE, messages);
         console.warn(`⚠️ Pesan dari ${entry.from} dihentikan setelah ${MAX_RETRY_COUNT}x gagal`);
       } else {
         // Belum sampai limit, simpan retryCount yang sudah diupdate
         save(MSG_FILE, messages);
       }
-    }).catch(e => console.error('Retry error:', e.message));
+    }).catch(e => console.error('Retry error:', e.message))
+    .finally(() => {
+      // M1: Bersihkan lock kalau tidak ada task pending baru dari nomor ini
+      if (userLocks.get(entry.from) === nextTask) userLocks.delete(entry.from);
+    });
     
     userLocks.set(entry.from, nextTask);
   }
@@ -809,8 +826,9 @@ const REPLY_LENGTH_THRESHOLD = 80;
 // (penjelasan produk dsb) wajar kalau "diketik" lebih lama. Diberi jitter kecil
 // (±2 detik) supaya tidak terasa kaku/persis sama setiap kali.
 function getReplyDelayMs(text) {
-  const shortSec = Math.max(0, Number(settings.replyDelayMin) ?? 10);
-  const longSec  = Math.max(shortSec, Number(settings.replyDelayMax) ?? 15);
+  // BUG FIX: Number() bisa hasilkan NaN (bukan null), jadi harus pakai || bukan ??
+  const shortSec = Math.max(0, Number(settings.replyDelayMin) || 10);
+  const longSec  = Math.max(shortSec, Number(settings.replyDelayMax) || 15);
   const baseSec  = (text?.length || 0) > REPLY_LENGTH_THRESHOLD ? longSec : shortSec;
   const jitterSec = (Math.random() * 4) - 2; // -2..+2 detik
   const sec = Math.max(1, baseSec + jitterSec);
@@ -854,10 +872,36 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
       try { await markAsReadWithTyping(lastWamid, true); } catch(e) {}
 
       // Fetch history here. Pesan sebelumnya yang batal terbalas akan terbaca di sini!
-      const history = messages.filter(m => m.from === from && m.id !== entry.id).slice(0, 8).reverse();
+      // BUG FIX: messages disimpan dengan unshift (terbaru di index 0), harus diurutkan
+      // dari terlama ke terbaru, dan skip cancelledEntry agar tidak membingungkan Gemini.
+      const history = messages
+        .filter(m => m.from === from && m.id !== entry.id && !m.cancelledEntry)
+        .sort((a, b) => a.id - b.id)
+        .slice(-8);
       let reply = await aiReply(combinedBody, senderName, history, controller.signal);
 
       if (reply) {
+        // ── B1: Hold check — cek ada pesan susulan sebelum lanjut ──────────
+        // Dua kondisi: buffer masih aktif (debounce belum fire) ATAU
+        // sudah ada entry baru di messages dari user yang sama (AI lambat,
+        // debounce buffer sudah fire dan entry baru sudah dibuat).
+        const hasNewerMessage = messages.some(m =>
+          m.from === from && m.id > entry.id && !m.replied
+        );
+        if (pendingBuffers.has(from) || hasNewerMessage) {
+          console.log(`⏸️ Reply untuk ${senderName} ditahan — ada pesan susulan.`);
+          activeProcessing.delete(from);
+          // B3: null + flag, bukan string status supaya tidak bocor ke Gemini
+          entry.replied = true;
+          entry.aiReply = null;
+          entry.cancelledEntry = true;
+          save(MSG_FILE, messages);
+          return;
+        }
+        // ────────────────────────────────────────────────────────────────────
+
+        // B2: extractOrder SETELAH hold check — cegah order tersimpan
+        // padahal reply tidak jadi terkirim ke customer
         reply = extractOrder(reply, from);
 
         // Cek tag [KIRIM_GAMBAR:Nama Produk] & bersihkan dulu SEBELUM hitung delay,
@@ -886,7 +930,9 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
         if (controller.signal.aborted) {
            console.log(`⚠️ Pesan untuk ${senderName} batal dikirim karena di-preempt saat delay.`);
            entry.replied = true;
-           entry.aiReply = '(Dibatalkan karena pesan susulan)';
+           // B3: null + flag, bukan string status
+           entry.aiReply = null;
+           entry.cancelledEntry = true;
            save(MSG_FILE, messages);
            return; 
         }
@@ -894,7 +940,16 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
         // Hapus dari activeProcessing karena sudah mau dikirim
         activeProcessing.delete(from);
 
-        await sendWhatsAppText(from, cleanReply, lastWamid);
+        // E1: Wrap send — kalau gagal (Meta down/timeout), jangan tandai replied=true
+        // supaya retry logic (retryFailedMessages) bisa handle. extractOrder sudah punya
+        // dedup 5 menit, jadi tidak akan double-save order saat retry.
+        try {
+          await sendWhatsAppText(from, cleanReply, lastWamid);
+        } catch (sendErr) {
+          console.error(`❌ Gagal kirim reply ke ${senderName}:`, sendErr.message);
+          save(MSG_FILE, messages); // simpan state entry (belum replied)
+          return; // retry akan handle dalam 5 menit
+        }
         
         // Kirim gambar jika diminta dan tersedia
         for (const productToImage of productsToImage) {
@@ -929,7 +984,9 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
         if (controller.signal.aborted) {
            console.log(`⚠️ Proses fetch untuk ${senderName} dibatalkan karena ada pesan susulan.`);
            entry.replied = true;
-           entry.aiReply = '(Dibatalkan karena pesan susulan)';
+           // B3: null + flag, bukan string status supaya tidak bocor ke Gemini
+           entry.aiReply = null;
+           entry.cancelledEntry = true;
            save(MSG_FILE, messages);
         } else {
           console.log('⚠️ AI tidak membalas (cek error di atas atau quota)');
@@ -939,6 +996,9 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
   }).catch(e => {
     activeProcessing.delete(from);
     console.error('Error in user queue:', e);
+  }).finally(() => {
+    // M1: Bersihkan lock kalau tidak ada task pending baru dari nomor ini
+    if (userLocks.get(from) === nextTask) userLocks.delete(from);
   });
 
   userLocks.set(from, nextTask);
@@ -1188,6 +1248,9 @@ async function flushMacrodroidBuffer(from) {
   }).catch(e => {
     console.error('MacroDroid flush error:', e.message);
     try { finalRes.json({ reply: null, error: e.message }); } catch (e2) {}
+  }).finally(() => {
+    // M1: Bersihkan lock kalau tidak ada task pending baru dari nomor ini
+    if (userLocks.get(from) === nextTask) userLocks.delete(from);
   });
   userLocks.set(from, nextTask);
 }
@@ -1382,9 +1445,12 @@ app.post('/api/savekey', (req, res) => {
   const setEnvVar = (envStr, name, value) => {
     if (value === undefined) return envStr; // gak diisi di request -> jangan diubah
     const v = (value || '').trim();
-    return envStr.includes(`${name}=`)
-      ? envStr.replace(new RegExp(`${name}=.*`), `${name}=${v}`)
-      : envStr + `\n${name}=${v}`;
+    // BUG FIX: gunakan split/join literal agar aman dari karakter spesial regex di `name`
+    const marker = `${name}=`;
+    if (envStr.includes(marker)) {
+      return envStr.split('\n').map(line => line.startsWith(marker) ? `${name}=${v}` : line).join('\n');
+    }
+    return envStr + `\n${name}=${v}`;
   };
 
   for (let i = 1; i <= MAX_API_KEY_SLOTS; i++) {
