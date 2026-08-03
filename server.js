@@ -668,6 +668,8 @@ function extractOrder(replyText, fromJid) {
         save(ORDER_FILE, orders);
         io.emit('new_order', order);
         console.log('🛒 Order baru tertangkap:', order.nama);
+        // Jalankan background process AI Address & Komerce COD secara asinkron
+        processOrderAddressAI(order.id);
       } else {
         console.log('⚠️ Mengabaikan order duplikat dari:', order.nama);
       }
@@ -1426,6 +1428,24 @@ app.delete('/api/orders/:id', (req, res) => {
   }
 });
 
+// ── Backfill AI address & COD untuk order lama yang belum diproses ──
+app.post('/api/orders/backfill-ai', async (req, res) => {
+  // Ambil semua order yang belum punya ai_alamat atau ai_cod
+  const pending = orders.filter(o => o.alamat && (!o.ai_alamat || !o.ai_cod));
+  if (!pending.length) {
+    return res.json({ ok: true, message: 'Semua order sudah memiliki data AI.', processed: 0 });
+  }
+  res.json({ ok: true, message: `Memproses ${pending.length} order di background...`, processing: pending.length });
+  // Proses di background, tidak memblokir response
+  (async () => {
+    for (const order of pending) {
+      await processOrderAddressAI(order.id);
+      await new Promise(r => setTimeout(r, 1500)); // jeda 1.5 detik antar request agar tidak banjir API
+    }
+    console.log(`✅ Backfill AI selesai: ${pending.length} order diproses.`);
+  })();
+});
+
 app.post('/api/retry', (req, res) => {
   retryFailedMessages();
   res.json({ ok: true });
@@ -1517,6 +1537,94 @@ io.on('connection', socket => {
 });
 
 const PORT = process.env.PORT || 3000;
+
+// ── BACKGROUND TASK: AI ALAMAT & COD CHECK ──
+const KOMERCE_API_KEY = 'Yzx2NjTb1c484631212a74562TQwiwSB';
+const ORIGIN_ID = '73528'; // Serua Ciputat
+
+async function processOrderAddressAI(orderId) {
+  const order = orders.find(o => o.id === orderId);
+  if (!order || !order.alamat) return;
+
+  // BUG FIX #1: Gunakan getAvailableKey() agar ikut rotasi round-robin yang benar
+  // dan tidak selalu pakai Key 1 saja.
+  const picked = getAvailableKey();
+  if (!picked) {
+    console.warn('⏸️ [AI Alamat] Semua API key sedang kena limit, skip address processing.');
+    return;
+  }
+  const key = picked.key;
+
+  try {
+    const model = settings.modelName || 'gemini-3.1-flash-lite';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+
+    const systemPrompt = `Ekstrak alamat berikut. Kembalikan HANYA JSON murni (tanpa markdown backticks) dengan struktur: {"desa": "nama desa/kelurahan saja", "kecamatan": "nama kecamatan saja", "alamat_baku": "alamat rapi lengkap dengan provinsi dan kodepos"}`;
+    
+    const body = {
+      contents: [{ role: 'user', parts: [{ text: order.alamat }] }],
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      generationConfig: { temperature: 0.1 },
+    };
+
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) return;
+    
+    const data = await r.json();
+    let text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+    // BUG FIX #2: Regex yang lebih robust untuk membersihkan markdown code block
+    // Menangani pola: ```json\n...\n``` maupun ```\n...\n```
+    text = text.trim().replace(/^```(json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    
+    const parsed = JSON.parse(text);
+    if (!parsed.desa || !parsed.kecamatan) return;
+
+    order.ai_alamat = parsed.alamat_baku || order.alamat;
+    io.emit('order_updated', order); // update UI partially
+
+    // Search RajaOngkir destination
+    const searchUrl = 'https://rajaongkir.komerce.id/api/v1/destination/domestic-destination?search=' + encodeURIComponent(parsed.desa + ' ' + parsed.kecamatan) + '&limit=1';
+    const destRes = await fetch(searchUrl, { headers: { 'key': KOMERCE_API_KEY } });
+    const destData = await destRes.json();
+    
+    if (destData?.data && destData.data.length > 0) {
+      const destId = destData.data[0].id;
+      
+      // Check Cost for ID Express
+      const costPayload = new URLSearchParams();
+      costPayload.append('origin', ORIGIN_ID);
+      costPayload.append('destination', destId);
+      costPayload.append('weight', '1000');
+      costPayload.append('courier', 'ide');
+      costPayload.append('price', 'lowest');
+
+      const costRes = await fetch('https://rajaongkir.komerce.id/api/v1/calculate/domestic-cost', {
+        method: 'POST',
+        headers: { 'key': KOMERCE_API_KEY, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: costPayload.toString()
+      });
+      
+      const costData = await costRes.json();
+      // BUG FIX #3: Validasi bahwa ada hasil dengan cost > 0
+      // API bisa mengembalikan data array berisi tapi dengan cost:0 jika area tidak tercover
+      const hasValidService = costData?.data?.some(d => d.cost > 0);
+      if (hasValidService) {
+        order.ai_cod = '✅ ID Express COD Bisa';
+      } else {
+        order.ai_cod = '❌ ID Express COD Tidak Bisa';
+      }
+    } else {
+      order.ai_cod = '⚠️ Area tidak tercover';
+    }
+
+    save(ORDER_FILE, orders);
+    io.emit('order_updated', order);
+  } catch (e) {
+    console.error('AI Address Process Error:', e.message);
+  }
+}
+// ──────────────────────────────────────────────
+
 server.listen(PORT, async () => {
   console.log('\n==========================================');
   console.log('  WA AI Assistant (Cloud API + MacroDroid) berjalan!');

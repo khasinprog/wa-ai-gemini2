@@ -1388,7 +1388,16 @@ function renderOrders(){
         <div style="font-size:0.75rem;color:var(--muted)">${o.hp}</div>
       </td>
       <td><div style="font-size:0.8rem;font-weight:500">${x(o.produk)}</div></td>
-      <td><div style="font-size:0.75rem;line-height:1.5;max-width:250px">${x(o.alamat)}</div></td>
+      <td>
+        <div style="font-size:0.75rem;line-height:1.5;max-width:250px">${x(o.alamat)}</div>
+        ${o.ai_alamat ? `
+        <div style="margin-top:8px; padding-top:8px; border-top:1px dashed #e2e8f0;">
+          <div style="font-size:10px; font-weight:700; color:#10b981; letter-spacing:0.5px; margin-bottom:4px;">✨ VERSI AI</div>
+          <div style="font-size:0.75rem; line-height:1.4; color:#0f172a; margin-bottom:6px;">${x(o.ai_alamat)}</div>
+          ${o.ai_cod ? `<div style="display:inline-block; font-size:10px; font-weight:700; padding:4px 6px; border-radius:4px; ${o.ai_cod.includes('✅') ? 'background:#dcfce7; color:#166534; border:1px solid #bbf7d0;' : o.ai_cod.includes('⚠️') ? 'background:#fef3c7; color:#92400e; border:1px solid #fde68a;' : 'background:#fee2e2; color:#991b1b; border:1px solid #fecaca;'}">${x(o.ai_cod)}</div>` : ''}
+        </div>
+        ` : ''}
+      </td>
       <td>
         <select class="badge ${badgeClass} badge-select" onchange="updateOrderStatus('${o.id}',this.value)">
           <option value="order" ${o.status==='order'?'selected':''}>NEW TICKET</option>
