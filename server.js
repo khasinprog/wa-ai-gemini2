@@ -1592,7 +1592,21 @@ app.post('/api/send', async (req, res) => {
   }
   if (!waConfigured) return res.status(400).json({ error: 'WhatsApp Cloud API belum dikonfigurasi (cek WHATSAPP_TOKEN & PHONE_NUMBER_ID di .env)' });
   try {
-    await sendWhatsAppText(normalizeIdNumber(number), message);
+    const target = normalizeIdNumber(number);
+    await sendWhatsAppText(target, message);
+    const msgObj = {
+      id: 'man-' + Date.now(),
+      from: target,
+      body: '[Anda mengirim pesan]',
+      timestamp: new Date().toISOString(),
+      replied: true,
+      aiReply: message,
+      manual: true
+    };
+    messages.unshift(msgObj);
+    if (messages.length > 300) messages = messages.slice(0, 300);
+    save(MSG_FILE, messages);
+    io.emit('messages', messages);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
