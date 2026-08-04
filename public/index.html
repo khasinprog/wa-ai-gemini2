@@ -11,7 +11,57 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="apple-mobile-web-app-title" content="WA AI"/>
 <link rel="apple-touch-icon" href="/icons/icon-192.png"/>
-<script src="/socket.io/socket.io.js"></script>
+<script src="/socket.io/socket.io.js">
+// ── Manual Cek Alamat & Ongkir ──
+async function doManualCekAlamat() {
+  const input = document.getElementById('manualAlamat').value.trim();
+  if (!input) return alert('Masukkan alamat terlebih dahulu');
+  
+  const btn = document.getElementById('btnManualCekAlamat');
+  const origText = btn.innerHTML;
+  btn.innerHTML = '⏳ Sedang mengecek...';
+  btn.disabled = true;
+  btn.style.opacity = '0.7';
+  document.getElementById('manualAlamatResult').style.display = 'none';
+
+  try {
+    const res = await fetch('/api/cek-alamat-manual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('authToken')}` },
+      body: JSON.stringify({ alamat: input })
+    });
+    const data = await res.json();
+    
+    if (data.ok) {
+      document.getElementById('resDesa').textContent = data.data.desa || '-';
+      document.getElementById('resKec').textContent = data.data.kecamatan || '-';
+      document.getElementById('resAlamatBaku').textContent = data.data.ai_alamat || '-';
+      
+      const codBox = document.getElementById('resCodStatus');
+      codBox.textContent = data.data.ai_cod || 'Tidak diketahui';
+      
+      if (data.data.ai_cod.includes('✅')) {
+        codBox.style.background = '#dcfce7'; codBox.style.color = '#166534'; codBox.style.border = '1px solid #bbf7d0';
+      } else if (data.data.ai_cod.includes('⚠️')) {
+        codBox.style.background = '#fef3c7'; codBox.style.color = '#92400e'; codBox.style.border = '1px solid #fde68a';
+      } else {
+        codBox.style.background = '#fee2e2'; codBox.style.color = '#991b1b'; codBox.style.border = '1px solid #fecaca';
+      }
+      
+      document.getElementById('manualAlamatResult').style.display = 'block';
+    } else {
+      alert('❌ Gagal: ' + (data.error || 'Terjadi kesalahan'));
+    }
+  } catch (err) {
+    alert('❌ Koneksi error: ' + err.message);
+  } finally {
+    btn.innerHTML = origText;
+    btn.disabled = false;
+    btn.style.opacity = '1';
+  }
+}
+</script>
+
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
 :root{--bg:#F0F4F8;--s1:#FFFFFF;--s2:#F8FAFC;--s3:#E2E8F0;--text:#1E293B;--muted:#64748B;--border:#E2E8F0;
@@ -575,6 +625,7 @@ input:checked+.slider:before{transform:translateX(18px)}
       <div class="menu-item" id="menu-data" onclick="switchMainView('data')">📊 Menu Data</div>
       <div class="menu-item active" id="menu-ai" onclick="switchMainView('ai')">🤖 AI WA Assistant</div>
       <div class="menu-item" id="menu-gambar" onclick="switchMainView('gambar')">🖼️ Galeri Produk</div>
+      <div class="menu-item" id="menu-settings" onclick="switchMainView('settings')">⚙️ Pengaturan</div>
     </div>
   </aside>
 
@@ -601,7 +652,70 @@ input:checked+.slider:before{transform:translateX(18px)}
         <div class="status-pill" id="statusPill"><div class="dot"></div><span id="statusTxt">Memuat...</span></div>
       </header>
       <div class="main-cols">
-  <!-- Panel Kiri -->
+  <!-- Panel Tengah -->
+  <!-- Panel Tengah (Satu-satunya kolom di view-ai sekarang) -->
+    <div class="col" style="flex:1;width:auto;max-width:none;display:grid;grid-template-columns:300px 1fr;border-right:none;overflow:hidden">
+    <div style="border-right:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column">
+      <div style="padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0">
+        <div class="col-title" style="margin:0">Kontak</div>
+      </div>
+      <div id="contactList" style="flex:1">
+        <div class="empty-chat" style="padding:30px 12px;height:auto;margin-top:20px">
+          <div class="ei">👥</div><p style="font-size:.72rem">Belum ada pesan</p>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;overflow:hidden">
+      <div class="chat-header" id="chatHeader" style="display:none">
+        <!-- Tombol back khusus mobile -->
+        <button id="mobileChatBack" onclick="mobileBackToContacts()" aria-label="Kembali">&#8592;</button>
+        <div class="chat-avatar" id="chatAvatar">?</div>
+        <div><div class="chat-name" id="chatName">-</div><div class="chat-sub" id="chatSub">-</div></div>
+      </div>
+      <div class="chat-messages" id="chatMessages">
+        <div class="empty-chat"><div class="ei">💬</div><p>Pilih kontak untuk melihat percakapan</p></div>
+      </div>
+      <!-- Desktop input bar -->
+      <div class="desk-input-bar" id="deskInputBar">
+        <div class="desk-input-wrap">
+          <textarea
+            id="deskChatInput"
+            rows="1"
+            placeholder="Tulis balasan manual... (Enter kirim, Shift+Enter baris baru)"
+            oninput="deskAutoResize(this)"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();deskSend();}"
+          ></textarea>
+        </div>
+        <button class="desk-send-btn" onclick="deskSend()" id="deskSendBtn" aria-label="Kirim">
+          <svg viewBox="0 0 24 24" fill="white" width="20" height="20"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+        </button>
+      </div>
+      <!-- Mobile input bar -->
+      <div class="mob-input-bar" id="mobInputBar">
+        <div class="mob-input-wrap">
+          <textarea
+            id="mobChatInput"
+            rows="1"
+            placeholder="Tulis pesan..."
+            oninput="mobAutoResize(this)"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();mobSend();}"
+          ></textarea>
+        </div>
+        <button class="mob-send-btn" onclick="mobSend()" id="mobSendBtn" aria-label="Kirim">
+          <svg viewBox="0 0 24 24" fill="white" width="20" height="20"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  
+    <!-- VIEW PENGATURAN -->
+    <div id="view-settings" class="view">
+      <header>
+        <div class="data-title">⚙️ Pengaturan & Integrasi</div>
+      </header>
+      <div class="main-cols">
+<!-- Panel Kiri -->
   <div class="col">
     <div class="col-inner">
       <div class="col-title">WhatsApp</div>
@@ -675,67 +789,13 @@ input:checked+.slider:before{transform:translateX(18px)}
     </div>
   </div>
 
-  <!-- Panel Tengah -->
-  <div class="col" style="flex:1;width:auto;max-width:none;display:grid;grid-template-columns:250px 1fr;border-right:none;overflow:hidden">
-    <div style="border-right:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column">
-      <div style="padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0">
-        <div class="col-title" style="margin:0">Kontak</div>
-      </div>
-      <div id="contactList" style="flex:1">
-        <div class="empty-chat" style="padding:30px 12px;height:auto;margin-top:20px">
-          <div class="ei">👥</div><p style="font-size:.72rem">Belum ada pesan</p>
-        </div>
-      </div>
-    </div>
-    <div style="display:flex;flex-direction:column;overflow:hidden">
-      <div class="chat-header" id="chatHeader" style="display:none">
-        <!-- Tombol back khusus mobile -->
-        <button id="mobileChatBack" onclick="mobileBackToContacts()" aria-label="Kembali">&#8592;</button>
-        <div class="chat-avatar" id="chatAvatar">?</div>
-        <div><div class="chat-name" id="chatName">-</div><div class="chat-sub" id="chatSub">-</div></div>
-      </div>
-      <div class="chat-messages" id="chatMessages">
-        <div class="empty-chat"><div class="ei">💬</div><p>Pilih kontak untuk melihat percakapan</p></div>
-      </div>
-      <!-- Desktop input bar -->
-      <div class="desk-input-bar" id="deskInputBar">
-        <div class="desk-input-wrap">
-          <textarea
-            id="deskChatInput"
-            rows="1"
-            placeholder="Tulis balasan manual... (Enter kirim, Shift+Enter baris baru)"
-            oninput="deskAutoResize(this)"
-            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();deskSend();}"
-          ></textarea>
-        </div>
-        <button class="desk-send-btn" onclick="deskSend()" id="deskSendBtn" aria-label="Kirim">
-          <svg viewBox="0 0 24 24" fill="white" width="20" height="20"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
-        </button>
-      </div>
-      <!-- Mobile input bar -->
-      <div class="mob-input-bar" id="mobInputBar">
-        <div class="mob-input-wrap">
-          <textarea
-            id="mobChatInput"
-            rows="1"
-            placeholder="Tulis pesan..."
-            oninput="mobAutoResize(this)"
-            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();mobSend();}"
-          ></textarea>
-        </div>
-        <button class="mob-send-btn" onclick="mobSend()" id="mobSendBtn" aria-label="Kirim">
-          <svg viewBox="0 0 24 24" fill="white" width="20" height="20"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Panel Kanan -->
-  <div class="col" style="display:flex;flex-direction:row;overflow:hidden;width:380px">
+  
+<!-- Panel Kanan -->
+  <div class="col" style="display:flex;flex-direction:row;overflow:hidden;flex:1">
     <div class="tabs">
       <div class="tab active" onclick="switchTab('ai')"><div style="font-size:1.2rem">🤖</div>AI</div>
       <div class="tab" onclick="switchTab('kb')"><div style="font-size:1.2rem">📚</div>Data</div>
-      <div class="tab" onclick="switchTab('send')"><div style="font-size:1.2rem">📤</div>Kirim</div>
+      <div class="tab" onclick="switchTab('send')"><div style="font-size:1.2rem">🚚</div>Cek Resi</div>
       <div class="tab" onclick="switchTab('key')"><div style="font-size:1.2rem">🔑</div>Key</div>
     </div>
     <div style="flex:1; overflow-y:auto; display:flex; flex-direction:column; background:var(--s1)">
@@ -825,15 +885,30 @@ Garansi: 6 bulan"></textarea>
       </div>
     </div>
 
+    
     <div class="tab-content" id="tab-send" style="flex:1">
       <div class="tab-panel">
-        <div class="fg"><label class="lbl">Nomor Tujuan</label><input type="text" id="sendNum" placeholder="628xxxxxxxxxx"/></div>
-        <div class="fg"><label class="lbl">Pesan</label><textarea id="sendMsg" rows="5" placeholder="Tulis pesan..."></textarea></div>
-        <button class="btn btn-green" onclick="doSend()">📤 Kirim Pesan</button>
+        <div style="margin-bottom:12px">
+          <div class="col-title" style="margin-bottom:4px">Cek Alamat & ID Express</div>
+          <div class="ts">Masukkan alamat lengkap dari pelanggan (biasanya hasil copy-paste). AI akan mengekstrak desa/kecamatan dan mengecek ketersediaan ID Express COD ke lokasi tersebut.</div>
+        </div>
+        <div class="fg">
+          <textarea id="manualAlamat" rows="4" placeholder="Contoh: jl sudirman no 10, desa sukamaju, kec bangunrejo, kab lampung tengah"></textarea>
+        </div>
+        <button id="btnManualCekAlamat" class="btn btn-primary" style="background:linear-gradient(135deg,#10b981,#0d9488);color:white;border:none;border-radius:6px;font-weight:600;display:flex;align-items:center;gap:6px;margin-bottom:16px" onclick="doManualCekAlamat()">🚚 Cek Alamat & Ongkir</button>
+        
+        <div id="manualAlamatResult" style="display:none; background:white; padding:16px; border:1px solid var(--border); border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.05)">
+          <div style="font-size:10px; font-weight:700; color:#10b981; letter-spacing:0.5px; margin-bottom:8px;">✨ HASIL AI</div>
+          <div style="display:grid; grid-template-columns:80px 1fr; gap:8px; font-size:0.85rem; margin-bottom:12px">
+            <div style="color:var(--muted)">Desa:</div><div id="resDesa" style="font-weight:600">-</div>
+            <div style="color:var(--muted)">Kecamatan:</div><div id="resKec" style="font-weight:600">-</div>
+          </div>
+          <div style="font-size:0.75rem; line-height:1.4; color:#0f172a; margin-bottom:12px" id="resAlamatBaku">-</div>
+          <div id="resCodStatus" style="display:inline-block; font-size:11px; font-weight:700; padding:6px 10px; border-radius:4px;">-</div>
+        </div>
       </div>
     </div>
-
-    <div class="tab-content" id="tab-key" style="flex:1">
+<div class="tab-content" id="tab-key" style="flex:1">
       <div class="tab-panel">
         <div class="ts" style="margin-bottom:12px;line-height:1.6">💡 Rotasi otomatis: kalau satu key kena quota, sistem langsung pindah ke key berikutnya. Key yang kena quota reset otomatis tiap 60 detik.</div>
 
@@ -888,6 +963,10 @@ Garansi: 6 bulan"></textarea>
         <div id="gambarListContainer" style="display:flex; flex-direction:column; gap:16px; padding-bottom:40px;">
           <!-- list produk dirender dari JS -->
         </div>
+      </div>
+    </div>
+
+    
       </div>
     </div>
 
@@ -1214,7 +1293,7 @@ function switchMainView(view) {
 // ── Mobile Navigation Functions ─────────────────────────────────────
 // Hanya aktif di layar mobile. Desktop tidak terpengaruh sama sekali.
 
-let _mobileSettingsInjected = false;
+
 
 function mobileNavTo(tab) {
   if (window.innerWidth > 768) return; // Hanya mobile
@@ -1228,14 +1307,9 @@ function mobileNavTo(tab) {
     // Tampilkan view-ai (chat)
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.getElementById('view-ai').classList.add('active');
-  } else if (tab === 'settings') {
-    // Inject settings sekali, lalu tampilkan
-    if (!_mobileSettingsInjected) {
-      _injectMobileSettings();
-      _mobileSettingsInjected = true;
-    }
+    } else if (tab === 'settings') {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.getElementById('mobileSettingsView').classList.add('active');
+    document.getElementById('view-settings').classList.add('active');
   } else if (tab === 'data') {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.getElementById('view-data').classList.add('active');
@@ -1835,6 +1909,56 @@ async function aiAutoCekAlamat() {
     btn.style.opacity = '1';
   }
 }
+
+// ── Manual Cek Alamat & Ongkir ──
+async function doManualCekAlamat() {
+  const input = document.getElementById('manualAlamat').value.trim();
+  if (!input) return alert('Masukkan alamat terlebih dahulu');
+  
+  const btn = document.getElementById('btnManualCekAlamat');
+  const origText = btn.innerHTML;
+  btn.innerHTML = '⏳ Sedang mengecek...';
+  btn.disabled = true;
+  btn.style.opacity = '0.7';
+  document.getElementById('manualAlamatResult').style.display = 'none';
+
+  try {
+    const res = await fetch('/api/cek-alamat-manual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('authToken')}` },
+      body: JSON.stringify({ alamat: input })
+    });
+    const data = await res.json();
+    
+    if (data.ok) {
+      document.getElementById('resDesa').textContent = data.data.desa || '-';
+      document.getElementById('resKec').textContent = data.data.kecamatan || '-';
+      document.getElementById('resAlamatBaku').textContent = data.data.ai_alamat || '-';
+      
+      const codBox = document.getElementById('resCodStatus');
+      codBox.textContent = data.data.ai_cod || 'Tidak diketahui';
+      
+      if (data.data.ai_cod.includes('✅')) {
+        codBox.style.background = '#dcfce7'; codBox.style.color = '#166534'; codBox.style.border = '1px solid #bbf7d0';
+      } else if (data.data.ai_cod.includes('⚠️')) {
+        codBox.style.background = '#fef3c7'; codBox.style.color = '#92400e'; codBox.style.border = '1px solid #fde68a';
+      } else {
+        codBox.style.background = '#fee2e2'; codBox.style.color = '#991b1b'; codBox.style.border = '1px solid #fecaca';
+      }
+      
+      document.getElementById('manualAlamatResult').style.display = 'block';
+    } else {
+      alert('❌ Gagal: ' + (data.error || 'Terjadi kesalahan'));
+    }
+  } catch (err) {
+    alert('❌ Koneksi error: ' + err.message);
+  } finally {
+    btn.innerHTML = origText;
+    btn.disabled = false;
+    btn.style.opacity = '1';
+  }
+}
 </script>
+
 </body>
 </html>

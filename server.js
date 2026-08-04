@@ -1428,6 +1428,79 @@ app.delete('/api/orders/:id', (req, res) => {
   }
 });
 
+// ── Manual Cek Alamat & Ongkir (Tools Baru) ──
+app.post('/api/cek-alamat-manual', async (req, res) => {
+  const { alamat } = req.body;
+  if (!alamat) return res.status(400).json({ error: 'Alamat tidak boleh kosong' });
+
+  const picked = getAvailableKey();
+  if (!picked) return res.status(500).json({ error: 'Semua API Key kena limit' });
+  
+  try {
+    const model = settings.modelName || 'gemini-3.1-flash-lite';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(picked.key)}`;
+
+    const systemPrompt = `Ekstrak alamat berikut. Kembalikan HANYA JSON murni (tanpa markdown backticks) dengan struktur: {"desa": "nama desa/kelurahan saja", "kecamatan": "nama kecamatan saja", "alamat_baku": "alamat rapi lengkap dengan provinsi dan kodepos"}`;
+    
+    const body = {
+      contents: [{ role: 'user', parts: [{ text: alamat }] }],
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      generationConfig: { temperature: 0.1 },
+    };
+
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error('Gagal menghubungi AI');
+    
+    const aiData = await r.json();
+    let text = aiData?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+    text = text.trim().replace(/^```(json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (e) { throw new Error('Respons AI tidak valid format JSON'); }
+    if (!parsed.desa || !parsed.kecamatan) throw new Error('Desa atau Kecamatan gagal diekstrak');
+
+    let ai_cod = '⚠️ Area tidak tercover';
+    
+    // Search RajaOngkir destination
+    const searchUrl = 'https://rajaongkir.komerce.id/api/v1/destination/domestic-destination?search=' + encodeURIComponent(parsed.desa + ' ' + parsed.kecamatan) + '&limit=1';
+    const destRes = await fetch(searchUrl, { headers: { 'key': KOMERCE_API_KEY } });
+    const destData = await destRes.json();
+    
+    if (destData?.data && destData.data.length > 0) {
+      const destId = destData.data[0].id;
+      const costPayload = new URLSearchParams();
+      costPayload.append('origin', ORIGIN_ID);
+      costPayload.append('destination', destId);
+      costPayload.append('weight', '1000');
+      costPayload.append('courier', 'ide');
+      costPayload.append('price', 'lowest');
+
+      const costRes = await fetch('https://rajaongkir.komerce.id/api/v1/calculate/domestic-cost', {
+        method: 'POST',
+        headers: { 'key': KOMERCE_API_KEY, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: costPayload.toString()
+      });
+      
+      const costData = await costRes.json();
+      const hasValidService = costData?.data?.some(d => d.cost > 0);
+      ai_cod = hasValidService ? '✅ ID Express COD Bisa' : '❌ ID Express COD Tidak Bisa';
+    }
+
+    res.json({
+      ok: true,
+      data: {
+        ai_alamat: parsed.alamat_baku,
+        desa: parsed.desa,
+        kecamatan: parsed.kecamatan,
+        ai_cod: ai_cod
+      }
+    });
+
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Backfill AI address & COD untuk order lama yang belum diproses ──
 app.post('/api/orders/backfill-ai', async (req, res) => {
   // Ambil semua order yang belum punya ai_alamat atau ai_cod
