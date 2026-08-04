@@ -1050,6 +1050,17 @@ async function doLogin() {
 }
 
 let socket,allMessages=[],orders=[],contacts={},activeContact=null;
+let lastRead = JSON.parse(localStorage.getItem("lastRead") || "{}");
+
+function updatePageTitle() {
+  let totalUnread = 0;
+  for (const jid in contacts) {
+    if (jid === activeContact) continue;
+    const lr = lastRead[jid] || "0";
+    totalUnread += contacts[jid].messages.filter(m => !m.manual && new Date(m.timestamp) > new Date(lr)).length;
+  }
+  document.title = totalUnread > 0 ? `(${totalUnread}) WA AI Assistant` : `WA AI Assistant`;
+}
 
 async function initApp() {
   socket = io({ auth: { token: localStorage.getItem('authToken') } });
@@ -1135,6 +1146,7 @@ function processContacts(){
     if(!contacts[msg.from])contacts[msg.from]={name:msg.senderName||msg.from,messages:[]};
     contacts[msg.from].messages.push(msg);
   }
+  updatePageTitle();
   renderContacts();
 }
 
@@ -1147,19 +1159,28 @@ function renderContacts(){
   }
   list.innerHTML=keys.map(jid=>{
     const c=contacts[jid],last=c.messages[0];
+    const lr = lastRead[jid] || "0";
+    const unreadCount = jid === activeContact ? 0 : c.messages.filter(m => !m.manual && new Date(m.timestamp) > new Date(lr)).length;
+    const isUnread = unreadCount > 0;
     return`<div class="contact-item ${activeContact===jid?'active':''}" onclick="selectContact('${jid}')">
       <div class="contact-avatar">${(c.name||'?')[0].toUpperCase()}</div>
       <div class="contact-info">
-        <div class="contact-name">${x(c.name)}</div>
-        <div class="contact-preview">${x(last?.body||'')}</div>
+        <div class="contact-name" style="${isUnread ? 'font-weight:700;color:#000;' : ''}">${x(c.name)}</div>
+        <div class="contact-preview" style="${isUnread ? 'font-weight:600;color:#111;' : ''}">${x(last?.body||'')}</div>
       </div>
-      <div class="contact-time">${ft(last?.timestamp)}</div>
+      <div class="contact-time">
+        <div>${ft(last?.timestamp)}</div>
+        ${isUnread ? `<div class="unread-badge">${unreadCount}</div>` : ''}
+      </div>
     </div>`;
   }).join('');
 }
 
 function selectContact(jid){
   activeContact=jid;
+  lastRead[jid] = new Date().toISOString();
+  localStorage.setItem("lastRead", JSON.stringify(lastRead));
+  updatePageTitle();
   renderContacts();
   renderChat(jid);
   // Desktop: tampilkan input bar
