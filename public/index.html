@@ -413,8 +413,57 @@ input:checked+.slider:before{transform:translateX(18px)}
   #mobileBottomNav { display: none !important; }
   #mobileChatBack { display: none !important; }
   #mobileSettingsView { display: none !important; }
-  .mob-input-bar { display: none !important; }
+  /* mob-input-bar di desktop dikontrol via JS (show/hide saat pilih kontak) */
 }
+
+/* Desktop input bar — tampil di bawah chat-messages saat kontak dipilih */
+.desk-input-bar {
+  display: none;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--s1);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.desk-input-bar.active { display: flex; }
+.desk-input-wrap {
+  flex: 1;
+  background: var(--s2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+}
+.desk-input-wrap textarea {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  color: var(--text);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.87rem;
+  line-height: 1.4;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.desk-send-btn {
+  min-width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #075e54;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,.2);
+  transition: background .15s;
+  flex-shrink: 0;
+}
+.desk-send-btn:hover { background: #128c7e; }
 
 /* ── WA-style Input Bar ── */
 /* Tersembunyi secara default, tampil hanya di mobile saat chat terbuka */
@@ -648,7 +697,22 @@ input:checked+.slider:before{transform:translateX(18px)}
       <div class="chat-messages" id="chatMessages">
         <div class="empty-chat"><div class="ei">💬</div><p>Pilih kontak untuk melihat percakapan</p></div>
       </div>
-      <!-- WA-style input bar (hanya tampil di mobile saat kontak dipilih) -->
+      <!-- Desktop input bar -->
+      <div class="desk-input-bar" id="deskInputBar">
+        <div class="desk-input-wrap">
+          <textarea
+            id="deskChatInput"
+            rows="1"
+            placeholder="Tulis balasan manual... (Enter kirim, Shift+Enter baris baru)"
+            oninput="deskAutoResize(this)"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();deskSend();}"
+          ></textarea>
+        </div>
+        <button class="desk-send-btn" onclick="deskSend()" id="deskSendBtn" aria-label="Kirim">
+          <svg viewBox="0 0 24 24" fill="white" width="20" height="20"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+        </button>
+      </div>
+      <!-- Mobile input bar -->
       <div class="mob-input-bar" id="mobInputBar">
         <div class="mob-input-wrap">
           <textarea
@@ -832,7 +896,10 @@ Garansi: 6 bulan"></textarea>
       <div class="data-container">
         <div class="data-header">
           <div class="data-title">Data Order (Ticket Log)</div>
-          <button class="btn btn-blue" onclick="downloadExcel()">📥 Download Excel</button>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button id="btnAiAutoCek" class="btn" onclick="aiAutoCekAlamat()" style="background:linear-gradient(135deg,#10b981,#0d9488);color:white;border:none;border-radius:6px;font-weight:600;display:flex;align-items:center;gap:6px;">✨ AI Auto Cek</button>
+            <button class="btn btn-blue" onclick="downloadExcel()">📥 Download Excel</button>
+          </div>
         </div>
         <div class="table-wrapper">
           <table class="data-table">
@@ -1016,6 +1083,12 @@ function selectContact(jid){
   activeContact=jid;
   renderContacts();
   renderChat(jid);
+  // Desktop: tampilkan input bar
+  const deskBar = document.getElementById('deskInputBar');
+  if (deskBar) {
+    deskBar.classList.add('active');
+    setTimeout(() => document.getElementById('deskChatInput')?.focus(), 50);
+  }
   // Mobile: slide ke panel chat
   if (window.innerWidth <= 768) {
     const chatPanel = document.querySelector('#view-ai .main-cols > .col:nth-child(2)');
@@ -1672,6 +1745,95 @@ async function mobSend() {
   
   btn.style.opacity = '1';
   btn.disabled = false;
+}
+// ── Desktop input bar helpers ──
+function deskAutoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+async function deskSend() {
+  if (!activeContact) return;
+  const input = document.getElementById('deskChatInput');
+  const message = input.value.trim();
+  if (!message) return;
+
+  input.value = '';
+  deskAutoResize(input);
+
+  const btn = document.getElementById('deskSendBtn');
+  btn.style.opacity = '0.5';
+  btn.disabled = true;
+
+  try {
+    const r = await fetch('/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('authToken')}` },
+      body: JSON.stringify({ number: activeContact, message })
+    }).then(r => r.json());
+
+    if (r.ok) {
+      const msgObj = {
+        id: 'man-' + Date.now(),
+        from: activeContact,
+        body: '[Anda mengirim pesan]',
+        timestamp: new Date().toISOString(),
+        replied: true,
+        aiReply: message,
+        manual: true
+      };
+      allMessages.unshift(msgObj);
+      if (!contacts[activeContact]) contacts[activeContact] = { name: activeContact, messages: [] };
+      contacts[activeContact].messages.unshift(msgObj);
+      renderChat(activeContact);
+      renderContacts();
+    } else {
+      alert('❌ Gagal mengirim: ' + (r.error || 'Unknown error'));
+    }
+  } catch (err) {
+    alert('❌ Koneksi error');
+  }
+
+  btn.style.opacity = '1';
+  btn.disabled = false;
+  input.focus();
+}
+
+// ── AI Auto Cek Alamat & ID Express ──
+async function aiAutoCekAlamat() {
+  const btn = document.getElementById('btnAiAutoCek');
+  const orig = btn.innerHTML;
+  btn.innerHTML = '⏳ Sedang cek...';
+  btn.disabled = true;
+  btn.style.opacity = '0.7';
+  try {
+    const r = await fetch('/api/orders/backfill-ai', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
+    });
+    const data = await r.json();
+    if (data.ok) {
+      if (data.processed === 0) {
+        alert('✅ Semua order sudah memiliki data AI. Tidak ada yang perlu diproses.');
+      } else {
+        alert(`✅ ${data.message}\n\nHalaman akan otomatis refresh setelah proses selesai di background (~${data.processing * 2} detik).`);
+        // Refresh orders setelah estimasi selesai
+        setTimeout(async () => {
+          const res = await fetch('/api/orders', { headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` } });
+          orders = await res.json();
+          renderOrders();
+        }, data.processing * 2200);
+      }
+    } else {
+      alert('❌ Gagal: ' + (data.error || 'Unknown error'));
+    }
+  } catch(e) {
+    alert('❌ Koneksi error: ' + e.message);
+  } finally {
+    btn.innerHTML = orig;
+    btn.disabled = false;
+    btn.style.opacity = '1';
+  }
 }
 </script>
 </body>
