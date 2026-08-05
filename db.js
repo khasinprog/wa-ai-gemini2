@@ -12,7 +12,7 @@ async function initDB() {
     await client.query(`
       CREATE TABLE IF NOT EXISTS contacts (
         id SERIAL PRIMARY KEY,
-        wa_id VARCHAR(20) UNIQUE NOT NULL,
+        wa_id VARCHAR(50) UNIQUE NOT NULL,
         name VARCHAR(100),
         first_seen_at TIMESTAMP DEFAULT NOW(),
         last_active_at TIMESTAMP DEFAULT NOW(),
@@ -24,7 +24,7 @@ async function initDB() {
       CREATE TABLE IF NOT EXISTS messages (
         id BIGSERIAL PRIMARY KEY,
         waba_message_id VARCHAR(100) UNIQUE,
-        wa_id VARCHAR(20) NOT NULL,
+        wa_id VARCHAR(50) NOT NULL,
         sender_name VARCHAR(100),
         direction VARCHAR(10) NOT NULL DEFAULT 'inbound',
         sender_type VARCHAR(10) DEFAULT 'customer',
@@ -56,7 +56,7 @@ async function initDB() {
 
       CREATE TABLE IF NOT EXISTS orders (
         id VARCHAR(50) PRIMARY KEY,
-        wa_id VARCHAR(20),
+        wa_id VARCHAR(50),
         nama VARCHAR(100),
         hp VARCHAR(20),
         produk VARCHAR(200),
