@@ -79,6 +79,7 @@ const DATA_DIR = path.join(__dirname, 'data');
 const MSG_FILE = path.join(DATA_DIR, 'messages.json');
 const SET_FILE = path.join(DATA_DIR, 'settings.json');
 const ORDER_FILE = path.join(DATA_DIR, 'orders.json');
+const ESC_FILE = path.join(DATA_DIR, 'escalations.json'); // pertanyaan yang di-escalate ke admin (belum terjawab)
 const IMAGES_DIR = path.join(DATA_DIR, 'images');
 
 app.use('/images', express.static(IMAGES_DIR));
@@ -159,12 +160,24 @@ const DEF = {
 let settings = { ...DEF };
 let messages  = [];
 let orders    = [];
+// Antrean pertanyaan yang di-escalate ke admin karena Gemini tidak punya info-nya di KB.
+// Setiap item: { id, from, senderName, productTag, question, timestamp }
+let pendingEscalations = [];
+let escalationCounter  = 1; // nomor urut yang ditampilkan ke admin, jalan terus (tidak di-reset)
 
 try { if (fs.existsSync(SET_FILE)) settings = { ...DEF, ...JSON.parse(fs.readFileSync(SET_FILE, 'utf8')) }; } catch(e) {}
 try { if (fs.existsSync(MSG_FILE)) messages  = JSON.parse(fs.readFileSync(MSG_FILE, 'utf8')); } catch(e) {}
 try { if (fs.existsSync(ORDER_FILE)) orders  = JSON.parse(fs.readFileSync(ORDER_FILE, 'utf8')); } catch(e) {}
+try {
+  if (fs.existsSync(ESC_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(ESC_FILE, 'utf8'));
+    pendingEscalations = raw.items || [];
+    escalationCounter  = raw.counter || 1;
+  }
+} catch(e) {}
 
 const save = (file, data) => { try { fs.writeFileSync(file, JSON.stringify(data, null, 2)); } catch(e) {} };
+const saveEscalations = () => save(ESC_FILE, { counter: escalationCounter, items: pendingEscalations });
 
 // ── Multi API Key (rotasi dinamis key Gemini) ────────────────────
 // Tambah key cukup di .env: GEMINI_API_KEY_1, GEMINI_API_KEY_2, dst.
@@ -465,12 +478,18 @@ function getRelevantKnowledge(message, history = []) {
     return words.some(w => combinedText.includes(w));
   });
 
+  // Deteksi query "semua produk" / "jual apa saja" — kirim semua blok supaya AI
+  // tidak hanya sebut 1 produk saat customer tanya koleksi secara umum.
+  const ALL_PRODUCTS_KEYWORDS = ['apa saja', 'apa aja', 'semua produk', 'produk apa', 'jual apa', 'ada apa', 'ada apa saja', 'produk lain', 'ada produk'];
+  const isAskingAllProducts = ALL_PRODUCTS_KEYWORDS.some(kw => combinedText.includes(kw));
+
   // Kalau ketemu kecocokan jelas, kirim hanya itu (hemat token).
-  // E2: Kalau tidak ada match (pertanyaan di luar topik produk), kirim max 3 blok pertama
+  // E2: Kalau tidak ada match (pertanyaan di luar topik produk), kirim max 5 blok pertama
   // saja sebagai konteks minimal — jangan kirim semua produk sekaligus supaya tidak
   // boros token dan AI tidak confused.
-  const MAX_FALLBACK_BLOCKS = 3;
-  const chosen = matched.length ? matched : blocks.slice(0, MAX_FALLBACK_BLOCKS);
+  // E3: Pengecualian — kalau query eksplisit tanya semua produk, kirim semua blok.
+  const MAX_FALLBACK_BLOCKS = 5;
+  const chosen = isAskingAllProducts ? blocks : (matched.length ? matched : blocks.slice(0, MAX_FALLBACK_BLOCKS));
   return chosen.map(b => b.text).join('\n\n');
 }
 
@@ -496,24 +515,45 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage) {
   }
   parts.push('=== ATURAN MENJAWAB ===');
   parts.push('- Balas secara natural seperti manusia, bukan robot');
-  parts.push('- Gunakan bahasa percakapan sehari-hari yang hangat');
+  parts.push('- Gunakan bahasa percakapan sehari-hari yang hangat, gaya tetap profesional (bukan lebay/berlebihan)');
   parts.push('- JANGAN gunakan tanda petik di awal atau akhir pesan');
-  parts.push('- JANGAN sebut bahwa kamu AI kecuali ditanya langsung');
-  parts.push('- Gunakan emoji secukupnya agar terasa lebih ramah, jangan berlebihan');
+  parts.push('- Kamu mengaku sebagai "admin"/"kami" toko — JANGAN pakai nama persona apapun, dan JANGAN sebut bahwa kamu AI kecuali ditanya langsung');
+  parts.push('- Emoji dipakai JARANG saja (boleh sesekali, jangan tiap kalimat) — jangan berlebihan');
+  parts.push('');
+  parts.push('=== ATURAN NEGO HARGA & SITUASI SULIT ===');
+  parts.push('- Kalau pelanggan minta nego/diskon harga: boleh kasih potongan MAKSIMAL Rp10.000 dari harga normal, putuskan sendiri tanpa perlu tanya admin. Kalau minta lebih dari itu, tetap tolak sopan dan pertahankan harga setelah potongan Rp10.000 tersebut');
+  parts.push('- Kalau pelanggan minta harga reseller/grosir/mau dijual lagi: TOLAK dengan sopan, harga tetap sama berapa pun jumlah/tujuan pembeliannya, tidak ada harga khusus reseller');
+  parts.push('- Kalau pelanggan marah, kecewa, sarkas, atau menuduh (misal bilang bot bohong/gak jelas): tetap balas dengan SOPAN dan NORMAL seperti biasa, jangan defensif berlebihan, jangan anggap itu masalah besar');
+  parts.push('- Kalau pelanggan bilang batal/gak jadi/mundur/kemahalan/tidak jadi beli: TERIMA langsung dengan ucapan terima kasih yang sopan dan TUTUP percakapan dengan baik. DILARANG KERAS menawarkan apapun sebagai "penggantinya" — termasuk diskon, sampel, harga khusus, alternatif produk lain, atau ajakan coba-coba dulu. Kalimat penutup cukup seperti "Tidak apa-apa Kak, terima kasih sudah mampir ya. Kalau nanti berubah pikiran, kami siap membantu 😊" — dan berhenti di situ');
+  parts.push('');
+  parts.push('=== ATURAN CTA / ARAHKAN KE CLOSING (PENTING) ===');
+  parts.push('- SETIAP balasan (apapun jenisnya — jawab info produk, harga, kirim foto, bahkan balasan template dari trigger iklan) WAJIB diakhiri dengan 1 pertanyaan yang mengarahkan percakapan lebih dekat ke closing (contoh: tanya varian/warna, jumlah pesanan, lokasi kirim, atau langsung ajak proses order) — JANGAN biarkan balasan berhenti begitu saja tanpa mengajak pelanggan lanjut ke langkah berikutnya. TERMASUK balasan konfirmasi order final — setelah mengucapkan terima kasih/pesanan diproses, TETAP tambahkan 1 kalimat penutup seperti "Ada lagi yang bisa saya bantu Kak?" atau "Semoga si kecil suka ya Kak! 😊"');
+  parts.push('- Pilih SENDIRI pertanyaan yang paling relevan sesuai konteks saat itu — tidak ada urutan tahapan yang kaku (boleh langsung tanya warna, boleh langsung tanya alamat, tergantung mana yang paling pas)');
+  parts.push('- MAKSIMAL 1 pertanyaan per balasan. Kalau isi balasanmu SUDAH secara natural mengandung 1 pertanyaan (misal "mau pilih warna apa Kak?"), JANGAN tambah pertanyaan CTA lagi di atasnya — itu sudah cukup');
+  parts.push('- Kalau pelanggan sudah menunjukkan minat jelas (nanya harga/warna/detail) tapi belum kasih data pemesanan, boleh proaktif ajak closing, contoh: "Mau saya proses sekarang Kak?"');
   parts.push('');
   parts.push('=== PANJANG & GAYA BALASAN (PENTING) ===');
   parts.push('- Ikuti PROSEDUR MENJAWAB di atas sebagai aturan wajib, tapi jangan diulang kata-per-kata sebagai skrip di setiap balasan — sesuaikan redaksinya secara natural sesuai konteks pesan pelanggan saat itu');
   parts.push(isFirstMessage
-    ? '- Ini kemungkinan pesan PERTAMA pelanggan di percakapan ini: boleh jelaskan 1-2 keunggulan utama produk secara singkat, maksimal 3-4 kalimat total'
-    : '- Ini BUKAN pesan pertama (sudah ada riwayat chat): JANGAN ulangi penjelasan keunggulan produk yang sudah dijelaskan sebelumnya. Jawab LANGSUNG dan SINGKAT sesuai apa yang ditanya pelanggan saat ini saja, idealnya 1-2 kalimat');
+    ? '- Ini kemungkinan pesan PERTAMA pelanggan di percakapan ini: boleh jelaskan 1-2 keunggulan utama produk secara singkat, maksimal 3-4 kalimat total. Boleh ada sapaan/basa-basi ramah singkat di awal sebelum masuk ke jawaban inti'
+    : '- Ini BUKAN pesan pertama (sudah ada riwayat chat): JANGAN ulangi penjelasan keunggulan produk yang sudah dijelaskan sebelumnya. Jawab sesuai konteks — panjang balasan menyesuaikan kompleksitas pertanyaan, boleh ada basa-basi ramah singkat sebelum/sesudah jawaban inti (misal "Siap Kak!", "Tentu bisa~", "Senang bisa bantu!")');
   parts.push('- Kalau pelanggan hanya minta harga ("cek harga", "berapa", dll), jawab harga + 1 kalimat penutup/CTA saja. JANGAN ulang jelaskan keunggulan produk lagi kalau sudah pernah dijelaskan di riwayat chat sebelumnya');
-  parts.push('- Default-nya selalu pilih jawaban yang LEBIH SINGKAT selama informasi yang diminta tetap tersampaikan');
+  parts.push('- Panjang balasan: SEDANG — tidak perlu selalu sesingkat mungkin. Untuk pertanyaan sederhana boleh singkat; untuk yang butuh penjelasan boleh lebih panjang asal tidak bertele-tele. Natural dan tidak kaku');
   parts.push('');
   parts.push('=== TUGAS TAMBAHAN (EKSTRAKSI ORDER) ===');
-  parts.push('Jika pelanggan TELAH MEMBERIKAN data pesanan secara lengkap (minimal berisi Nama, Alamat, dan setuju untuk membeli) dan kamu sedang membalas untuk mengonfirmasi pesanan tersebut, kamu WAJIB menyisipkan blok data khusus di baris paling bawah balasanmu.');
-  parts.push('Blok ini berfungsi agar sistem otomatis kami dapat mencatat pesanan pelanggan. Formatnya harus persis seperti ini (harus valid JSON di dalam tag tersebut):');
+  parts.push('- Begitu Nama, Alamat lengkap, dan No HP sudah lengkap terkumpul dari pelanggan: JANGAN langsung sisipkan [ORDER_DATA]. Balas dulu dengan MEREKAP pesanan (produk, jumlah, total harga, nama, alamat, No HP) dan minta konfirmasi eksplisit, contoh: "Baik Kak, saya konfirmasi ya: ... sudah benar semua?"');
+  parts.push('- Order baru dianggap FINAL setelah pelanggan membalas mengonfirmasi (misal "ya", "benar", "betul", "oke fix"). BARU pada balasan konfirmasi tersebut kamu sisipkan blok data khusus di baris paling bawah balasanmu.');
+  parts.push('- Kalau pesanan berisi LEBIH DARI 1 produk (order gabungan), jumlahkan semua ke dalam total harga saat merekap, dan tulis semua nama produk pada field "produk" (pisahkan dengan koma)');
+  parts.push('Format blok data (harus valid JSON di dalam tag tersebut, dipakai sistem otomatis kami untuk mencatat pesanan — akan disembunyikan otomatis dari mata pelanggan):');
   parts.push('[ORDER_DATA]{"nama": "Nama Lengkap", "hp": "No HP atau WA", "produk": "Nama Produk yang Dipesan", "alamat": "Alamat Lengkap"}[/ORDER_DATA]');
-  parts.push('PENTING: Jangan menyertakan blok ini jika pelanggan hanya tanya-tanya atau belum pasti memesan. Blok ini akan disembunyikan otomatis oleh sistem dari mata pelanggan.');
+  parts.push('PENTING: Jangan menyertakan blok ini jika pelanggan hanya tanya-tanya, belum pasti memesan, atau belum eksplisit mengonfirmasi rekap pesanan.');
+  parts.push('');
+  parts.push('=== ATURAN ESKALASI KE ADMIN (SANGAT PENTING — JANGAN MENGARANG) ===');
+  parts.push('- Kalau ada pertanyaan yang jawabannya TIDAK tertulis eksplisit di INFORMASI PRODUK & BISNIS di atas (contoh: asal/lokasi pengiriman, estimasi hari sampai yang spesifik, stok riil, kebijakan yang tidak disebutkan) — JANGAN PERNAH mengarang atau menebak jawaban, walau kedengarannya masuk akal');
+  parts.push('- Untuk kasus itu, sisipkan tag berikut di balasanmu (boleh lebih dari satu kalau ada beberapa hal yang tidak diketahui sekaligus): [ESCALATE:Nama Produk Persis Sesuai Header Info Produk]pertanyaan singkat untuk admin[/ESCALATE]. Kalau pertanyaannya bukan soal produk tertentu (misal jam operasional toko, kebijakan retur umum), gunakan tag [ESCALATE:UMUM]pertanyaan singkat[/ESCALATE]');
+  parts.push('- Kalau SELURUH balasanmu untuk pesan ini hanya berisi tag [ESCALATE], JANGAN tambahkan kalimat basa-basi apapun di luar tag itu (sistem akan menahan balasan ke pelanggan sampai admin menjawab)');
+  parts.push('- Kalau sebagian pertanyaan pelanggan BISA dijawab dari info yang ada dan sebagian TIDAK, jawab dulu bagian yang bisa secara normal (termasuk CTA-nya), lalu tambahkan tag [ESCALATE] untuk bagian yang tidak diketahui itu');
+  parts.push('- Kalau pelanggan bertanya soal produk/topik yang BENAR-BENAR di luar bisnis toko ini sama sekali (bukan variasi istilah dari produk yang ada, misal toko jual alat rumah tangga tapi ditanya soal jasa servis HP) — ini BUKAN kasus eskalasi, cukup jawab jujur dan ramah bahwa itu tidak tersedia, lalu tawarkan produk lain yang relevan jika ada');
   parts.push('');
   
   const productsWithImages = Object.keys(settings.productImages || {}).filter(k => settings.productImages[k] && settings.productImages[k].some(img => img));
@@ -543,8 +583,7 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage) {
   parts.push('');
   parts.push('=== ATURAN PRODUK ===');
   parts.push('- Jika ada info produk, gunakan untuk menjawab pertanyaan pelanggan');
-  parts.push('- PENTING: Jika pelanggan menanyakan produk/topik yang TIDAK ADA di informasi produk di atas, jawab dengan jujur dan ramah bahwa produk tersebut belum tersedia di toko. JANGAN mengarang informasi atau berpura-pura produk itu ada');
-  parts.push('- Jika produk yang ditanya tidak ada, tawarkan produk lain yang relevan dari daftar jika memungkinkan');
+  parts.push('- Jika pelanggan menanyakan produk yang JELAS di luar bisnis toko ini (bukan produk yang dijual sama sekali), jawab jujur dan ramah bahwa produk tersebut tidak tersedia di toko, lalu tawarkan produk lain yang relevan dari daftar jika memungkinkan — ini beda dengan kasus di ATURAN ESKALASI (yang soal DETAIL suatu produk/topik yang belum diketahui)');
   return parts.join('\n');
 }
 
@@ -682,6 +721,170 @@ function extractOrder(replyText, fromJid) {
   return cleanReply;
 }
 
+// ── Escalation ke Admin ────────────────────────────────────────────
+// Dipakai saat Gemini menemukan pertanyaan yang jawabannya TIDAK eksplisit
+// ada di Knowledge Base — daripada mengarang, Gemini menyisipkan tag
+// [ESCALATE:Tag][/ESCALATE] yang ditangkap di sini, lalu dikirim ke WA
+// superadmin untuk dijawab manual.
+
+// Parse semua tag [ESCALATE:tag]pertanyaan[/ESCALATE] dari balasan Gemini,
+// buat entri pending baru untuk masing-masing, dan bersihkan tag itu dari
+// teks yang akan dikirim ke customer.
+function extractEscalations(replyText, fromJid, senderName) {
+  const regex = /\[ESCALATE:(.*?)\]([\s\S]*?)\[\/ESCALATE\]/gi;
+  const found = [];
+  let cleanReply = replyText.replace(regex, (match, tag, question) => {
+    const item = {
+      id: escalationCounter++,
+      from: fromJid,
+      senderName,
+      productTag: (tag || 'UMUM').trim(),
+      question: question.trim(),
+      timestamp: new Date().toISOString(),
+    };
+    pendingEscalations.push(item);
+    found.push(item);
+    return '';
+  });
+  cleanReply = cleanReply.trim();
+  if (found.length) {
+    saveEscalations();
+    io.emit('escalations_updated', pendingEscalations);
+    notifyAdminEscalations().catch(e => console.error('Gagal kirim notifikasi eskalasi ke admin:', e.message));
+  }
+  return { cleanReply, escalations: found };
+}
+
+// Kirim/refresh daftar bernomor SEMUA pertanyaan yang masih pending ke WA
+// superadmin. Nomor (id) konsisten dipakai lagi saat admin membalas, jadi
+// walau dijawab borongan tetap bisa dipetakan balik dengan benar.
+async function notifyAdminEscalations() {
+  if (!pendingEscalations.length || !settings.adminNumber) return;
+  const lines = pendingEscalations.map(e => `${e.id}. [${e.productTag}] ${e.question}`);
+  const text = `🔔 Ada ${pendingEscalations.length} pertanyaan yang perlu dijawab manual:\n\n${lines.join('\n')}\n\nBalas semua di 1 pesan aja ya Kak, urut sesuai nomor.`;
+  await sendWhatsAppText(normalizeIdNumber(settings.adminNumber), text);
+}
+
+// Sisipkan Q&A ke Knowledge Base secara PERMANEN. Kalau productTag cocok
+// persis dengan header salah satu blok "=== PRODUK: ... ===", FAQ ditaruh
+// di blok itu. Kalau tidak match (atau tag "UMUM"), taruh ke blok
+// "=== INFO UMUM TOKO ===" (dibuat otomatis kalau belum ada).
+function appendFaqToKB(productTag, question, answer) {
+  const faqLine = `Q: ${question}\nA: ${answer}\n`;
+  const kb = settings.knowledgeBase || '';
+  const tagNorm = (productTag || '').trim().toLowerCase();
+
+  if (tagNorm && tagNorm !== 'umum') {
+    const blocks = kb.split(/^---$/m);
+    let found = false;
+    const newBlocks = blocks.map(block => {
+      const headerMatch = block.match(/===\s*PRODUK:\s*(.+?)\s*===/i);
+      if (!found && headerMatch && headerMatch[1].trim().toLowerCase() === tagNorm) {
+        found = true;
+        return block.replace(/\s*$/, '') + '\n' + faqLine;
+      }
+      return block;
+    });
+    if (found) {
+      settings.knowledgeBase = newBlocks.join('---');
+      save(SET_FILE, settings);
+      io.emit('settings_updated', settings);
+      return;
+    }
+  }
+
+  // Fallback: tidak match produk manapun, atau memang tag UMUM -> blok info umum toko
+  const umumHeaderRegex = /===\s*INFO UMUM TOKO\s*===/i;
+  if (umumHeaderRegex.test(kb)) {
+    const blocks = kb.split(/^---$/m);
+    const newBlocks = blocks.map(block => umumHeaderRegex.test(block) ? block.replace(/\s*$/, '') + '\n' + faqLine : block);
+    settings.knowledgeBase = newBlocks.join('---');
+  } else {
+    const sep = kb.trim() ? '\n---\n' : '';
+    settings.knowledgeBase = kb.trim() + sep + `=== INFO UMUM TOKO ===\n${faqLine}`;
+  }
+  save(SET_FILE, settings);
+  io.emit('settings_updated', settings);
+}
+
+// Panggilan Gemini sederhana (tanpa histori/KB produk) untuk tugas internal:
+// memetakan balasan borongan admin ke ID pertanyaan pending yang sesuai.
+async function callGeminiRaw(systemPrompt, userText) {
+  const keys = getApiKeys().filter(k => k && k.length >= 10);
+  if (!keys.length) return null;
+  const model = settings.modelName || 'gemini-3.1-flash-lite';
+  for (const key of keys) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: userText }] }],
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          generationConfig: { temperature: 0.1 },
+        }),
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+      if (text.trim()) return text.trim();
+    } catch(e) { /* coba key berikutnya */ }
+  }
+  return null;
+}
+
+// Dipanggil saat superadmin membalas WA (bukan command on/off) DAN ada
+// pertanyaan pending. Memetakan balasan borongan admin -> jawaban per ID
+// pakai Gemini, simpan tiap jawaban ke KB permanen, lalu kirim jawaban
+// final ke masing-masing customer asal (silent-hold selesai di sini).
+async function handleAdminEscalationAnswer(adminText) {
+  if (!pendingEscalations.length) return;
+
+  const pendingList = pendingEscalations.map(e => `${e.id}. [${e.productTag}] ${e.question}`).join('\n');
+  const sysPrompt = [
+    'Kamu bertugas memetakan balasan admin toko ke daftar pertanyaan yang sedang pending.',
+    'Daftar pertanyaan pending (format: ID. [Produk] Pertanyaan):',
+    pendingList,
+    '',
+    'Petakan tiap bagian balasan admin ke ID pertanyaan yang paling sesuai (biasanya berdasar urutan nomor yang disebut admin; kalau admin tidak menyebut nomor sama sekali, cocokkan berdasarkan isi jawabannya dengan pertanyaan yang relevan).',
+    'Keluarkan HANYA JSON array valid, TANPA markdown/backtick, format PERSIS seperti ini: [{"id": <angka>, "answer": "<jawaban admin untuk pertanyaan itu, tulis ulang jadi kalimat lengkap>"}]',
+    'Kalau ada pertanyaan yang TIDAK terjawab sama sekali di balasan admin ini, JANGAN masukkan ID itu ke output (biarkan tetap pending).',
+  ].join('\n');
+
+  const rawResult = await callGeminiRaw(sysPrompt, adminText);
+  if (!rawResult) { console.error('⚠️ Gagal memetakan balasan admin (Gemini tidak merespons)'); return; }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(rawResult.replace(/```json|```/g, '').trim());
+  } catch(e) {
+    console.error('⚠️ Gagal parse hasil pemetaan balasan admin:', e.message, '| raw:', rawResult);
+    return;
+  }
+  if (!Array.isArray(parsed)) return;
+
+  for (const row of parsed) {
+    const item = pendingEscalations.find(e => e.id === row.id);
+    if (!item || !row.answer) continue;
+
+    appendFaqToKB(item.productTag, item.question, row.answer);
+
+    const isGreetingLike = /^(halo|hai|iya|baik|oke|ok)\b/i.test(row.answer.trim());
+    const customerMsg = isGreetingLike ? row.answer.trim() : `Halo Kak, ${row.answer.trim()}`;
+    try {
+      await sendWhatsAppText(item.from, customerMsg);
+      console.log(`✅ Jawaban eskalasi #${item.id} terkirim ke ${item.senderName || item.from}`);
+    } catch(e) {
+      console.error(`❌ Gagal kirim jawaban eskalasi #${item.id} ke customer:`, e.message);
+    }
+
+    pendingEscalations = pendingEscalations.filter(e => e.id !== item.id);
+  }
+  saveEscalations();
+  io.emit('escalations_updated', pendingEscalations);
+}
+
 // ── Rotasi key REAKTIF: anggap semua key 'ON' sampai terbukti kena 429 ──
 async function aiReply(message, name, history, signal) {
   if (getValidKeys().length === 0) {
@@ -760,6 +963,17 @@ async function retryFailedMessages() {
       
       if (reply) {
          reply = extractOrder(reply, entry.from);
+
+         const escResult = extractEscalations(reply, entry.from, entry.senderName);
+         reply = escResult.cleanReply;
+         if (!reply.trim()) {
+           entry.replied = true;
+           entry.aiReply = null;
+           entry.awaitingAdmin = true;
+           save(MSG_FILE, messages);
+           console.log(`⏳ Balasan untuk ${entry.senderName} ditahan (retry) — menunggu admin menjawab ${escResult.escalations.length} pertanyaan.`);
+           return;
+         }
 
          try { await markAsReadWithTyping(entry.wamid, true); } catch(e) {}
          await sleep(2000); 
@@ -905,6 +1119,22 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
         // B2: extractOrder SETELAH hold check — cegah order tersimpan
         // padahal reply tidak jadi terkirim ke customer
         reply = extractOrder(reply, from);
+
+        // Escalation: pisahkan tag [ESCALATE:...] dari balasan. Kalau SETELAH
+        // dibersihkan tidak ada sisa teks (seluruh balasan cuma escalate),
+        // jangan kirim apa pun ke customer — tahan sampai admin menjawab.
+        const escResult = extractEscalations(reply, from, senderName);
+        reply = escResult.cleanReply;
+        if (!reply.trim()) {
+          activeProcessing.delete(from);
+          entry.replied = true;
+          entry.aiReply = null;
+          entry.awaitingAdmin = true;
+          save(MSG_FILE, messages);
+          io.emit('message_updated', entry);
+          console.log(`⏳ Balasan untuk ${senderName} ditahan — menunggu admin menjawab ${escResult.escalations.length} pertanyaan.`);
+          return;
+        }
 
         // Cek tag [KIRIM_GAMBAR:Nama Produk] & bersihkan dulu SEBELUM hitung delay,
         // supaya panjang teks yang dipakai untuk menentukan delay itu akurat
@@ -1081,7 +1311,13 @@ app.post('/webhook', (req, res) => {
                 console.log(`🔐 Admin command: ${cmd.toUpperCase()} -> autoReply=${settings.autoReply}`);
                 continue; // skip AI reply hanya jika command adalah on/off
               }
-              // Jika pesan dari admin bukan "on"/"off", biarkan lanjut diproses sebagai chat biasa
+              // Bukan command on/off — kalau ada pertanyaan pending, anggap ini
+              // balasan borongan admin untuk eskalasi, JANGAN diproses sebagai chat biasa.
+              if (pendingEscalations.length > 0) {
+                handleAdminEscalationAnswer(body).catch(e => console.error('Gagal proses balasan eskalasi admin:', e.message));
+                continue;
+              }
+              // Tidak ada pending sama sekali — biarkan lanjut diproses sebagai chat biasa
             }
 
             // ── Buffer & debounce: tunggu beberapa detik untuk menampung bubble
@@ -1433,6 +1669,17 @@ app.post('/api/cek-alamat-manual', async (req, res) => {
   const { alamat } = req.body;
   if (!alamat) return res.status(400).json({ error: 'Alamat tidak boleh kosong' });
 
+  // Validasi konfigurasi pengiriman
+  const missingConfig = [];
+  if (!(settings.komerceApiKey || '').trim()) missingConfig.push('Komerce API Key');
+  if (!(settings.originId || '').trim()) missingConfig.push('Origin ID (kecamatan asal gudang)');
+  if (missingConfig.length > 0) {
+    return res.status(400).json({
+      error: `Konfigurasi pengiriman belum lengkap: ${missingConfig.join(', ')} belum diisi. Silakan isi di tab "Cek Resi" → Pengaturan Pengiriman terlebih dahulu.`,
+      missingConfig
+    });
+  }
+
   const picked = getAvailableKey();
   if (!picked) return res.status(500).json({ error: 'Semua API Key kena limit' });
   
@@ -1463,13 +1710,13 @@ app.post('/api/cek-alamat-manual', async (req, res) => {
     
     // Search RajaOngkir destination
     const searchUrl = 'https://rajaongkir.komerce.id/api/v1/destination/domestic-destination?search=' + encodeURIComponent(parsed.desa + ' ' + parsed.kecamatan) + '&limit=1';
-    const destRes = await fetch(searchUrl, { headers: { 'key': KOMERCE_API_KEY } });
+    const destRes = await fetch(searchUrl, { headers: { 'key': getKomerceKey() } });
     const destData = await destRes.json();
     
     if (destData?.data && destData.data.length > 0) {
       const destId = destData.data[0].id;
       const costPayload = new URLSearchParams();
-      costPayload.append('origin', ORIGIN_ID);
+      costPayload.append('origin', getOriginId());
       costPayload.append('destination', destId);
       costPayload.append('weight', '1000');
       costPayload.append('courier', 'ide');
@@ -1477,7 +1724,7 @@ app.post('/api/cek-alamat-manual', async (req, res) => {
 
       const costRes = await fetch('https://rajaongkir.komerce.id/api/v1/calculate/domestic-cost', {
         method: 'POST',
-        headers: { 'key': KOMERCE_API_KEY, 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'key': getKomerceKey(), 'Content-Type': 'application/x-www-form-urlencoded' },
         body: costPayload.toString()
       });
       
@@ -1626,12 +1873,22 @@ io.on('connection', socket => {
 const PORT = process.env.PORT || 3000;
 
 // ── BACKGROUND TASK: AI ALAMAT & COD CHECK ──
-const KOMERCE_API_KEY = 'Yzx2NjTb1c484631212a74562TQwiwSB';
-const ORIGIN_ID = '73528'; // Serua Ciputat
+// getKomerceKey() & getOriginId() dibaca dari settings (bisa diubah di dashboard)
+// Nilai hardcoded di bawah hanya sebagai fallback awal — setelah disimpan via
+// dashboard, nilai dari settings.json yang akan dipakai.
+const KOMERCE_API_KEY_DEFAULT = 'Yzx2NjTb1c484631212a74562TQwiwSB';
+const ORIGIN_ID_DEFAULT = '73528'; // Serua Ciputat
+function getKomerceKey() { return (settings.komerceApiKey || '').trim() || KOMERCE_API_KEY_DEFAULT; }
+function getOriginId()   { return (settings.originId    || '').trim() || ORIGIN_ID_DEFAULT; }
 
 async function processOrderAddressAI(orderId) {
   const order = orders.find(o => o.id === orderId);
   if (!order || !order.alamat) return;
+
+  // Skip kalau konfigurasi pengiriman belum diisi (pakai fallback default)
+  if (!(settings.komerceApiKey || '').trim()) {
+    console.warn(`⚠️ [AI Alamat] Komerce API Key belum diisi di settings — menggunakan key default. Isi di dashboard tab "Cek Resi" untuk key kustom.`);
+  }
 
   // BUG FIX #1: Gunakan getAvailableKey() agar ikut rotasi round-robin yang benar
   // dan tidak selalu pakai Key 1 saja.
@@ -1671,7 +1928,7 @@ async function processOrderAddressAI(orderId) {
 
     // Search RajaOngkir destination
     const searchUrl = 'https://rajaongkir.komerce.id/api/v1/destination/domestic-destination?search=' + encodeURIComponent(parsed.desa + ' ' + parsed.kecamatan) + '&limit=1';
-    const destRes = await fetch(searchUrl, { headers: { 'key': KOMERCE_API_KEY } });
+    const destRes = await fetch(searchUrl, { headers: { 'key': getKomerceKey() } });
     const destData = await destRes.json();
     
     if (destData?.data && destData.data.length > 0) {
@@ -1679,7 +1936,7 @@ async function processOrderAddressAI(orderId) {
       
       // Check Cost for ID Express
       const costPayload = new URLSearchParams();
-      costPayload.append('origin', ORIGIN_ID);
+      costPayload.append('origin', getOriginId());
       costPayload.append('destination', destId);
       costPayload.append('weight', '1000');
       costPayload.append('courier', 'ide');
@@ -1687,7 +1944,7 @@ async function processOrderAddressAI(orderId) {
 
       const costRes = await fetch('https://rajaongkir.komerce.id/api/v1/calculate/domestic-cost', {
         method: 'POST',
-        headers: { 'key': KOMERCE_API_KEY, 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'key': getKomerceKey(), 'Content-Type': 'application/x-www-form-urlencoded' },
         body: costPayload.toString()
       });
       
@@ -1711,6 +1968,198 @@ async function processOrderAddressAI(orderId) {
   }
 }
 // ──────────────────────────────────────────────
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AI-to-AI TEST SESSION
+// Jalankan 3 persona customer palsu (dari log chat nyata) → aiReply() produksi
+// → AI Evaluator nilai setiap jawaban → emit hasil ke dashboard realtime.
+// TIDAK ada pesan yang dikirim ke WA — aman dijalankan di produksi.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Persona diambil dari log chat nyata (pola tanya-jawab yang representatif)
+const AI_TEST_PERSONAS = [
+  {
+    id: 'persona_1',
+    name: 'Khasin',
+    label: '🧑 Khasin — buyer produk rumah tangga',
+    script: [
+      'Halo ka',
+      'kamu jual produk apa saja',
+      'harga berapa ka?',
+      'Udah sama ongkir?',
+      'Selang flexible ada ka',
+      'Ada fotonya ka',
+      'Mau kak — Khasin Khafabi, Jl. Mawar No 5 Kel. Cipete Kec. Ciputat Kota Tangerang Selatan, 082312345678',
+      'Ok ka',
+    ],
+  },
+  {
+    id: 'persona_2',
+    name: 'Azizah',
+    label: '👩 Azizah — calon beli tapi ragu-ragu',
+    script: [
+      'Halo! Bisa minta info lebih lanjut tentang selang flexibel?',
+      'Cek harga ya?',
+      'Tertarik sama selang nya sih, tapi ngak semua kran yg pas sama selang nya kali ya?',
+      'Oh gitu tapi KK gantilah dulu kran nya, sekarang ini model nya yg kyk lengkung, maunya yg langsung k dinding aja, nantiklh di kbrin ya, cuman mau ngecek harga aja dulu.',
+      'Iya sama sama 🙏',
+    ],
+  },
+  {
+    id: 'persona_3',
+    name: 'Rosa',
+    label: '👩 Rosa — buyer baby walking assistant, order sampai konfirmasi',
+    script: [
+      'Halo! Bisa minta info lebih lanjut tentang baby walking assistant?',
+      'Benar ni udah termasuk ongkir cuman lapan buluh sembilan ribu',
+      'Warna NaVi boleh kk',
+      'Alamat sipang kelurahan desa sipang kecamatan Batang Cenaku, 081363429837',
+      'Ok kira2 tg berapa ya kk datang ny biar langsung di siap kan uang ny',
+    ],
+  },
+];
+
+// Evaluasi satu giliran pakai Gemini sebagai juri
+async function evaluateTestTurn(personaName, customerMsg, botReply, turnIndex) {
+  const key = getAvailableKey();
+  if (!key) return { skor: 0, catatan: 'Key tidak tersedia untuk evaluasi' };
+
+  const evalPrompt = `Kamu adalah evaluator kualitas chatbot CS toko online Indonesia.
+
+Persona customer: "${personaName}" (giliran ke-${turnIndex + 1})
+Pesan customer: "${customerMsg}"
+Jawaban bot: "${botReply}"
+
+Nilai jawaban bot ini dari 1-5 berdasarkan:
+1. Relevansi — menjawab pertanyaan dengan tepat
+2. Gaya bahasa — ramah, tidak kaku, natural
+3. CTA — ada ajakan/pertanyaan lanjutan yang mendorong ke closing
+4. Kepatuhan aturan — tidak mengarang info di luar KB, tidak membujuk jika batal, dll
+
+Balas HANYA JSON valid (tidak ada teks lain):
+{"skor": <1-5>, "aspek": {"relevansi": <1-5>, "gaya": <1-5>, "cta": <1-5>, "kepatuhan": <1-5>}, "catatan": "<1 kalimat singkat>"}`;
+
+  try {
+    const result = await callGeminiDirect(key.key, key.slot, evalPrompt, 'evaluator', [], null);
+    if (!result.ok) return { skor: 0, catatan: 'Evaluasi gagal: ' + (result.error || 'unknown') };
+    const clean = result.text.replace(/```json|```/g, '').trim();
+    return JSON.parse(clean);
+  } catch (e) {
+    return { skor: 0, catatan: 'Parse error: ' + e.message };
+  }
+}
+
+// State test session aktif
+let activeTestSession = null;
+
+async function runAITestSession(sessionId) {
+  console.log(`\n🧪 [AI Test] Sesi ${sessionId} dimulai`);
+
+  activeTestSession = {
+    id: sessionId,
+    status: 'running',
+    startedAt: new Date().toISOString(),
+    personas: AI_TEST_PERSONAS.map(p => ({
+      id: p.id, name: p.name, label: p.label,
+      turns: [], avgSkor: null, done: false,
+    })),
+  };
+
+  io.emit('ai_test_update', { type: 'session_start', session: activeTestSession });
+
+  // Jalankan persona secara berurutan (sekuensial) agar aman dari limit 15 RPM Gemini
+  for (const persona of AI_TEST_PERSONAS) {
+    const personaState = activeTestSession.personas.find(p => p.id === persona.id);
+    const history = []; // history lokal per persona, tidak mempengaruhi messages produksi
+
+    for (let i = 0; i < persona.script.length; i++) {
+      if (activeTestSession?.status === 'stopped') break;
+
+      const customerMsg = persona.script[i];
+
+      // Emit: customer baru kirim pesan
+      io.emit('ai_test_update', {
+        type: 'turn_start',
+        personaId: persona.id,
+        turnIndex: i,
+        customerMsg,
+      });
+
+      // Panggil aiReply() produksi langsung — TIDAK kirim ke WA
+      let botReply = null;
+      try {
+        botReply = await aiReply(customerMsg, persona.name, history, null);
+      } catch (e) {
+        botReply = '[ERROR: ' + e.message + ']';
+      }
+
+      if (!botReply) botReply = '[Tidak ada balasan — key habis atau error]';
+
+      // Jeda 20 detik untuk menghindari rate limit 15 RPM Gemini sebelum memanggil API Evaluator
+      await sleep(20000);
+
+      // Evaluasi giliran ini
+      const evalResult = await evaluateTestTurn(persona.name, customerMsg, botReply, i);
+
+      const turn = {
+        index: i,
+        customerMsg,
+        botReply: botReply.replace(/\[ORDER_DATA\][\s\S]*?\[\/ORDER_DATA\]/g, '[ORDER_DATA — tersimpan]'),
+        evalResult,
+        timestamp: new Date().toISOString(),
+      };
+
+      personaState.turns.push(turn);
+      history.push({ body: customerMsg, aiReply: botReply });
+
+      // Emit progress ke dashboard
+      io.emit('ai_test_update', { type: 'turn_done', personaId: persona.id, turn });
+
+      // Jeda 20 detik antar giliran
+      await sleep(20000);
+    }
+
+    // Hitung rata-rata skor persona ini
+    const skors = personaState.turns.map(t => t.evalResult?.skor || 0).filter(s => s > 0);
+    personaState.avgSkor = skors.length ? (skors.reduce((a, b) => a + b, 0) / skors.length).toFixed(1) : null;
+    personaState.done = true;
+
+    io.emit('ai_test_update', { type: 'persona_done', personaId: persona.id, avgSkor: personaState.avgSkor });
+    console.log(`✅ [AI Test] ${persona.name} selesai — avg skor: ${personaState.avgSkor}`);
+  }
+
+  activeTestSession.status = 'done';
+  activeTestSession.finishedAt = new Date().toISOString();
+  io.emit('ai_test_update', { type: 'session_done', session: activeTestSession });
+  console.log(`🏁 [AI Test] Sesi ${sessionId} selesai`);
+}
+
+// Endpoint: mulai test session
+app.post('/api/ai-test/start', async (req, res) => {
+  if (activeTestSession?.status === 'running') {
+    return res.status(409).json({ error: 'Test session sudah berjalan' });
+  }
+  const sessionId = 'test_' + Date.now();
+  res.json({ ok: true, sessionId });
+  // Jalankan async, tidak block response
+  runAITestSession(sessionId).catch(e => {
+    console.error('[AI Test] Error:', e.message);
+    if (activeTestSession) activeTestSession.status = 'error';
+    io.emit('ai_test_update', { type: 'error', message: e.message });
+  });
+});
+
+// Endpoint: stop test session
+app.post('/api/ai-test/stop', (req, res) => {
+  if (activeTestSession) activeTestSession.status = 'stopped';
+  res.json({ ok: true });
+});
+
+// Endpoint: ambil hasil session terakhir
+app.get('/api/ai-test/result', (req, res) => {
+  res.json(activeTestSession || { status: 'idle' });
+});
 
 server.listen(PORT, async () => {
   console.log('\n==========================================');

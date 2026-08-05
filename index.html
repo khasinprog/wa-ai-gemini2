@@ -2,66 +2,15 @@
 <html lang="id">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
 <title>WA AI Assistant</title>
-<!-- PWA: manifest & Apple meta tags -->
 <link rel="manifest" href="/manifest.json"/>
 <meta name="theme-color" content="#1b2b4d"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="apple-mobile-web-app-title" content="WA AI"/>
 <link rel="apple-touch-icon" href="/icons/icon-192.png"/>
-<script src="/socket.io/socket.io.js">
-// ── Manual Cek Alamat & Ongkir ──
-async function doManualCekAlamat() {
-  const input = document.getElementById('manualAlamat').value.trim();
-  if (!input) return alert('Masukkan alamat terlebih dahulu');
-  
-  const btn = document.getElementById('btnManualCekAlamat');
-  const origText = btn.innerHTML;
-  btn.innerHTML = '⏳ Sedang mengecek...';
-  btn.disabled = true;
-  btn.style.opacity = '0.7';
-  document.getElementById('manualAlamatResult').style.display = 'none';
-
-  try {
-    const res = await fetch('/api/cek-alamat-manual', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('authToken')}` },
-      body: JSON.stringify({ alamat: input })
-    });
-    const data = await res.json();
-    
-    if (data.ok) {
-      document.getElementById('resDesa').textContent = data.data.desa || '-';
-      document.getElementById('resKec').textContent = data.data.kecamatan || '-';
-      document.getElementById('resAlamatBaku').textContent = data.data.ai_alamat || '-';
-      
-      const codBox = document.getElementById('resCodStatus');
-      codBox.textContent = data.data.ai_cod || 'Tidak diketahui';
-      
-      if (data.data.ai_cod.includes('✅')) {
-        codBox.style.background = '#dcfce7'; codBox.style.color = '#166534'; codBox.style.border = '1px solid #bbf7d0';
-      } else if (data.data.ai_cod.includes('⚠️')) {
-        codBox.style.background = '#fef3c7'; codBox.style.color = '#92400e'; codBox.style.border = '1px solid #fde68a';
-      } else {
-        codBox.style.background = '#fee2e2'; codBox.style.color = '#991b1b'; codBox.style.border = '1px solid #fecaca';
-      }
-      
-      document.getElementById('manualAlamatResult').style.display = 'block';
-    } else {
-      alert('❌ Gagal: ' + (data.error || 'Terjadi kesalahan'));
-    }
-  } catch (err) {
-    alert('❌ Koneksi error: ' + err.message);
-  } finally {
-    btn.innerHTML = origText;
-    btn.disabled = false;
-    btn.style.opacity = '1';
-  }
-}
-</script>
-
+<script src="/socket.io/socket.io.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
 :root{--bg:#F0F4F8;--s1:#FFFFFF;--s2:#F8FAFC;--s3:#E2E8F0;--text:#1E293B;--muted:#64748B;--border:#E2E8F0;
@@ -201,25 +150,6 @@ input:checked+.slider:before{transform:translateX(18px)}
 .bubble-time{font-size:.65rem;color:var(--muted);padding:0 4px;margin-top:2px}
 .bubble-ai-label{font-size:.65rem;color:var(--green2);padding:0 4px;margin-top:2px}
 .no-reply-note{font-size:.65rem;color:var(--yellow);padding:0 4px}
-
-.unread-badge{background:#25D366;color:#fff;font-size:.65rem;font-weight:700;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 5px;margin-top:3px}
-.contact-item.new-chat{animation:flashGreen 2s ease-out}
-@keyframes flashGreen{0%{background:#d1fae5}100%{background:transparent}}
-.bubble-img{max-width:220px;max-height:200px;border-radius:8px;display:block;cursor:pointer;margin-bottom:4px}
-.link-preview{background:#f0f4f8;border-left:3px solid #25D366;border-radius:6px;padding:8px 10px;margin-top:6px;max-width:100%;cursor:pointer;text-decoration:none;display:block}
-.link-preview:hover{background:#e2e8f0}
-.lp-thumb{width:100%;max-height:120px;object-fit:cover;border-radius:4px;margin-bottom:6px;display:block}
-.lp-title{font-size:.78rem;font-weight:600;color:#1e293b;line-height:1.3;margin-bottom:2px}
-.lp-domain{font-size:.65rem;color:#64748b}
-.bubble.outgoing .link-preview{background:rgba(255,255,255,.2);border-left-color:rgba(255,255,255,.6)}
-.bubble.outgoing .lp-title{color:#fff}
-.bubble.outgoing .lp-domain{color:rgba(255,255,255,.75)}
-#toast-container{position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
-.toast{background:#25D366;color:#fff;padding:10px 16px;border-radius:10px;font-size:.82rem;font-weight:600;box-shadow:0 4px 12px rgba(0,0,0,.2);display:flex;align-items:center;gap:8px;pointer-events:all;cursor:pointer;animation:slideInRight .3s ease;max-width:280px}
-@keyframes slideInRight{from{transform:translateX(120%);opacity:0}to{transform:translateX(0);opacity:1}}
-.toast.hiding{animation:slideOutRight .3s ease forwards}
-@keyframes slideOutRight{to{transform:translateX(120%);opacity:0}}
-
 .tabs{display:flex;flex-direction:column;border-right:1px solid var(--border);flex-shrink:0;background:var(--s1);width:65px}
 .tab{flex:none;padding:15px 5px;text-align:center;font-size:.7rem;font-weight:600;cursor:pointer;color:var(--muted);border-right:2px solid transparent;transition:all .2s;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;}
 .tab:hover{background:var(--s2)}
@@ -239,381 +169,112 @@ input:checked+.slider:before{transform:translateX(18px)}
 ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:4px}
 #loginOverlay{position:fixed;inset:0;background:rgba(15,23,42,.95);z-index:9999;display:flex;align-items:center;justify-content:center}
 
-/* ================================================================
-   MOBILE PWA — WhatsApp-like Layout (@media max-width: 768px)
-   Hanya mengubah tampilan. Semua fungsi JS asli tidak diubah.
-   ================================================================ */
+/* ── Reply bar (selalu ada, visible di semua ukuran) ── */
+.chat-reply-bar{display:flex;padding:10px 14px;border-top:1px solid var(--border);background:var(--s1);gap:8px;align-items:flex-end;flex-shrink:0}
+.chat-reply-input{flex:1;border:1px solid var(--border);border-radius:20px;padding:8px 14px;font-family:'Inter',sans-serif;font-size:.85rem;resize:none;min-height:38px;max-height:100px;outline:none;background:var(--s2);color:var(--text);overflow-y:auto}
+.chat-reply-input:focus{border-color:var(--blue);background:var(--s1)}
+.chat-reply-send-btn{width:38px;height:38px;border-radius:50%;background:var(--green);color:#fff;border:none;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .2s}
+.chat-reply-send-btn:hover{background:var(--green2)}
+.chat-reply-send-btn:disabled{opacity:.5;cursor:not-allowed}
+
+/* ── Back button (mobile only) ── */
+.chat-back-btn{display:none;cursor:pointer;margin-right:6px;font-size:1.3rem;color:var(--muted);padding:4px;border-radius:6px;line-height:1}
+.chat-back-btn:hover{background:var(--s2)}
+
+/* ── Drawer backdrop ── */
+.drawer-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:190;backdrop-filter:blur(1px)}
+
+/* ── Bottom navigation (hidden on desktop) ── */
+.bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;height:58px;background:var(--s1);border-top:1px solid var(--border);z-index:150;justify-content:space-around;align-items:center;padding-bottom:env(safe-area-inset-bottom)}
+.bottom-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:.6rem;font-weight:600;color:var(--muted);cursor:pointer;padding:4px;-webkit-tap-highlight-color:transparent}
+.bottom-nav-item.active{color:var(--blue)}
+.bottom-nav-item .bn-icon{font-size:1.25rem;line-height:1}
+
+/* ── Mobile breakpoint ────────────────────────────── */
 @media (max-width: 768px) {
+  body{overflow:auto}
 
-  /* Sembunyikan sidebar desktop, ganti dengan bottom nav */
-  .sidebar { display: none !important; }
+  /* Sidebar nav → hidden, replaced by bottom nav */
+  .sidebar{display:none!important}
+  .bottom-nav{display:flex}
 
-  /* Sembunyikan menu navigasi kiri (Menu Data, AI WA, Galeri) di HTML asli */
-  .sidebar-menu { display: none; }
+  /* Main content needs bottom padding for bottom nav */
+  .main-content{padding-bottom:58px}
 
-  /* Full height body & app */
-  body { overflow: hidden; }
-  .app-layout { flex-direction: column; height: 100vh; }
-  .main-content { flex: 1; overflow: hidden; position: relative; }
-
-  /* ── Bottom Navigation Bar ── */
-  #mobileBottomNav {
-    display: flex;
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 58px;
-    background: #fff;
-    border-top: 1px solid var(--border);
-    z-index: 200;
-    box-shadow: 0 -2px 12px rgba(0,0,0,.08);
+  /* Left settings panel → drawer */
+  .col-settings{
+    position:fixed;left:-100%;top:0;bottom:0;
+    width:88vw;max-width:360px;
+    z-index:200;overflow-y:auto;
+    border-radius:0 12px 12px 0;
+    box-shadow:4px 0 24px rgba(0,0,0,.2);
+    transition:left .25s ease;
+    width:88vw!important;
+    flex-shrink:0!important;
   }
-  .m-nav-btn {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 3px;
-    font-size: .6rem;
-    font-weight: 600;
-    color: var(--muted);
-    cursor: pointer;
-    padding: 6px 4px;
-    transition: color .2s;
-    border: none;
-    background: transparent;
+  .col-settings.drawer-open{left:0}
+
+  /* Right tabs panel → drawer */
+  .col-right-panel{
+    position:fixed;right:-100%;top:0;bottom:0;
+    width:90vw;max-width:380px;
+    z-index:200;overflow-y:auto;
+    border-radius:12px 0 0 12px;
+    box-shadow:-4px 0 24px rgba(0,0,0,.2);
+    transition:right .25s ease;
+    width:90vw!important;
+    display:flex!important;
+    flex-direction:row!important;
+    flex-shrink:0!important;
   }
-  .m-nav-btn .m-icon { font-size: 1.35rem; line-height: 1; }
-  .m-nav-btn.active { color: #075e54; }
-  .m-nav-btn.active .m-icon { filter: drop-shadow(0 0 4px rgba(7,94,84,.4)); }
+  .col-right-panel.drawer-open{right:0}
 
-  /* Pad konten agar tidak tertutup bottom nav */
-  .view.active { padding-bottom: 58px; }
-
-  /* ── View AI: layout chat mobile ── */
-  #view-ai .main-cols {
-    flex-direction: column;
-    padding: 0;
-    gap: 0;
-    height: 100%;
-    overflow: hidden;
-    position: relative;
+  /* Middle chat column: full width */
+  .col-chat-main{
+    width:100%!important;
+    max-width:100%!important;
+    display:flex!important;
+    flex-direction:column!important;
+    grid-template-columns:unset!important;
+    border-radius:0!important;
+    border-left:none!important;
+    border-right:none!important;
+    flex:1!important;
   }
 
-  /* Sembunyikan panel kiri (kontrol bot) di tab Chat:
-     di mobile panel ini dipindah ke tab Settings */
-  #view-ai .main-cols > .col:first-child {
-    display: none;
-  }
+  /* Contact list: full width default */
+  .contact-list-col{width:100%!important;border-right:none!important;min-height:200px}
 
-  /* Panel tengah (daftar kontak + chat) ambil semua lebar */
-  #view-ai .main-cols > .col:nth-child(2) {
-    width: 100% !important;
-    max-width: 100% !important;
-    border-radius: 0;
-    border: none;
-    box-shadow: none;
-    display: flex;
-    flex-direction: row;
-    overflow: hidden;
-    position: relative;
-    height: 100%;
-  }
+  /* When contact is active on mobile, hide contact list, show chat */
+  .contact-list-col.mob-hidden{display:none!important}
+  .chat-area-col{display:none;flex-direction:column;overflow:hidden}
+  .chat-area-col.mob-visible{display:flex!important}
 
-  /* ── Daftar Kontak: tampil full saat tidak ada chat aktif ── */
-  #view-ai .main-cols > .col:nth-child(2) > div:first-child {
-    width: 100% !important;
-    min-width: 100%;
-    border-right: none;
-    background: #fff;
-    transition: transform 0.3s ease;
-    flex-shrink: 0;
-  }
-  #view-ai .main-cols > .col:nth-child(2) > div:last-child {
-    position: absolute;
-    inset: 0;
-    background: #efeae2;
-    transform: translateX(100%);
-    transition: transform 0.3s ease;
-    display: flex;
-    flex-direction: column;
-    z-index: 10;
-  }
+  /* Show back button on mobile */
+  .chat-back-btn{display:flex}
 
-  /* Saat kontak dipilih (class .chat-open ditambah JS) — slide in */
-  #view-ai .main-cols > .col:nth-child(2).chat-open > div:first-child {
-    transform: translateX(-100%);
-  }
-  #view-ai .main-cols > .col:nth-child(2).chat-open > div:last-child {
-    transform: translateX(0);
-  }
+  /* Tweak header */
+  header{padding:10px 14px}
+  header .data-title{font-size:.9rem}
 
-  /* Header WA — tambah warna hijau khas WA */
-  .chat-header {
-    background: #075e54;
-    padding: 10px 14px;
-    padding-top: max(10px, env(safe-area-inset-top));
-    flex-shrink: 0;
-    border-bottom: none;
-    align-items: center;
-    gap: 10px;
-  }
-  .chat-avatar {
-    background: rgba(255,255,255,.25);
-    color: #fff;
-    font-weight: 700;
-  }
-  .chat-name { color: #fff; font-size: 1rem; }
-  .chat-sub { color: rgba(255,255,255,.75); }
+  /* main-cols padding */
+  .main-cols{padding:0;gap:0;height:calc(100% - 48px)}
 
-  /* Tombol back di header chat */
-  #mobileChatBack {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: none;
-    color: #fff;
-    font-size: 1.4rem;
-    cursor: pointer;
-    padding: 4px 6px;
-    flex-shrink: 0;
-    margin-left: -4px;
-  }
+  /* Make chat messages fill remaining space */
+  .chat-messages{flex:1}
 
-  /* Area pesan — background ala WA */
-  .chat-messages {
-    flex: 1;
-    background: #efeae2;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' opacity='.04'%3E%3Ccircle cx='30' cy='30' r='25' fill='none' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E");
-    padding: 12px 10px;
-  }
-
-  /* Bubble chat ala WA */
-  .bubble.incoming {
-    background: #fff;
-    border: none;
-    border-radius: 0 8px 8px 8px;
-    box-shadow: 0 1px 2px rgba(0,0,0,.13);
-    color: #111;
-    font-size: .875rem;
-  }
-  .bubble.outgoing {
-    background: #d9fdd3;
-    color: #111;
-    border-radius: 8px 0 8px 8px;
-    box-shadow: 0 1px 2px rgba(0,0,0,.13);
-    font-size: .875rem;
-  }
-  .bubble-ai-label {
-    color: #075e54;
-    font-size: .65rem;
-  }
-  .bubble-time { color: #667781; }
-
-  /* Header kontak list ala WA */
-  #view-ai .main-cols > .col:nth-child(2) > div:first-child > div:first-child {
-    background: #075e54;
-    padding: 14px 16px;
-    padding-top: max(14px, env(safe-area-inset-top));
-  }
-  #view-ai .main-cols > .col:nth-child(2) > div:first-child > div:first-child .col-title {
-    color: #fff;
-    font-size: 1rem;
-    text-transform: none;
-    letter-spacing: 0;
-  }
-
-  /* Contact item lebih besar di HP */
-  .contact-item {
-    padding: 14px 16px;
-    border-bottom: 1px solid #f0f0f0;
-  }
-  .contact-avatar {
-    width: 46px; height: 46px;
-    background: #d1d7db;
-    font-size: 18px;
-    color: #fff;
-  }
-  .contact-name { font-size: .95rem; }
-  .contact-preview { font-size: .8rem; color: #667781; }
-  .contact-time { font-size: .72rem; color: #667781; }
-
-  /* Panel kanan (AI Settings) di mobile */
-  #view-ai .main-cols > .col:nth-child(3) {
-    display: none;
-  }
-
-  /* ── Mobile Settings View (panel kiri + panel kanan digabung scroll) ── */
-  /* mobileSettingsView menggunakan class .view standar, tidak butuh CSS tambahan */
-
-  /* Sembunyikan header desktop di AI view di mobile */
-  #view-ai header {
-    background: #075e54;
-    padding: 12px 16px;
-    padding-top: max(12px, env(safe-area-inset-top));
-    border-bottom: none;
-  }
-  #view-ai header .data-title { color: #fff; font-size: 1rem; }
-  .status-pill {
-    background: rgba(255,255,255,.15);
-    border-color: transparent;
-    color: #fff;
-    font-size: .7rem;
-  }
-  .status-pill.connected { background: rgba(255,255,255,.2); color: #a7f3d0; border-color: transparent; }
-  .status-pill .dot, .status-pill.connected .dot { background: #a7f3d0; }
-
-  /* Data order: full width scroll horizontal tabel */
-  .data-container { padding: 12px; }
-  .data-header { flex-direction: column; align-items: flex-start; gap: 8px; }
-  .table-wrapper { overflow-x: auto; }
-  .data-table { min-width: 520px; }
-
-  /* Gambar galeri: 2 kolom */
-  #gambarListContainer > div > div > div { width: 90px; }
-  #gambarListContainer > div > div > div > div:nth-child(2) { width: 90px; height: 90px; }
+  /* Drawer close button */
+  .drawer-close-btn{display:flex}
 }
 
-/* Desktop: hide mobile-only elements */
-@media (min-width: 769px) {
-  #mobileBottomNav { display: none !important; }
-  #mobileChatBack { display: none !important; }
-  #mobileSettingsView { display: none !important; }
-  /* mob-input-bar di desktop dikontrol via JS (show/hide saat pilih kontak) */
-}
-
-/* Desktop input bar — tampil di bawah chat-messages saat kontak dipilih */
-.desk-input-bar {
-  display: none;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 10px 14px;
-  background: var(--s1);
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.desk-input-bar.active { display: flex; }
-.desk-input-wrap {
-  flex: 1;
-  background: var(--s2);
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  padding: 8px 14px;
-  display: flex;
-  align-items: center;
-}
-.desk-input-wrap textarea {
-  flex: 1;
-  background: transparent;
-  border: none;
-  outline: none;
-  resize: none;
-  color: var(--text);
-  font-family: 'Inter', sans-serif;
-  font-size: 0.87rem;
-  line-height: 1.4;
-  max-height: 120px;
-  overflow-y: auto;
-}
-.desk-send-btn {
-  min-width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: #075e54;
-  border: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0,0,0,.2);
-  transition: background .15s;
-  flex-shrink: 0;
-}
-.desk-send-btn:hover { background: #128c7e; }
-
-/* ── WA-style Input Bar ── */
-/* Tersembunyi secara default, tampil hanya di mobile saat chat terbuka */
-.mob-input-bar {
-  display: none;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 8px 10px;
-  background: #f0f2f5;
-  border-top: 1px solid #e9edef;
-  flex-shrink: 0;
-}
-.mob-input-wrap {
-  flex: 1;
-  background: #fff;
-  border-radius: 22px;
-  padding: 9px 14px;
-  display: flex;
-  align-items: flex-end;
-  box-shadow: 0 1px 2px rgba(0,0,0,.08);
-  min-height: 42px;
-}
-#mobChatInput {
-  width: 100%;
-  border: none;
-  outline: none;
-  resize: none;
-  font-family: 'Inter', sans-serif;
-  font-size: .9rem;
-  line-height: 1.5;
-  /* 1 baris = 1.5 * 0.9rem ≈ 21.6px — diatur via JS */
-  max-height: 130px;
-  overflow-y: auto;
-  background: transparent;
-  color: #111;
-  /* Reset height otomatis via JS oninput */
-  height: auto;
-}
-#mobChatInput::placeholder { color: #aaa; }
-.mob-send-btn {
-  width: 44px;
-  height: 44px;
-  min-width: 44px;
-  border-radius: 50%;
-  background: #075e54;
-  border: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0,0,0,.2);
-  transition: background .15s;
-  flex-shrink: 0;
-}
-.mob-send-btn:active { background: #054d44; }
-
-/* Tampilkan input bar saat chat-open dan mobile */
-@media (max-width: 768px) {
-  .chat-open .mob-input-bar {
-    display: flex;
-  }
-  /* Pastikan chat-messages tidak kena padding bottom nav saat chat terbuka */
-  .chat-open .chat-messages {
-    padding-bottom: 8px;
-  }
-  /* FIX: Panel kanan (tabs AI/Data/Kirim/Key) wajib hidden di mobile */
-  #view-ai .main-cols > .col:last-child:not(:nth-child(2)) {
-    display: none !important;
-  }
-  /* Pastikan col tengah selalu mengisi sisa height (bukan grid) */
-  #view-ai .main-cols > .col:nth-child(2) {
-    display: flex !important;
-    flex-direction: row !important;
-    grid-template-columns: unset !important;
-  }
-}
+/* Drawer close button (hidden desktop) */
+.drawer-close-btn{display:none;position:sticky;top:0;z-index:10;background:var(--s1);border-bottom:1px solid var(--border);padding:10px 14px;align-items:center;justify-content:space-between;font-size:.85rem;font-weight:600;flex-shrink:0}
+.drawer-close-btn button{background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--muted);padding:4px;border-radius:6px}
+.drawer-close-btn button:hover{background:var(--s2)}
 </style>
 </head>
 <body>
 
-<div id="toast-container"></div>
 <div id="loginOverlay">
   <div class="setup-box">
     <div class="setup-ico">🔒</div>
@@ -645,25 +306,8 @@ input:checked+.slider:before{transform:translateX(18px)}
       <div class="menu-item" id="menu-data" onclick="switchMainView('data')">📊 Menu Data</div>
       <div class="menu-item active" id="menu-ai" onclick="switchMainView('ai')">🤖 AI WA Assistant</div>
       <div class="menu-item" id="menu-gambar" onclick="switchMainView('gambar')">🖼️ Galeri Produk</div>
-      <div class="menu-item" id="menu-settings" onclick="switchMainView('settings')">⚙️ Pengaturan</div>
     </div>
   </aside>
-
-  <!-- Mobile Bottom Navigation (mobile-only, hidden on desktop via CSS) -->
-  <nav id="mobileBottomNav">
-    <button class="m-nav-btn active" id="mnav-chat" onclick="mobileNavTo('chat')">
-      <span class="m-icon">💬</span><span>Chat</span>
-    </button>
-    <button class="m-nav-btn" id="mnav-settings" onclick="mobileNavTo('settings')">
-      <span class="m-icon">⚙️</span><span>Pengaturan</span>
-    </button>
-    <button class="m-nav-btn" id="mnav-data" onclick="mobileNavTo('data')">
-      <span class="m-icon">📊</span><span>Order</span>
-    </button>
-    <button class="m-nav-btn" id="mnav-gambar" onclick="mobileNavTo('gambar')">
-      <span class="m-icon">🖼️</span><span>Galeri</span>
-    </button>
-  </nav>
   <div class="main-content">
     
     <div id="view-ai" class="view active">
@@ -672,74 +316,12 @@ input:checked+.slider:before{transform:translateX(18px)}
         <div class="status-pill" id="statusPill"><div class="dot"></div><span id="statusTxt">Memuat...</span></div>
       </header>
       <div class="main-cols">
-  <!-- Panel Tengah -->
-  <!-- Panel Tengah (Satu-satunya kolom di view-ai sekarang) -->
-    <div class="col" style="flex:1;width:auto;max-width:none;display:grid;grid-template-columns:300px 1fr;border-right:none;overflow:hidden">
-    <div style="border-right:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column">
-      <div style="padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0">
-        <div class="col-title" style="margin:0">Kontak</div>
-      </div>
-      <div id="contactList" style="flex:1">
-        <div class="empty-chat" style="padding:30px 12px;height:auto;margin-top:20px">
-          <div class="ei">👥</div><p style="font-size:.72rem">Belum ada pesan</p>
-        </div>
-      </div>
+  <!-- Panel Kiri -->
+  <div class="col col-settings">
+    <div class="drawer-close-btn" id="leftDrawerClose">
+      <span>⚙️ Pengaturan</span>
+      <button onclick="closeDrawers()">✕</button>
     </div>
-    <div style="display:flex;flex-direction:column;overflow:hidden">
-      <div class="chat-header" id="chatHeader" style="display:none">
-        <!-- Tombol back khusus mobile -->
-        <button id="mobileChatBack" onclick="mobileBackToContacts()" aria-label="Kembali">&#8592;</button>
-        <div class="chat-avatar" id="chatAvatar">?</div>
-        <div><div class="chat-name" id="chatName">-</div><div class="chat-sub" id="chatSub">-</div></div>
-      </div>
-      <div class="chat-messages" id="chatMessages">
-        <div class="empty-chat"><div class="ei">💬</div><p>Pilih kontak untuk melihat percakapan</p></div>
-      </div>
-      <!-- Desktop input bar -->
-      <div class="desk-input-bar" id="deskInputBar">
-        <div class="desk-input-wrap">
-          <textarea
-            id="deskChatInput"
-            rows="1"
-            placeholder="Tulis balasan manual... (Enter kirim, Shift+Enter baris baru)"
-            oninput="deskAutoResize(this)"
-            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();deskSend();}"
-          ></textarea>
-        </div>
-        <button class="desk-send-btn" onclick="deskSend()" id="deskSendBtn" aria-label="Kirim">
-          <svg viewBox="0 0 24 24" fill="white" width="20" height="20"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
-        </button>
-      </div>
-      <!-- Mobile input bar -->
-      <div class="mob-input-bar" id="mobInputBar">
-        <div class="mob-input-wrap">
-          <textarea
-            id="mobChatInput"
-            rows="1"
-            placeholder="Tulis pesan..."
-            oninput="mobAutoResize(this)"
-            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();mobSend();}"
-          ></textarea>
-        </div>
-        <button class="mob-send-btn" onclick="mobSend()" id="mobSendBtn" aria-label="Kirim">
-          <svg viewBox="0 0 24 24" fill="white" width="20" height="20"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
-        </button>
-      </div>
-    </div>
-  </div>
-
-  </div>
-    </div>
-
-    
-    <!-- VIEW PENGATURAN -->
-    <div id="view-settings" class="view">
-      <header>
-        <div class="data-title">⚙️ Pengaturan & Integrasi</div>
-      </header>
-      <div class="main-cols">
-<!-- Panel Kiri -->
-  <div class="col">
     <div class="col-inner">
       <div class="col-title">WhatsApp</div>
       <div id="qrSection" class="qr-area">
@@ -812,15 +394,49 @@ input:checked+.slider:before{transform:translateX(18px)}
     </div>
   </div>
 
-  
-<!-- Panel Kanan -->
-  <div class="col" style="display:flex;flex-direction:row;overflow:hidden;flex:1">
+  <!-- Panel Tengah -->
+  <div class="col col-chat-main" style="flex:1;width:auto;max-width:none;display:grid;grid-template-columns:250px 1fr;border-right:none;overflow:hidden">
+    <div class="contact-list-col" style="border-right:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column">
+      <div style="padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0">
+        <div class="col-title" style="margin:0">Kontak</div>
+      </div>
+      <div id="contactList" style="flex:1">
+        <div class="empty-chat" style="padding:30px 12px;height:auto;margin-top:20px">
+          <div class="ei">👥</div><p style="font-size:.72rem">Belum ada pesan</p>
+        </div>
+      </div>
+    </div>
+    <div class="chat-area-col" style="display:flex;flex-direction:column;overflow:hidden">
+      <div class="chat-header" id="chatHeader" style="display:none">
+        <div class="chat-back-btn" id="chatBackBtn" onclick="backToContacts()">←</div>
+        <div class="chat-avatar" id="chatAvatar">?</div>
+        <div style="flex:1">
+          <div class="chat-name" id="chatName">-</div>
+          <div class="chat-sub" id="chatSub">-</div>
+        </div>
+        <button onclick="openRightPanel()" style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 9px;font-size:.75rem;cursor:pointer;color:var(--muted)" title="AI Settings">🤖</button>
+      </div>
+      <div class="chat-messages" id="chatMessages">
+        <div class="empty-chat"><div class="ei">💬</div><p>Pilih kontak untuk melihat percakapan</p></div>
+      </div>
+      <!-- P4: Manual reply bar -->
+      <div class="chat-reply-bar" id="chatReplyBar" style="display:none">
+        <textarea class="chat-reply-input" id="chatReplyInput" placeholder="Ketik balasan manual..." rows="1"></textarea>
+        <button class="chat-reply-send-btn" id="chatReplySendBtn" onclick="sendChatReply()" title="Kirim">➤</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel Kanan -->
+  <div class="col col-right-panel" style="display:flex;flex-direction:row;overflow:hidden;width:380px">
     <div class="tabs">
+      <div class="drawer-close-btn" style="display:none;flex-direction:column;border-right:none;border-bottom:1px solid var(--border);padding:8px 6px;gap:4px" id="rightDrawerClose">
+        <button onclick="closeDrawers()" style="background:none;border:none;font-size:1rem;cursor:pointer;color:var(--muted)">✕</button>
+      </div>
       <div class="tab active" onclick="switchTab('ai')"><div style="font-size:1.2rem">🤖</div>AI</div>
       <div class="tab" onclick="switchTab('kb')"><div style="font-size:1.2rem">📚</div>Data</div>
-      <div class="tab" onclick="switchTab('send')"><div style="font-size:1.2rem">🚚</div>Cek Resi</div>
+      <div class="tab" onclick="switchTab('send')"><div style="font-size:1.2rem">📤</div>Kirim</div>
       <div class="tab" onclick="switchTab('key')"><div style="font-size:1.2rem">🔑</div>Key</div>
-      <div class="tab" onclick="switchTab('aitest')"><div style="font-size:1.2rem">🧪</div>AI Test</div>
     </div>
     <div style="flex:1; overflow-y:auto; display:flex; flex-direction:column; background:var(--s1)">
       <div class="tab-content active" id="tab-ai" style="flex:1">
@@ -834,9 +450,9 @@ input:checked+.slider:before{transform:translateX(18px)}
             <option value="gemini-2.5-flash">gemini-2.5-flash</option>
             <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
             <option value="gemini-2.5-pro">gemini-2.5-pro (Paling pintar)</option>
-            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (Rekomendasi & Default)</option>
+            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
             <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-            <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
+            <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Rekomendasi &amp; Default)</option>
           </select>
         </div>
         <div class="fg"><label class="lbl">Bahasa</label>
@@ -909,54 +525,15 @@ Garansi: 6 bulan"></textarea>
       </div>
     </div>
 
-    
     <div class="tab-content" id="tab-send" style="flex:1">
       <div class="tab-panel">
-
-        <!-- WARNING: konfigurasi belum diisi -->
-        <div id="shippingConfigWarning" style="display:none;background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:12px;margin-bottom:16px;font-size:0.8rem;line-height:1.6;color:#92400e">
-          ⚠️ <strong>Pengaturan pengiriman belum lengkap.</strong><br/>
-          Isi <strong>Komerce API Key</strong> dan <strong>Origin ID</strong> di bawah agar fitur Cek Alamat & ID Express COD bisa berjalan.
-        </div>
-
-        <!-- Pengaturan Pengiriman -->
-        <div class="col-title" style="margin-bottom:8px">⚙️ Pengaturan Pengiriman</div>
-        <div class="fg">
-          <label class="lbl">Komerce API Key</label>
-          <input type="password" id="komerceApiKey" placeholder="Isi API Key dari RajaOngkir Komerce kamu" style="font-family:monospace;font-size:0.8rem"/>
-          <div class="ts" style="margin-top:5px;line-height:1.6">Daftar di <a href="https://rajaongkir.komerce.id" target="_blank" style="color:var(--accent)">rajaongkir.komerce.id</a> → API Key.</div>
-        </div>
-        <div class="fg">
-          <label class="lbl">Origin ID (ID kecamatan asal gudang)</label>
-          <input type="text" id="originId" placeholder="Contoh: 73528 (Serua, Ciputat)" style="font-family:monospace"/>
-          <div class="ts" style="margin-top:5px;line-height:1.6">Cari ID kecamatanmu di <a href="https://rajaongkir.komerce.id/api/v1/destination/domestic-destination?search=namakecamatan&limit=5" target="_blank" style="color:var(--accent)">endpoint destination Komerce</a>. Ganti <code>namakecamatan</code> dengan kecamatan gudangmu.</div>
-        </div>
-        <button class="btn btn-green" onclick="saveShippingConfig()" style="margin-bottom:20px">💾 Simpan Pengaturan Pengiriman</button>
-        <div class="save-ok" id="shippingOk"></div>
-
-        <hr style="border:none;border-top:1px solid var(--border);margin:4px 0 20px"/>
-
-        <div style="margin-bottom:12px">
-          <div class="col-title" style="margin-bottom:4px">Cek Alamat & ID Express</div>
-          <div class="ts">Masukkan alamat lengkap dari pelanggan (biasanya hasil copy-paste). AI akan mengekstrak desa/kecamatan dan mengecek ketersediaan ID Express COD ke lokasi tersebut.</div>
-        </div>
-        <div class="fg">
-          <textarea id="manualAlamat" rows="4" placeholder="Contoh: jl sudirman no 10, desa sukamaju, kec bangunrejo, kab lampung tengah"></textarea>
-        </div>
-        <button id="btnManualCekAlamat" class="btn btn-primary" style="background:linear-gradient(135deg,#10b981,#0d9488);color:white;border:none;border-radius:6px;font-weight:600;display:flex;align-items:center;gap:6px;margin-bottom:16px" onclick="doManualCekAlamat()">🚚 Cek Alamat & Ongkir</button>
-        
-        <div id="manualAlamatResult" style="display:none; background:white; padding:16px; border:1px solid var(--border); border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.05)">
-          <div style="font-size:10px; font-weight:700; color:#10b981; letter-spacing:0.5px; margin-bottom:8px;">✨ HASIL AI</div>
-          <div style="display:grid; grid-template-columns:80px 1fr; gap:8px; font-size:0.85rem; margin-bottom:12px">
-            <div style="color:var(--muted)">Desa:</div><div id="resDesa" style="font-weight:600">-</div>
-            <div style="color:var(--muted)">Kecamatan:</div><div id="resKec" style="font-weight:600">-</div>
-          </div>
-          <div style="font-size:0.75rem; line-height:1.4; color:#0f172a; margin-bottom:12px" id="resAlamatBaku">-</div>
-          <div id="resCodStatus" style="display:inline-block; font-size:11px; font-weight:700; padding:6px 10px; border-radius:4px;">-</div>
-        </div>
+        <div class="fg"><label class="lbl">Nomor Tujuan</label><input type="text" id="sendNum" placeholder="628xxxxxxxxxx"/></div>
+        <div class="fg"><label class="lbl">Pesan</label><textarea id="sendMsg" rows="5" placeholder="Tulis pesan..."></textarea></div>
+        <button class="btn btn-green" onclick="doSend()">📤 Kirim Pesan</button>
       </div>
     </div>
-<div class="tab-content" id="tab-key" style="flex:1">
+
+    <div class="tab-content" id="tab-key" style="flex:1">
       <div class="tab-panel">
         <div class="ts" style="margin-bottom:12px;line-height:1.6">💡 Rotasi otomatis: kalau satu key kena quota, sistem langsung pindah ke key berikutnya. Key yang kena quota reset otomatis tiap 60 detik.</div>
 
@@ -998,7 +575,6 @@ Garansi: 6 bulan"></textarea>
     </div>
     </div> <!-- tutup wrapper tab-content -->
   </div>
-      
       </div>
     </div>
 
@@ -1020,10 +596,7 @@ Garansi: 6 bulan"></textarea>
       <div class="data-container">
         <div class="data-header">
           <div class="data-title">Data Order (Ticket Log)</div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <button id="btnAiAutoCek" class="btn" onclick="aiAutoCekAlamat()" style="background:linear-gradient(135deg,#10b981,#0d9488);color:white;border:none;border-radius:6px;font-weight:600;display:flex;align-items:center;gap:6px;">✨ AI Auto Cek</button>
-            <button class="btn btn-blue" onclick="downloadExcel()">📥 Download Excel</button>
-          </div>
+          <button class="btn btn-blue" onclick="downloadExcel()">📥 Download Excel</button>
         </div>
         <div class="table-wrapper">
           <table class="data-table">
@@ -1044,13 +617,6 @@ Garansi: 6 bulan"></textarea>
         </div>
       </div>
     </div>
-
-    <!-- VIEW SETTINGS MOBILE (panel kiri + panel kanan digabung scroll) -->
-    <!-- Hanya tampil di mobile via CSS. Desktop tidak terpengaruh. -->
-    <div id="mobileSettingsView" class="view" style="overflow-y:auto; padding:12px; padding-bottom:70px; background:var(--bg)">
-      <!-- Konten diisi oleh _injectMobileSettings() saat pertama kali tab Pengaturan dibuka -->
-    </div>
-
   </div>
 </div>
 
@@ -1085,6 +651,7 @@ async function doLogin() {
     if (res.ok) {
       localStorage.setItem('authToken', data.token);
       document.getElementById('loginOverlay').style.display = 'none';
+      requestPushPermission();
       initApp();
     } else {
       err.textContent = '❌ ' + (data.error || 'Password salah');
@@ -1095,36 +662,6 @@ async function doLogin() {
 }
 
 let socket,allMessages=[],orders=[],contacts={},activeContact=null;
-let lastRead = JSON.parse(localStorage.getItem("lastRead") || "{}");
-
-
-function showToast(name, body, jid) {
-  const container = document.getElementById('toast-container');
-  if(!container) return;
-  const t = document.createElement('div');
-  t.className = 'toast';
-  t.innerHTML = `<span style="font-size:1.1rem">💬</span><div><div style="font-size:.8rem;opacity:.85">Pesan baru</div><div style="font-weight:700">${x(name)}</div><div style="font-size:.75rem;opacity:.9;margin-top:1px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${x(body)}</div></div>`;
-  t.onclick = () => { selectContact(jid); t.remove(); };
-  container.appendChild(t);
-  // Highlight kontak di list
-  const el = document.querySelector(`.contact-item[onclick*="${jid}"]`);
-  if(el) { el.classList.remove('new-chat'); void el.offsetWidth; el.classList.add('new-chat'); }
-  // Auto hide setelah 5 detik
-  setTimeout(() => {
-    t.classList.add('hiding');
-    setTimeout(() => t.remove(), 300);
-  }, 5000);
-}
-
-function updatePageTitle() {
-  let totalUnread = 0;
-  for (const jid in contacts) {
-    if (jid === activeContact) continue;
-    const lr = lastRead[jid] || "0";
-    totalUnread += contacts[jid].messages.filter(m => !m.manual && new Date(m.timestamp) > new Date(lr)).length;
-  }
-  document.title = totalUnread > 0 ? `(${totalUnread}) WA AI Assistant` : `WA AI Assistant`;
-}
 
 async function initApp() {
   socket = io({ auth: { token: localStorage.getItem('authToken') } });
@@ -1138,21 +675,16 @@ async function initApp() {
   socket.on('status',setStatus);
   socket.on('qr',showQR);
   socket.on('new_message',msg=>{
-    const jid = msg.from || msg.wa_id || '';
-    msg.from = jid;
     allMessages.unshift(msg);
     processContacts();
-    if(activeContact===jid) renderChat(jid);
-    else showToast(msg.senderName||msg.sender_name||jid, msg.body||'[pesan baru]', jid);
-  });
-  socket.on('message_updated',msg=>{
-    const jid = msg.from || msg.wa_id || '';
-    if(!jid) return;
-    msg.from = jid;
-    const idx = allMessages.findIndex(m=>m.id===msg.id);
-    if(idx>-1){ allMessages[idx]=Object.assign(allMessages[idx],msg); }
-    processContacts();
-    if(activeContact===jid) renderChat(jid);
+    if(activeContact===msg.from)renderChat(msg.from);
+    // P6: Push notif kalau tab tidak aktif
+    if(document.hidden && Notification.permission==='granted'){
+      const n=new Notification(`💬 ${msg.senderName||msg.from}`,{
+        body:msg.body,icon:'/icons/icon-192.png',badge:'/icons/icon-96.png',tag:msg.from
+      });
+      n.onclick=()=>{window.focus();selectContact(msg.from);n.close();};
+    }
   });
   socket.on('settings_updated',s=>{document.getElementById('arToggle').checked=s.autoReply??true;});
   socket.on('new_order',o=>{orders.unshift(o);renderOrders();});
@@ -1212,15 +744,6 @@ function applySettings(s){
   document.getElementById('replyDelayMin').value=s.replyDelayMin??10;
   document.getElementById('replyDelayMax').value=s.replyDelayMax??15;
   
-  // Pengaturan pengiriman
-  const komerceEl = document.getElementById('komerceApiKey');
-  const originEl  = document.getElementById('originId');
-  if (komerceEl) komerceEl.value = s.komerceApiKey || '';
-  if (originEl)  originEl.value  = s.originId      || '';
-  // Tampilkan warning kalau belum diisi
-  const warn = document.getElementById('shippingConfigWarning');
-  if (warn) warn.style.display = (!(s.komerceApiKey||'').trim() || !(s.originId||'').trim()) ? 'block' : 'none';
-
   window.productImagesData = s.productImages || {};
   const oh=s.opHours||{};
   document.getElementById('ohToggle').checked=oh.enabled||false;
@@ -1232,14 +755,9 @@ function applySettings(s){
 function processContacts(){
   contacts={};
   for(const msg of allMessages){
-    // Normalize: support both msg.from (lama) dan msg.wa_id (DB baru)
-    const jid = msg.from || msg.wa_id || '';
-    if(!jid) continue;
-    msg.from = jid; // pastikan selalu ada msg.from
-    if(!contacts[jid])contacts[jid]={name:msg.senderName||msg.sender_name||jid,messages:[]};
-    contacts[jid].messages.push(msg);
+    if(!contacts[msg.from])contacts[msg.from]={name:msg.senderName||msg.from,messages:[]};
+    contacts[msg.from].messages.push(msg);
   }
-  updatePageTitle();
   renderContacts();
 }
 
@@ -1252,81 +770,38 @@ function renderContacts(){
   }
   list.innerHTML=keys.map(jid=>{
     const c=contacts[jid],last=c.messages[0];
-    const lr = lastRead[jid] || "0";
-    const unreadCount = jid === activeContact ? 0 : c.messages.filter(m => !m.manual && new Date(m.timestamp) > new Date(lr)).length;
-    const isUnread = unreadCount > 0;
-    return`<div class="contact-item ${activeContact===jid?'active':''} ${isUnread?'new-chat':''}" onclick="selectContact('${jid}')">
+    return`<div class="contact-item ${activeContact===jid?'active':''}" onclick="selectContact('${jid}')">
       <div class="contact-avatar">${(c.name||'?')[0].toUpperCase()}</div>
       <div class="contact-info">
-        <div class="contact-name" style="${isUnread ? 'font-weight:700;color:#000;' : ''}">${x(c.name)}</div>
-        <div class="contact-preview" style="${isUnread ? 'font-weight:600;color:#111;' : ''}">${x(last?.body||'')}</div>
+        <div class="contact-name">${x(c.name)}</div>
+        <div class="contact-preview">${x(last?.body||'')}</div>
       </div>
-      <div class="contact-time">
-        <div>${ft(last?.timestamp)}</div>
-        ${isUnread ? `<div class="unread-badge">${unreadCount}</div>` : ''}
-      </div>
+      <div class="contact-time">${ft(last?.timestamp)}</div>
     </div>`;
   }).join('');
 }
 
-function selectContact(jid){
-  activeContact=jid;
-  lastRead[jid] = new Date().toISOString();
-  localStorage.setItem("lastRead", JSON.stringify(lastRead));
-  updatePageTitle();
-  renderContacts();
-  renderChat(jid);
-  // Desktop: tampilkan input bar
-  const deskBar = document.getElementById('deskInputBar');
-  if (deskBar) {
-    deskBar.classList.add('active');
-    setTimeout(() => document.getElementById('deskChatInput')?.focus(), 50);
-  }
-  // Mobile: slide ke panel chat
-  if (window.innerWidth <= 768) {
-    const chatPanel = document.querySelector('#view-ai .main-cols > .col:nth-child(2)');
-    if (chatPanel) chatPanel.classList.add('chat-open');
-  }
-}
-
-function renderMsgBubble(m) {
-  // Render isi bubble: teks, gambar, link preview
-  let inner = '';
-  if (m.mediaUrl && (m.messageType === 'image' || (m.mediaMimeType||'').startsWith('image/'))) {
-    inner += `<img class="bubble-img" src="${x(m.mediaUrl)}" alt="gambar" onclick="window.open('${x(m.mediaUrl)}','_blank')"/>`;
-  }
-  if (m.body) inner += `<span>${x(m.body)}</span>`;
-  if (m.linkUrl) {
-    inner += `<a class="link-preview" href="${x(m.linkUrl)}" target="_blank" rel="noopener">
-      ${m.linkThumbnail ? `<img class="lp-thumb" src="${x(m.linkThumbnail)}" onerror="this.style.display='none'" alt=""/>` : ''}
-      ${m.linkTitle ? `<div class="lp-title">${x(m.linkTitle)}</div>` : ''}
-      <div class="lp-domain">🔗 ${x(m.linkDomain||m.linkUrl)}</div>
-    </a>`;
-  }
-  return inner || x(m.body||'');
-}
+function selectContact(jid){activeContact=jid;renderContacts();renderChat(jid);}
 
 function renderChat(jid){
   const c=contacts[jid];if(!c)return;
   document.getElementById('chatHeader').style.display='flex';
   document.getElementById('chatAvatar').textContent=(c.name||'?')[0].toUpperCase();
   document.getElementById('chatName').textContent=c.name;
-  document.getElementById('chatSub').textContent=(jid||'').replace('@s.whatsapp.net','').replace('@c.us','');
+  document.getElementById('chatSub').textContent=jid.replace('@s.whatsapp.net','').replace('@c.us','');
   const msgs=[...c.messages].reverse();
   const area=document.getElementById('chatMessages');
   if(!msgs.length){area.innerHTML='<div class="empty-chat"><div class="ei">💬</div><p>Belum ada pesan</p></div>';return;}
   area.innerHTML=msgs.map(m=>`
     <div class="bubble-wrap incoming">
-      <div class="bubble incoming">${renderMsgBubble(m)}</div>
+      <div class="bubble incoming">${x(m.body)}</div>
       <div class="bubble-time">${ft(m.timestamp)}</div>
     </div>
-    ${m.replied && m.aiReply && !m.cancelledEntry ?`
+    ${m.replied&&m.aiReply?`
     <div class="bubble-wrap outgoing">
       <div class="bubble outgoing">${x(m.aiReply)}</div>
-      <div class="bubble-ai-label">${m.manual ? '👤 Anda' : '✨ AI'} · ${ft(m.timestamp)}</div>
-    </div>`
-    : m.cancelledEntry ? ''
-    :`<div class="no-reply-note">⚠️ Tidak dibalas (cek pengaturan/quota)</div>`}
+      <div class="bubble-ai-label">✨ AI · ${ft(m.timestamp)}</div>
+    </div>`:`<div class="no-reply-note">⚠️ Tidak dibalas (cek pengaturan/quota)</div>`}
   `).join('');
   area.scrollTop=area.scrollHeight;
 }
@@ -1365,16 +840,6 @@ async function saveSettings(){
     adminNumber:document.getElementById('adminNumber').value.trim(),
   })});
   flash('saveOk','✅ Tersimpan!');
-}
-
-async function saveShippingConfig(){
-  const komerceApiKey = (document.getElementById('komerceApiKey').value||'').trim();
-  const originId      = (document.getElementById('originId').value||'').trim();
-  await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ komerceApiKey, originId })});
-  // Update warning visibility
-  const warn = document.getElementById('shippingConfigWarning');
-  if (warn) warn.style.display = (!komerceApiKey || !originId) ? 'block' : 'none';
-  flash('shippingOk','✅ Pengaturan pengiriman tersimpan!');
 }
 
 async function saveKB(){
@@ -1429,104 +894,6 @@ function switchMainView(view) {
   document.querySelectorAll('.menu-item').forEach(m => m.classList.remove('active'));
   document.getElementById('menu-' + view).classList.add('active');
   if (view === 'gambar') renderGambarList();
-}
-
-// ── Mobile Navigation Functions ─────────────────────────────────────
-// Hanya aktif di layar mobile. Desktop tidak terpengaruh sama sekali.
-
-
-
-function mobileNavTo(tab) {
-  if (window.innerWidth > 768) return; // Hanya mobile
-
-  // Update bottom nav active state
-  document.querySelectorAll('.m-nav-btn').forEach(b => b.classList.remove('active'));
-  const btn = document.getElementById('mnav-' + tab);
-  if (btn) btn.classList.add('active');
-
-  if (tab === 'chat') {
-    // Tampilkan view-ai (chat)
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.getElementById('view-ai').classList.add('active');
-    } else if (tab === 'settings') {
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.getElementById('view-settings').classList.add('active');
-  } else if (tab === 'data') {
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.getElementById('view-data').classList.add('active');
-  } else if (tab === 'gambar') {
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.getElementById('view-gambar').classList.add('active');
-    renderGambarList();
-  }
-}
-
-function mobileBackToContacts() {
-  // Slide kembali ke daftar kontak
-  const chatPanel = document.querySelector('#view-ai .main-cols > .col:nth-child(2)');
-  if (chatPanel) chatPanel.classList.remove('chat-open');
-  activeContact = null;
-  renderContacts();
-}
-
-function _injectMobileSettings() {
-  // Clone konten dari panel kiri (kontrol bot) dan panel kanan (AI settings tabs)
-  // Inject ke mobileSettingsView supaya bisa di-scroll di mobile
-  const leftPanel  = document.querySelector('#view-ai .main-cols > .col:first-child .col-inner');
-  const rightPanel = document.querySelector('#view-ai .main-cols > .col:nth-child(3)');
-
-  const container = document.getElementById('mobileSettingsView');
-  container.innerHTML = ''; // clear
-
-  if (leftPanel) {
-    const leftWrap = document.createElement('div');
-    leftWrap.style.cssText = 'background:#fff;border-radius:12px;padding:16px;margin-bottom:12px;border:1px solid var(--border)';
-    leftWrap.innerHTML = '<div class="col-title" style="margin-bottom:12px">⚙️ Kontrol Bot</div>' + leftPanel.innerHTML;
-    container.appendChild(leftWrap);
-  }
-
-  if (rightPanel) {
-    const rightWrap = document.createElement('div');
-    rightWrap.style.cssText = 'background:#fff;border-radius:12px;margin-bottom:12px;border:1px solid var(--border);overflow:hidden';
-
-    // Ambil tab-content langsung (tanpa clone, supaya input tetap sync dengan aslinya)
-    // Tampilkan semua tab-content sekaligus (tidak pakai tab bar di mobile)
-    const tabs = rightPanel.querySelectorAll('.tab');
-    const contents = rightPanel.querySelectorAll('.tab-content');
-
-    const tabTitles = { ai:'🤖 AI & Model', kb:'📚 Knowledge Base', send:'📤 Kirim Pesan', key:'🔑 API Key', aitest:'🧪 AI Test' };
-    contents.forEach((c, i) => {
-      const tabName = c.id.replace('tab-','');
-      const section = document.createElement('div');
-      section.style.cssText = 'border-bottom:1px solid var(--border)';
-      // Header section
-      const hdr = document.createElement('div');
-      hdr.style.cssText = 'padding:12px 16px;font-weight:700;font-size:.8rem;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:space-between;background:var(--s2)';
-      hdr.innerHTML = (tabTitles[tabName] || tabName) + '<span>▼</span>';
-      // Content
-      const body = document.createElement('div');
-      body.style.cssText = 'padding:0;overflow:hidden;max-height:0;transition:max-height .3s ease';
-      // Clone isi supaya tetap scrollable
-      body.appendChild(c.cloneNode(true));
-      body.querySelector('.tab-content').classList.add('active');
-      body.querySelector('.tab-content').style.display = 'block';
-
-      // Accordion toggle
-      hdr.onclick = () => {
-        const isOpen = body.style.maxHeight !== '0px' && body.style.maxHeight !== '';
-        body.style.maxHeight = isOpen ? '0' : '2000px';
-        hdr.querySelector('span').textContent = isOpen ? '▼' : '▲';
-        if (tabName === 'key') loadKeyStatus();
-        if (tabName === 'aitest') initAITestTab();
-      };
-
-      section.appendChild(hdr);
-      section.appendChild(body);
-      rightWrap.appendChild(section);
-    });
-
-    container.appendChild(rightWrap);
-  }
 }
 
 function switchTab(name){
@@ -1677,16 +1044,7 @@ function renderOrders(){
         <div style="font-size:0.75rem;color:var(--muted)">${o.hp}</div>
       </td>
       <td><div style="font-size:0.8rem;font-weight:500">${x(o.produk)}</div></td>
-      <td>
-        <div style="font-size:0.75rem;line-height:1.5;max-width:250px">${x(o.alamat)}</div>
-        ${o.ai_alamat ? `
-        <div style="margin-top:8px; padding-top:8px; border-top:1px dashed #e2e8f0;">
-          <div style="font-size:10px; font-weight:700; color:#10b981; letter-spacing:0.5px; margin-bottom:4px;">✨ VERSI AI</div>
-          <div style="font-size:0.75rem; line-height:1.4; color:#0f172a; margin-bottom:6px;">${x(o.ai_alamat)}</div>
-          ${o.ai_cod ? `<div style="display:inline-block; font-size:10px; font-weight:700; padding:4px 6px; border-radius:4px; ${o.ai_cod.includes('✅') ? 'background:#dcfce7; color:#166534; border:1px solid #bbf7d0;' : o.ai_cod.includes('⚠️') ? 'background:#fef3c7; color:#92400e; border:1px solid #fde68a;' : 'background:#fee2e2; color:#991b1b; border:1px solid #fecaca;'}">${x(o.ai_cod)}</div>` : ''}
-        </div>
-        ` : ''}
-      </td>
+      <td><div style="font-size:0.75rem;line-height:1.5;max-width:250px">${x(o.alamat)}</div></td>
       <td>
         <select class="badge ${badgeClass} badge-select" onchange="updateOrderStatus('${o.id}',this.value)">
           <option value="order" ${o.status==='order'?'selected':''}>NEW TICKET</option>
@@ -1896,413 +1254,124 @@ async function loadKeyStatus(){
 function flash(id,msg){const el=document.getElementById(id);el.textContent=msg;setTimeout(()=>el.textContent='',3000);}
 function x(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function ft(iso){try{return new Date(iso).toLocaleString('id-ID',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}catch(e){return''}}
-// Note: initApp() sudah dipanggil di atas via conditional (L582-L586)
-// BUG FIX: dihapus pemanggilan init() yang salah (fungsi tidak ada, harusnya initApp())
-
-// ── PWA: Registrasi Service Worker ──────────────────────────────────
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
-      .then(reg => console.log('[SW] Terdaftar:', reg.scope))
-      .catch(err => console.warn('[SW] Gagal daftar:', err));
-  });
-}
-
-// ── Mobile Chat Input Functions ─────────────────────────────────────
-function mobAutoResize(el) {
-  el.style.height = 'auto';
-  el.style.height = (el.scrollHeight) + 'px';
-}
-
-async function mobSend() {
-  if (!activeContact) return;
-  const input = document.getElementById('mobChatInput');
-  const message = input.value.trim();
-  if (!message) return;
-  
-  // Clean up input visual immediately
-  input.value = '';
-  mobAutoResize(input);
-  
-  const btn = document.getElementById('mobSendBtn');
-  btn.style.opacity = '0.5';
-  btn.disabled = true;
-
-  try {
-    const r = await fetch('/api/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ number: activeContact, message })
-    }).then(r => r.json());
-    
-    if (r.ok) {
-      // Optimistically add to UI as a manual reply
-      const msgObj = {
-        id: 'man-' + Date.now(),
-        from: activeContact,
-        body: '[Anda mengirim pesan]',
-        timestamp: new Date().toISOString(),
-        replied: true,
-        aiReply: message,
-        manual: true // flag khusus
-      };
-      
-      allMessages.unshift(msgObj);
-      if (!contacts[activeContact]) contacts[activeContact] = { name: activeContact, messages: [] };
-      contacts[activeContact].messages.unshift(msgObj);
-      renderChat(activeContact);
-      renderContacts();
-    } else {
-      alert('❌ Gagal mengirim: ' + r.error);
-    }
-  } catch (err) {
-    alert('❌ Koneksi error');
-  }
-  
-  btn.style.opacity = '1';
-  btn.disabled = false;
-}
-// ── Desktop input bar helpers ──
-function deskAutoResize(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-}
-
-async function deskSend() {
-  if (!activeContact) return;
-  const input = document.getElementById('deskChatInput');
-  const message = input.value.trim();
-  if (!message) return;
-
-  input.value = '';
-  deskAutoResize(input);
-
-  const btn = document.getElementById('deskSendBtn');
-  btn.style.opacity = '0.5';
-  btn.disabled = true;
-
-  try {
-    const r = await fetch('/api/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('authToken')}` },
-      body: JSON.stringify({ number: activeContact, message })
-    }).then(r => r.json());
-
-    if (r.ok) {
-      const msgObj = {
-        id: 'man-' + Date.now(),
-        from: activeContact,
-        body: '[Anda mengirim pesan]',
-        timestamp: new Date().toISOString(),
-        replied: true,
-        aiReply: message,
-        manual: true
-      };
-      allMessages.unshift(msgObj);
-      if (!contacts[activeContact]) contacts[activeContact] = { name: activeContact, messages: [] };
-      contacts[activeContact].messages.unshift(msgObj);
-      renderChat(activeContact);
-      renderContacts();
-    } else {
-      alert('❌ Gagal mengirim: ' + (r.error || 'Unknown error'));
-    }
-  } catch (err) {
-    alert('❌ Koneksi error');
-  }
-
-  btn.style.opacity = '1';
-  btn.disabled = false;
-  input.focus();
-}
-
-// ── AI Auto Cek Alamat & ID Express ──
-async function aiAutoCekAlamat() {
-  const btn = document.getElementById('btnAiAutoCek');
-  const orig = btn.innerHTML;
-  btn.innerHTML = '⏳ Sedang cek...';
-  btn.disabled = true;
-  btn.style.opacity = '0.7';
-  try {
-    const r = await fetch('/api/orders/backfill-ai', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
-    });
-    const data = await r.json();
-    if (data.ok) {
-      if (data.processed === 0) {
-        alert('✅ Semua order sudah memiliki data AI. Tidak ada yang perlu diproses.');
-      } else {
-        alert(`✅ ${data.message}\n\nHalaman akan otomatis refresh setelah proses selesai di background (~${data.processing * 2} detik).`);
-        // Refresh orders setelah estimasi selesai
-        setTimeout(async () => {
-          const res = await fetch('/api/orders', { headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` } });
-          orders = await res.json();
-          renderOrders();
-        }, data.processing * 2200);
-      }
-    } else {
-      alert('❌ Gagal: ' + (data.error || 'Unknown error'));
-    }
-  } catch(e) {
-    alert('❌ Koneksi error: ' + e.message);
-  } finally {
-    btn.innerHTML = orig;
-    btn.disabled = false;
-    btn.style.opacity = '1';
-  }
-}
-
-// ── Manual Cek Alamat & Ongkir ──
-async function doManualCekAlamat() {
-  const input = document.getElementById('manualAlamat').value.trim();
-  if (!input) return alert('Masukkan alamat terlebih dahulu');
-
-  // Cek dulu apakah config sudah diisi (client-side check)
-  const komerceKey = (document.getElementById('komerceApiKey')?.value||'').trim();
-  const originIdVal = (document.getElementById('originId')?.value||'').trim();
-  if (!komerceKey || !originIdVal) {
-    document.getElementById('shippingConfigWarning').style.display = 'block';
-    return alert('⚠️ Isi dulu Komerce API Key dan Origin ID di bagian "Pengaturan Pengiriman" di atas, lalu simpan.');
-  }
-  
-  const btn = document.getElementById('btnManualCekAlamat');
-  const origText = btn.innerHTML;
-  btn.innerHTML = '⏳ Sedang mengecek...';
-  btn.disabled = true;
-  btn.style.opacity = '0.7';
-  document.getElementById('manualAlamatResult').style.display = 'none';
-
-  try {
-    const res = await fetch('/api/cek-alamat-manual', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('authToken')}` },
-      body: JSON.stringify({ alamat: input })
-    });
-    const data = await res.json();
-    
-    if (data.ok) {
-      document.getElementById('resDesa').textContent = data.data.desa || '-';
-      document.getElementById('resKec').textContent = data.data.kecamatan || '-';
-      document.getElementById('resAlamatBaku').textContent = data.data.ai_alamat || '-';
-      
-      const codBox = document.getElementById('resCodStatus');
-      codBox.textContent = data.data.ai_cod || 'Tidak diketahui';
-      
-      if (data.data.ai_cod.includes('✅')) {
-        codBox.style.background = '#dcfce7'; codBox.style.color = '#166534'; codBox.style.border = '1px solid #bbf7d0';
-      } else if (data.data.ai_cod.includes('⚠️')) {
-        codBox.style.background = '#fef3c7'; codBox.style.color = '#92400e'; codBox.style.border = '1px solid #fde68a';
-      } else {
-        codBox.style.background = '#fee2e2'; codBox.style.color = '#991b1b'; codBox.style.border = '1px solid #fecaca';
-      }
-      
-      document.getElementById('manualAlamatResult').style.display = 'block';
-    } else {
-      alert('❌ Gagal: ' + (data.error || 'Terjadi kesalahan'));
-    }
-  } catch (err) {
-    alert('❌ Koneksi error: ' + err.message);
-  } finally {
-    btn.innerHTML = origText;
-    btn.disabled = false;
-    btn.style.opacity = '1';
-  }
-}
+init();
 </script>
 
+<!-- P3: Drawer backdrop -->
+<div class="drawer-backdrop" id="drawerBackdrop" onclick="closeDrawers()"></div>
 
-<div class="tab-content" id="tab-aitest" style="flex:1">
-  <div class="tab-panel">
-    <div class="col-title" style="margin-bottom:4px">🧪 AI-to-AI Test Session</div>
-    <div class="ts" style="margin-bottom:16px;line-height:1.7">3 persona customer palsu dari log chat nyata akan tanya ke bot produksimu secara langsung. Tidak ada pesan yang dikirim ke WhatsApp — aman dijalankan kapan saja.</div>
-
-    <div style="display:flex;gap:10px;margin-bottom:20px;align-items:center;flex-wrap:wrap">
-      <button id="btnStartTest" class="btn btn-green" onclick="startAITest()">▶️ Jalankan Test</button>
-      <button id="btnStopTest" class="btn" onclick="stopAITest()" style="display:none;background:#ef4444;color:white;border:none">⏹ Stop</button>
-      <span id="aiTestStatus" style="font-size:0.8rem;color:var(--muted)">Belum dijalankan</span>
-    </div>
-
-    <!-- 3 kolom persona -->
-    <div id="aiTestGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">
-      <!-- diisi JS -->
-    </div>
-
-    <!-- Scorecard akhir -->
-    <div id="aiTestScorecard" style="display:none;margin-top:20px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px">
-      <div class="col-title" style="margin-bottom:10px">📊 Scorecard Akhir</div>
-      <div id="aiTestScorecardContent"></div>
-    </div>
+<!-- P1: Bottom navigation -->
+<nav class="bottom-nav">
+  <div class="bottom-nav-item active" id="bn-ai" onclick="switchMainViewMobile('ai')">
+    <div class="bn-icon">💬</div><span>Chat</span>
   </div>
-</div>
+  <div class="bottom-nav-item" id="bn-data" onclick="switchMainViewMobile('data')">
+    <div class="bn-icon">📊</div><span>Order</span>
+  </div>
+  <div class="bottom-nav-item" id="bn-gambar" onclick="switchMainViewMobile('gambar')">
+    <div class="bn-icon">🖼️</div><span>Galeri</span>
+  </div>
+  <div class="bottom-nav-item" id="bn-settings" onclick="openLeftPanel()">
+    <div class="bn-icon">⚙️</div><span>Setting</span>
+  </div>
+</nav>
 
 <script>
-// ── AI Test Tab Logic ────────────────────────────────────────────────────────
+// ── Mobile helpers ──────────────────────────────────────────────────
+function isMobile(){return window.innerWidth<=768;}
 
-let aiTestSocket = null;
-let aiTestRunning = false;
-
-function initAITestTab() {
-  // Render 3 kolom persona kosong
-  const grid = document.getElementById('aiTestGrid');
-  const personas = [
-    { id: 'persona_1', label: '🧑 Khasin', sublabel: 'Buyer produk rumah tangga' },
-    { id: 'persona_2', label: '👩 Azizah', sublabel: 'Calon beli tapi ragu-ragu' },
-    { id: 'persona_3', label: '👩 Rosa',   sublabel: 'Buyer, order sampai konfirmasi' },
-  ];
-  grid.innerHTML = personas.map(p => `
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
-      <div style="padding:12px 14px;border-bottom:1px solid var(--border);background:var(--hover)">
-        <div style="font-weight:600;font-size:0.9rem">${p.label}</div>
-        <div style="font-size:0.75rem;color:var(--muted)">${p.sublabel}</div>
-      </div>
-      <div id="chat_${p.id}" style="flex:1;padding:12px;display:flex;flex-direction:column;gap:8px;min-height:200px;max-height:420px;overflow-y:auto;font-size:0.8rem">
-        <div style="color:var(--muted);text-align:center;font-size:0.75rem;padding-top:20px">Menunggu test dimulai...</div>
-      </div>
-      <div id="score_${p.id}" style="padding:10px 14px;border-top:1px solid var(--border);font-size:0.78rem;color:var(--muted);display:none"></div>
-    </div>
-  `).join('');
-
-  document.getElementById('aiTestScorecard').style.display = 'none';
+function openLeftPanel(){
+  document.querySelector('.col-settings').classList.add('drawer-open');
+  document.getElementById('drawerBackdrop').style.display='block';
+}
+function openRightPanel(){
+  document.querySelector('.col-right-panel').classList.add('drawer-open');
+  document.getElementById('drawerBackdrop').style.display='block';
+}
+function closeDrawers(){
+  document.querySelector('.col-settings').classList.remove('drawer-open');
+  document.querySelector('.col-right-panel').classList.remove('drawer-open');
+  document.getElementById('drawerBackdrop').style.display='none';
 }
 
-function renderBubble(personaId, role, text, skor) {
-  const container = document.getElementById('chat_' + personaId);
-  if (!container) return;
+function switchMainViewMobile(view){
+  // Update bottom nav active state
+  document.querySelectorAll('.bottom-nav-item').forEach(i=>i.classList.remove('active'));
+  const bn=document.getElementById('bn-'+view);
+  if(bn)bn.classList.add('active');
+  // Delegate to existing function
+  switchMainView(view);
+}
 
-  // Hapus placeholder kalau masih ada
-  const placeholder = container.querySelector('[data-placeholder]');
-  if (placeholder) placeholder.remove();
-
-  const isCustomer = role === 'customer';
-  const bubble = document.createElement('div');
-  bubble.style.cssText = `display:flex;flex-direction:column;align-items:${isCustomer ? 'flex-start' : 'flex-end'};gap:2px`;
-
-  const msg = document.createElement('div');
-  msg.style.cssText = `max-width:85%;padding:8px 10px;border-radius:${isCustomer ? '4px 12px 12px 12px' : '12px 4px 12px 12px'};font-size:0.78rem;line-height:1.5;white-space:pre-wrap;word-break:break-word;background:${isCustomer ? 'var(--hover)' : '#dcfce7'};color:${isCustomer ? 'var(--text)' : '#166534'}`;
-  msg.textContent = text;
-  bubble.appendChild(msg);
-
-  if (skor !== undefined && skor !== null) {
-    const badge = document.createElement('div');
-    const color = skor >= 4 ? '#16a34a' : skor >= 3 ? '#ca8a04' : '#dc2626';
-    badge.style.cssText = `font-size:0.7rem;color:${color};padding:0 4px`;
-    badge.textContent = '⭐ ' + skor + '/5';
-    bubble.appendChild(badge);
+// Override selectContact to handle mobile show/hide
+const _origSelectContact = window.selectContact;
+window.selectContact = function(jid){
+  activeContact=jid;
+  renderContacts();
+  renderChat(jid);
+  if(isMobile()){
+    document.querySelector('.contact-list-col').classList.add('mob-hidden');
+    document.querySelector('.chat-area-col').classList.add('mob-visible');
   }
+};
 
-  container.appendChild(bubble);
-  container.scrollTop = container.scrollHeight;
+function backToContacts(){
+  activeContact=null;
+  document.querySelector('.contact-list-col').classList.remove('mob-hidden');
+  document.querySelector('.chat-area-col').classList.remove('mob-visible');
+  document.getElementById('chatHeader').style.display='none';
+  document.getElementById('chatReplyBar').style.display='none';
 }
 
-async function startAITest() {
-  document.getElementById('btnStartTest').disabled = true;
-  document.getElementById('btnStopTest').style.display = 'inline-flex';
-  document.getElementById('aiTestStatus').textContent = '⏳ Test berjalan...';
-  document.getElementById('aiTestScorecard').style.display = 'none';
-  aiTestRunning = true;
-  initAITestTab();
+// Show reply bar when contact is selected
+const _origRenderChat = window.renderChat;
+window.renderChat = function(jid){
+  _origRenderChat(jid);
+  const bar=document.getElementById('chatReplyBar');
+  if(bar)bar.style.display=jid?'flex':'none';
+};
 
-  // Hapus placeholder semua kolom
-  document.querySelectorAll('[id^="chat_persona"]').forEach(el => {
-    el.innerHTML = '<div style="color:var(--muted);text-align:center;font-size:0.75rem;padding-top:20px" data-placeholder>Menunggu giliran pertama...</div>';
-  });
-
-  try {
-    await fetch('/api/ai-test/start', { method: 'POST' });
-  } catch(e) {
-    document.getElementById('aiTestStatus').textContent = '❌ Gagal memulai: ' + e.message;
-    document.getElementById('btnStartTest').disabled = false;
-    return;
-  }
+// ── P4: Manual chat reply ──────────────────────────────────────────
+async function sendChatReply(){
+  if(!activeContact)return;
+  const input=document.getElementById('chatReplyInput');
+  const btn=document.getElementById('chatReplySendBtn');
+  const msg=input.value.trim();
+  if(!msg)return;
+  btn.disabled=true;input.disabled=true;
+  try{
+    const res=await fetch('/api/send',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({number:activeContact,message:msg})
+    });
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Gagal kirim');
+    input.value='';
+    input.style.height='auto';
+  }catch(e){alert('Gagal kirim: '+e.message);}
+  finally{btn.disabled=false;input.disabled=false;input.focus();}
 }
 
-async function stopAITest() {
-  await fetch('/api/ai-test/stop', { method: 'POST' });
-  document.getElementById('aiTestStatus').textContent = '⏹ Dihentikan manual';
-  document.getElementById('btnStopTest').style.display = 'none';
-  document.getElementById('btnStartTest').disabled = false;
-  aiTestRunning = false;
+// Auto-resize reply textarea
+(function(){
+  const inp=document.getElementById('chatReplyInput');
+  if(!inp)return;
+  inp.addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,100)+'px';});
+  inp.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChatReply();}});
+})();
+
+// ── P6: Push notification helper ──────────────────────────────────
+function requestPushPermission(){
+  if(!('Notification'in window))return;
+  Notification.requestPermission();
 }
 
-// Handle realtime events dari server
-if (typeof socket !== 'undefined') {
-  socket.on('ai_test_update', function(data) {
-    if (data.type === 'session_start') {
-      document.getElementById('aiTestStatus').textContent = '⏳ Sesi berjalan — 3 persona simultan...';
-    }
-
-    if (data.type === 'turn_start') {
-      renderBubble(data.personaId, 'customer', data.customerMsg);
-      // Tampilkan typing indicator
-      const container = document.getElementById('chat_' + data.personaId);
-      if (container) {
-        const typing = document.createElement('div');
-        typing.id = 'typing_' + data.personaId + '_' + data.turnIndex;
-        typing.style.cssText = 'display:flex;align-items:flex-end;gap:3px;padding:4px 0';
-        typing.innerHTML = '<div style="background:var(--hover);border-radius:12px;padding:6px 10px;font-size:0.75rem;color:var(--muted)">⏳ Bot mengetik...</div>';
-        container.appendChild(typing);
-        container.scrollTop = container.scrollHeight;
-      }
-    }
-
-    if (data.type === 'turn_done') {
-      // Hapus typing indicator
-      const typing = document.getElementById('typing_' + data.personaId + '_' + data.turn.index);
-      if (typing) typing.remove();
-      renderBubble(data.personaId, 'bot', data.turn.botReply, data.turn.evalResult?.skor);
-    }
-
-    if (data.type === 'persona_done') {
-      const scoreEl = document.getElementById('score_' + data.personaId);
-      if (scoreEl) {
-        const skor = parseFloat(data.avgSkor);
-        const color = skor >= 4 ? '#16a34a' : skor >= 3 ? '#ca8a04' : '#dc2626';
-        scoreEl.style.display = 'block';
-        scoreEl.innerHTML = `Rata-rata skor: <strong style="color:${color}">${data.avgSkor}/5</strong>`;
-      }
-    }
-
-    if (data.type === 'session_done') {
-      document.getElementById('btnStartTest').disabled = false;
-      document.getElementById('btnStopTest').style.display = 'none';
-      document.getElementById('aiTestStatus').textContent = '✅ Selesai — ' + new Date().toLocaleTimeString('id-ID');
-      aiTestRunning = false;
-
-      // Render scorecard
-      if (data.session?.personas) {
-        const rows = data.session.personas.map(p => {
-          const skor = parseFloat(p.avgSkor) || 0;
-          const color = skor >= 4 ? '#16a34a' : skor >= 3 ? '#ca8a04' : '#dc2626';
-          const bar = Math.round(skor / 5 * 100);
-          return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
-            <div style="min-width:120px;font-size:0.82rem;font-weight:500">${p.label}</div>
-            <div style="flex:1;min-width:100px;background:var(--hover);border-radius:4px;height:8px;overflow:hidden">
-              <div style="width:${bar}%;height:100%;background:${color};border-radius:4px;transition:width 0.5s"></div>
-            </div>
-            <div style="font-size:0.82rem;font-weight:600;color:${color};min-width:40px">${p.avgSkor || '-'}/5</div>
-          </div>`;
-        }).join('');
-
-        const allSkors = data.session.personas.map(p => parseFloat(p.avgSkor)).filter(s => !isNaN(s));
-        const globalAvg = allSkors.length ? (allSkors.reduce((a,b) => a+b,0) / allSkors.length).toFixed(1) : '-';
-        const globalColor = parseFloat(globalAvg) >= 4 ? '#16a34a' : parseFloat(globalAvg) >= 3 ? '#ca8a04' : '#dc2626';
-
-        document.getElementById('aiTestScorecardContent').innerHTML = rows +
-          `<div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px;font-size:0.85rem">
-            Skor global rata-rata: <strong style="color:${globalColor}">${globalAvg}/5</strong>
-          </div>`;
-        document.getElementById('aiTestScorecard').style.display = 'block';
-      }
-    }
-
-    if (data.type === 'error') {
-      document.getElementById('aiTestStatus').textContent = '❌ Error: ' + data.message;
-      document.getElementById('btnStartTest').disabled = false;
-      document.getElementById('btnStopTest').style.display = 'none';
-      aiTestRunning = false;
-    }
+// ── P5: Service Worker registration ────────────────────────────────
+if('serviceWorker'in navigator){
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('/sw.js').catch(e=>console.warn('SW register failed:',e));
   });
 }
 </script>
-</body>
 </html>

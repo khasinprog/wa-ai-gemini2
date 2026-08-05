@@ -1,6 +1,7 @@
-const CACHE_NAME = 'wa-ai-v2';
+const CACHE_NAME = 'wa-ai-v1';
 const STATIC_ASSETS = ['/', '/index.html'];
 
+// Install: cache static assets
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => cache.addAll(STATIC_ASSETS))
@@ -8,6 +9,7 @@ self.addEventListener('install', event => {
   self.skipWaiting();
 });
 
+// Activate: clean old caches
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
@@ -17,23 +19,17 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
-// Network-first untuk semua request
+// Fetch: network first, fallback to cache (khusus untuk navigasi halaman)
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
-
-  // Jangan cache API, socket.io, gambar dinamis
-  if (
-    url.pathname.startsWith('/api/') ||
-    url.pathname.startsWith('/socket.io/') ||
-    url.pathname.startsWith('/images/') ||
-    url.pathname.startsWith('/uploads/')
-  ) return;
+  // Cache hanya asset halaman, jangan cache API calls
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/socket.io/')) return;
 
   event.respondWith(
     fetch(event.request)
       .then(response => {
-        // Cache hanya dokumen navigasi (bukan XHR/fetch calls dari JS)
-        if (event.request.destination === 'document' && response.ok) {
+        // Cache response terbaru untuk navigasi
+        if (event.request.destination === 'document') {
           const clone = response.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
         }
@@ -43,11 +39,12 @@ self.addEventListener('fetch', event => {
   );
 });
 
-// Push notification
+// Push notification handler
 self.addEventListener('push', event => {
   if (!event.data) return;
   let data = {};
   try { data = event.data.json(); } catch (e) { data = { title: 'WA AI', body: event.data.text() }; }
+
   event.waitUntil(
     self.registration.showNotification(data.title || 'WA AI Assistant', {
       body: data.body || 'Ada pesan baru masuk',
@@ -60,6 +57,7 @@ self.addEventListener('push', event => {
   );
 });
 
+// Notification click handler
 self.addEventListener('notificationclick', event => {
   event.notification.close();
   const target = event.notification.data?.url || '/';

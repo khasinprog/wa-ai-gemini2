@@ -1,0 +1,349 @@
+{
+  "timestamp": "2026-08-05T01:53:13.338Z",
+  "summary": {
+    "totalPass": 14,
+    "totalFail": 3,
+    "totalChecks": 17,
+    "passRate": "82%",
+    "byCategory": {
+      "konten": {
+        "pass": 4,
+        "total": 5,
+        "passRate": "80%",
+        "avgSkor": "4.3"
+      },
+      "gaya": {
+        "pass": 5,
+        "total": 5,
+        "passRate": "100%",
+        "avgSkor": "5.0"
+      },
+      "edge_case": {
+        "pass": 5,
+        "total": 7,
+        "passRate": "71%",
+        "avgSkor": "4.0"
+      }
+    }
+  },
+  "scenarios": [
+    {
+      "id": "SC01",
+      "label": "Tanya harga produk spesifik",
+      "category": "konten",
+      "turns": [
+        {
+          "customerMsg": "Halo! Bisa minta info lebih lanjut tentang baby walking assistant?",
+          "botReply": "Halo Kak Test, tentu saja! Baby Walking Assistant ini dirancang khusus untuk membantu si kecil belajar berjalan dengan aman tanpa bikin pegal punggung Kakak, karena dilengkapi pegangan yang ergonomis dan bahan yang empuk. \n\nMau pilih warna apa untuk si kecil, Kak?",
+          "evalResult": null
+        },
+        {
+          "customerMsg": "Harga berapa kak?",
+          "botReply": "Harganya Rp95.000 saja, Kak. \n\nMau saya bantu proses pemesanannya sekarang, Kak?",
+          "evalResult": {
+            "kriteria": {
+              "harus_sebut_harga": {
+                "pass": true,
+                "alasan": "Balasan sudah menyebutkan harga spesifik Rp95.000."
+              },
+              "harus_ada_cta": {
+                "pass": true,
+                "alasan": "Balasan diakhiri dengan ajakan untuk memproses pemesanan."
+              }
+            },
+            "skor": 5,
+            "catatan": "Balasan sudah sesuai instruksi untuk pertanyaan harga dengan menyertakan harga spesifik dan CTA."
+          }
+        }
+      ],
+      "passCriteria": 2,
+      "failCriteria": 0,
+      "avgSkor": 5
+    },
+    {
+      "id": "SC02",
+      "label": "Tanya multi-produk sekaligus",
+      "category": "konten",
+      "turns": [
+        {
+          "customerMsg": "Kakak jual produk apa aja?",
+          "botReply": "Halo Kak Test, senang bisa membantu! 😊\n\nSaat ini kami menyediakan berbagai produk pilihan berkualitas tinggi yang sangat membantu kebutuhan sehari-hari, salah satunya adalah alat bantu jalan bayi (Baby Walking Assistant) yang dirancang aman dan nyaman untuk si kecil belajar berjalan. \n\nKira-kira produk apa yang sedang Kakak cari atau butuhkan saat ini?",
+          "evalResult": {
+            "kriteria": {
+              "harus_ada_cta": {
+                "pass": true,
+                "alasan": "Balasan diakhiri dengan pertanyaan untuk menggali kebutuhan produk customer."
+              },
+              "jangan_sebut_cuma_1_produk": {
+                "pass": false,
+                "alasan": "Bot hanya menyebutkan satu produk saja (Baby Walking Assistant) padahal ditanya jual produk apa saja."
+              }
+            },
+            "skor": 3,
+            "catatan": "Bot ramah dan ada CTA, namun gagal menyebutkan ragam produk ketika ditanya koleksi secara umum."
+          }
+        }
+      ],
+      "passCriteria": 1,
+      "failCriteria": 1,
+      "avgSkor": 3
+    },
+    {
+      "id": "SC03",
+      "label": "Tanya detail produk yang ada di KB",
+      "category": "konten",
+      "turns": [
+        {
+          "customerMsg": "Halo! Bisa minta info lebih lanjut tentang selang flexibel?",
+          "botReply": "Halo Kak Test, tentu saja! Selang fleksibel kami terbuat dari bahan berkualitas tinggi yang awet, anti-karat, dan tahan terhadap tekanan air tinggi sehingga tidak mudah bocor. \n\nKira-kira Kak Test butuh selang fleksibel untuk penggunaan di area mana, wastafel, closet, atau pemanas air?",
+          "evalResult": null
+        },
+        {
+          "customerMsg": "Tersedia ukuran berapa aja kak?",
+          "botReply": "Tersedia beberapa pilihan ukuran panjang Kak, mulai dari 40 cm, 50 cm, hingga 60 cm yang pas untuk berbagai kebutuhan pemasangan. \n\nMau pilih ukuran yang berapa cm Kak Test?",
+          "evalResult": {
+            "kriteria": {
+              "harus_ada_cta": {
+                "pass": true,
+                "alasan": "Balasan diakhiri dengan pertanyaan pilihan ukuran untuk langkah berikutnya."
+              }
+            },
+            "skor": 5,
+            "catatan": "Bot menjawab pertanyaan ukuran dengan jelas dan menyertakan CTA yang sesuai aturan."
+          }
+        }
+      ],
+      "passCriteria": 1,
+      "failCriteria": 0,
+      "avgSkor": 5
+    },
+    {
+      "id": "SC04",
+      "label": "Pesan pertama — boleh basa-basi ramah",
+      "category": "gaya",
+      "turns": [
+        {
+          "customerMsg": "Halo kak",
+          "botReply": "Halo juga Kak Test, selamat datang! Ada yang bisa saya bantu untuk produk kami hari ini?",
+          "evalResult": {
+            "kriteria": {
+              "harus_ada_cta": {
+                "pass": true,
+                "alasan": "Balasan diakhiri dengan pertanyaan 'Ada yang bisa saya bantu...' yang mendorong percakapan."
+              },
+              "bukan_jawaban_kosong": {
+                "pass": true,
+                "alasan": "Balasan memiliki konten sapaan dan penawaran bantuan yang ramah."
+              }
+            },
+            "skor": 5,
+            "catatan": "Balasan pertama ramah, natural, dan sudah menyertakan CTA yang sesuai."
+          }
+        }
+      ],
+      "passCriteria": 2,
+      "failCriteria": 0,
+      "avgSkor": 5
+    },
+    {
+      "id": "SC05",
+      "label": "Tanya harga saja — jangan panjang-panjang",
+      "category": "gaya",
+      "turns": [
+        {
+          "customerMsg": "Halo! Bisa minta info lebih lanjut tentang baby walking assistant?",
+          "botReply": "Halo juga Kak Test! Tentu, baby walking assistant ini dirancang khusus untuk membantu si kecil belajar berjalan dengan lebih aman dan nyaman, sekaligus menjaga punggung Kakak agar tidak pegal karena tidak perlu membungkuk terus. \n\nKira-kira si kecil sudah usia berapa bulan sekarang, Kak?",
+          "evalResult": null
+        },
+        {
+          "customerMsg": "Harga brp ka",
+          "botReply": "Harganya Rp125.000 saja, Kak. \n\nMau saya bantu proses pemesanannya sekarang, Kak?",
+          "evalResult": {
+            "kriteria": {
+              "harus_sebut_harga": {
+                "pass": true,
+                "alasan": "Balasan menyebutkan harga spesifik Rp125.000"
+              },
+              "harus_singkat_untuk_tanya_harga": {
+                "pass": true,
+                "alasan": "Balasan singkat terdiri dari 2 kalimat sesuai instruksi tanya harga"
+              }
+            },
+            "skor": 5,
+            "catatan": "Balasan sudah langsung memberikan harga secara spesifik dan singkat serta dilengkapi CTA."
+          }
+        }
+      ],
+      "passCriteria": 2,
+      "failCriteria": 0,
+      "avgSkor": 5
+    },
+    {
+      "id": "SC06",
+      "label": "Customer sarkas/tidak sopan — tetap sopan",
+      "category": "gaya",
+      "turns": [
+        {
+          "customerMsg": "Halo! Bisa minta info lebih lanjut tentang selang flexibel?",
+          "botReply": "Halo Kak Test, tentu saja! Selang fleksibel ini terbuat dari bahan berkualitas tinggi yang anti-karat dan tahan terhadap tekanan air tinggi, sehingga sangat awet untuk pemakaian jangka panjang. Pemasangannya juga sangat mudah dan cocok untuk berbagai jenis keran maupun shower. \n\nKira-kira Kak Test butuh selang fleksibel untuk dipasang di wastafel atau untuk shower kamar mandi?",
+          "evalResult": null
+        },
+        {
+          "customerMsg": "Satu aja GX bisa y",
+          "botReply": "Tentu bisa kok Kak Test, pembelian ecer 1 pcs tetap kami layani dengan senang hati. \n\nMau saya bantu proses untuk pemesanan 1 pcs selang fleksibelnya sekarang, Kak?",
+          "evalResult": null
+        },
+        {
+          "customerMsg": "Ooo kmu ketahuan?? Bohong nya 🤣",
+          "botReply": "Eh, maksudnya bagaimana ya Kak Test? Ada yang keliru atau ada yang bisa saya bantu jelaskan lagi? 😊",
+          "evalResult": {
+            "kriteria": {
+              "harus_tetap_sopan": {
+                "pass": true,
+                "alasan": "Bot tetap merespon dengan tenang, sopan, dan tidak defensif meskipun customer menggunakan nada sarkas."
+              }
+            },
+            "skor": 5,
+            "catatan": "Bot berhasil menangani customer yang bersikap sarkas dengan tetap menjaga kesopanan dan keramahan."
+          }
+        }
+      ],
+      "passCriteria": 1,
+      "failCriteria": 0,
+      "avgSkor": 5
+    },
+    {
+      "id": "SC07",
+      "label": "Nego harga — minta diskon",
+      "category": "edge_case",
+      "turns": [
+        {
+          "customerMsg": "Halo! Bisa minta info lebih lanjut tentang baby walking assistant?",
+          "botReply": "Halo Kak Test, tentu saja! Baby Walking Assistant ini dirancang khusus untuk membantu si kecil belajar berjalan dengan lebih aman dan nyaman tanpa bikin Kakak sering membungkuk. Alatnya empuk, mudah disesuaikan, dan pastinya bikin si kecil lebih percaya diri saat melangkah. \n\nMau pilih warna apa Kak untuk si kecil?",
+          "evalResult": null
+        },
+        {
+          "customerMsg": "Kirain 50 kak, bisa kurang gak?",
+          "botReply": "Halo Kak Test, wah maaf banget ya Kak, untuk harga sudah pas banget karena kualitas bahan dan keamanannya terjamin. Tapi tenang, harganya tetap terjangkau kok untuk kenyamanan si kecil. \n\nMau saya bantu proses pemesanannya sekarang Kak?",
+          "evalResult": {
+            "kriteria": {
+              "harus_ada_cta": {
+                "pass": true,
+                "alasan": "Balasan diakhiri dengan ajakan untuk memproses pemesanan."
+              },
+              "jangan_langsung_kasih_diskon_besar": {
+                "pass": true,
+                "alasan": "Bot menolak diskon dengan sopan dan mempertahankan harga pas tanpa memberikan potongan besar."
+              }
+            },
+            "skor": 5,
+            "catatan": "Bot berhasil menangani permintaan diskon dengan menolak secara halus dan tetap mengarahkan ke penjualan."
+          }
+        }
+      ],
+      "passCriteria": 2,
+      "failCriteria": 0,
+      "avgSkor": 5
+    },
+    {
+      "id": "SC08",
+      "label": "Customer batal — terima langsung, jangan dibujuk",
+      "category": "edge_case",
+      "turns": [
+        {
+          "customerMsg": "Halo! Bisa minta info lebih lanjut tentang selang flexibel?",
+          "botReply": "Halo juga Kak Test! Tentu, selang fleksibel kami dirancang dengan bahan berkualitas tinggi yang tahan karat, anti-bocor, dan sangat lentur sehingga tidak mudah terlipat saat digunakan. \n\nKira-kira Kak Test sedang mencari selang fleksibel untuk kebutuhan wastafel, closet, atau shower?",
+          "evalResult": null
+        },
+        {
+          "customerMsg": "Maaf kemahalan, karena kami mau jual lagi mbak trim",
+          "botReply": "Wah, paham banget Kak Test kalau mau dijual lagi. Sayang sekali harga kami sudah pas untuk kualitas terbaik ini jadi belum bisa kasih diskon untuk pembelian grosir. \n\nMau coba ambil beberapa pcs dulu untuk sampel kualitasnya, Kak?",
+          "evalResult": {
+            "kriteria": {
+              "harus_terima_batal_dengan_baik": {
+                "pass": true,
+                "alasan": "Bot memahami keputusan customer dengan baik."
+              },
+              "jangan_bujuk_balik": {
+                "pass": false,
+                "alasan": "Bot masih mencoba membujuk customer untuk mengambil sampel produk setelah customer menyatakan batal."
+              }
+            },
+            "skor": 2,
+            "catatan": "Bot gagal mematuhi aturan untuk tidak membujuk balik customer yang ingin batal."
+          }
+        }
+      ],
+      "passCriteria": 1,
+      "failCriteria": 1,
+      "avgSkor": 2
+    },
+    {
+      "id": "SC09",
+      "label": "Tanya detail yang tidak ada di KB — harus eskalasi",
+      "category": "edge_case",
+      "turns": [
+        {
+          "customerMsg": "Halo! Bisa minta info lebih lanjut tentang baby walking assistant?",
+          "botReply": "Halo Kak Test! Tentu, Baby Walking Assistant ini sangat membantu si kecil untuk belajar berjalan dengan lebih aman dan nyaman tanpa membuat punggung Kakak sakit karena harus sering membungkuk. \n\nMau pilihkan warna apa untuk si kecil Kak?",
+          "evalResult": null
+        },
+        {
+          "customerMsg": "Ada garansinya gak kak?",
+          "botReply": "[ESCALATE:Baby Walking Assistant:apakah ada garansi?]",
+          "evalResult": {
+            "kriteria": {
+              "harus_eskalasi_jika_tidak_ada_di_kb": {
+                "pass": true,
+                "alasan": "Bot berhasil mendeteksi informasi garansi tidak ada di KB dan langsung menyertakan tag eskalasi yang tepat."
+              }
+            },
+            "skor": 5,
+            "catatan": "Bot mengikuti aturan eskalasi dengan sempurna tanpa mengarang jawaban saat informasi tidak tersedia di KB."
+          }
+        }
+      ],
+      "passCriteria": 1,
+      "failCriteria": 0,
+      "avgSkor": 5
+    },
+    {
+      "id": "SC10",
+      "label": "Order multi-produk — total gabungan",
+      "category": "edge_case",
+      "turns": [
+        {
+          "customerMsg": "Halo, aku mau pesan baby walking assistant sama selang flexibel sekalian",
+          "botReply": "Halo juga Kak Test, pilihan produknya pas banget nih, baby walking assistant kami sangat membantu si kecil belajar jalan dengan aman dan nyaman tanpa bikin pegal. Untuk selang fleksibelnya juga ready ya Kak. \n\nMau saya buatkan rekap pesanan untuk kedua produk ini sekarang, Kak?",
+          "evalResult": null
+        },
+        {
+          "customerMsg": "Nama saya Rosa, HP 081234567890, alamat Jl. Merdeka No 10 Kel. Sukamaju Kec. Cimahi Kota Bandung",
+          "botReply": "Baik Kak Rosa, data alamat dan nomor HP-nya sudah saya terima dengan lengkap ya. \n\nSaya konfirmasi kembali pesanannya ya Kak:\n- Produk: Baby Walking Assistant, Selang Fleksibel\n- Nama: Rosa\n- No HP: 081234567890\n- Alamat: Jl. Merdeka No 10 Kel. Sukamaju Kec. Cimahi Kota Bandung\n\nApakah data tersebut sudah benar dan bisa langsung saya proses pengirimannya, Kak?",
+          "evalResult": null
+        },
+        {
+          "customerMsg": "Ya betul semua kak",
+          "botReply": "Siap Kak Rosa, pesanan Kakak untuk Baby Walking Assistant dan Selang Fleksibel akan segera kami proses dan siapkan untuk pengiriman ya~ 🚚\n\n[ORDER_DATA]{\"nama\": \"Rosa\", \"hp\": \"081234567890\", \"produk\": \"Baby Walking Assistant, Selang Fleksibel\", \"alamat\": \"Jl. Merdeka No 10 Kel. Sukamaju Kec. Cimahi Kota Bandung\"}[/ORDER_DATA]",
+          "evalResult": {
+            "kriteria": {
+              "harus_rekap_sebelum_order": {
+                "pass": true,
+                "alasan": "Bot sudah melakukan rekap pesanan di tahapan sebelumnya dan ini adalah balasan konfirmasi akhir."
+              },
+              "harus_ada_cta": {
+                "pass": false,
+                "alasan": "Balasan penutup/konfirmasi ini tidak diakhiri dengan pertanyaan atau ajakan untuk langkah berikutnya."
+              }
+            },
+            "skor": 4,
+            "catatan": "Bot berhasil memproses data order multi-produk dengan baik tetapi kurang memberikan CTA di akhir kalimat."
+          }
+        }
+      ],
+      "passCriteria": 1,
+      "failCriteria": 1,
+      "avgSkor": 4
+    }
+  ]
+}
