@@ -176,6 +176,26 @@ try {
   }
 } catch(e) {}
 
+
+// --- DB Sync Helpers ---
+async function persistMessageToDB(msg) {
+  if(!msg) return;
+  try {
+    await db.saveMessage(msg);
+    const waId = msg.wa_id || msg.from;
+    if (waId) await db.upsertContact(waId, msg.sender_name || msg.senderName || 'Unknown');
+  } catch(e) { console.error('DB Msg Error:', e.message); }
+}
+async function persistOrderToDB(order) {
+  if(!order) return;
+  try { await db.saveOrder(order); } catch(e) { console.error('DB Order Error:', e.message); }
+}
+async function persistSettingsToDB(settings) {
+  if(!settings) return;
+  try { await db.saveSettings(settings); } catch(e) { console.error('DB Settings Error:', e.message); }
+}
+// -----------------------
+
 const save = (file, data) => { try { fs.writeFileSync(file, JSON.stringify(data, null, 2)); } catch(e) {} };
 const saveEscalations = () => save(ESC_FILE, { counter: escalationCounter, items: pendingEscalations });
 
@@ -704,7 +724,7 @@ function extractOrder(replyText, fromJid) {
       
       if (!isDuplicate) {
         orders.unshift(order);
-        save(ORDER_FILE, orders);
+        save(ORDER_FILE, orders); if (typeof order !== 'undefined') persistOrderToDB(order);
         io.emit('new_order', order);
         console.log('🛒 Order baru tertangkap:', order.nama);
         // Jalankan background process AI Address & Komerce COD secara asinkron
@@ -787,7 +807,7 @@ function appendFaqToKB(productTag, question, answer) {
     });
     if (found) {
       settings.knowledgeBase = newBlocks.join('---');
-      save(SET_FILE, settings);
+      save(SET_FILE, settings); persistSettingsToDB(settings);
       io.emit('settings_updated', settings);
       return;
     }
@@ -803,7 +823,7 @@ function appendFaqToKB(productTag, question, answer) {
     const sep = kb.trim() ? '\n---\n' : '';
     settings.knowledgeBase = kb.trim() + sep + `=== INFO UMUM TOKO ===\n${faqLine}`;
   }
-  save(SET_FILE, settings);
+  save(SET_FILE, settings); persistSettingsToDB(settings);
   io.emit('settings_updated', settings);
 }
 
@@ -970,7 +990,7 @@ async function retryFailedMessages() {
            entry.replied = true;
            entry.aiReply = null;
            entry.awaitingAdmin = true;
-           save(MSG_FILE, messages);
+           save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
            console.log(`⏳ Balasan untuk ${entry.senderName} ditahan (retry) — menunggu admin menjawab ${escResult.escalations.length} pertanyaan.`);
            return;
          }
@@ -1007,7 +1027,7 @@ async function retryFailedMessages() {
 
          entry.replied = true;
          entry.aiReply = cleanReply;
-         save(MSG_FILE, messages);
+         save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
          io.emit('message_updated', entry);
          console.log(`🤖 AI (Retry) -> ${entry.from}: ${reply}`);
       } else if (entry.retryCount >= MAX_RETRY_COUNT) {
@@ -1017,11 +1037,11 @@ async function retryFailedMessages() {
         entry.replied = true;
         entry.aiReply = null;
         entry.cancelledEntry = true;
-        save(MSG_FILE, messages);
+        save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
         console.warn(`⚠️ Pesan dari ${entry.from} dihentikan setelah ${MAX_RETRY_COUNT}x gagal`);
       } else {
         // Belum sampai limit, simpan retryCount yang sudah diupdate
-        save(MSG_FILE, messages);
+        save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
       }
     }).catch(e => console.error('Retry error:', e.message))
     .finally(() => {
@@ -1073,7 +1093,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
   // 1. Munculkan langsung di dashboard dan history
   messages.unshift(entry);
   if (messages.length > 300) messages = messages.slice(0, 300);
-  save(MSG_FILE, messages);
+  save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
   io.emit('new_message', entry);
 
   // 2. Masukkan proses AI ke dalam antrean (queue) khusus user ini
@@ -1111,7 +1131,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
           entry.replied = true;
           entry.aiReply = null;
           entry.cancelledEntry = true;
-          save(MSG_FILE, messages);
+          save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
           return;
         }
         // ────────────────────────────────────────────────────────────────────
@@ -1130,7 +1150,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
           entry.replied = true;
           entry.aiReply = null;
           entry.awaitingAdmin = true;
-          save(MSG_FILE, messages);
+          save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
           io.emit('message_updated', entry);
           console.log(`⏳ Balasan untuk ${senderName} ditahan — menunggu admin menjawab ${escResult.escalations.length} pertanyaan.`);
           return;
@@ -1165,7 +1185,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
            // B3: null + flag, bukan string status
            entry.aiReply = null;
            entry.cancelledEntry = true;
-           save(MSG_FILE, messages);
+           save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
            return; 
         }
 
@@ -1179,7 +1199,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
           await sendWhatsAppText(from, cleanReply, lastWamid);
         } catch (sendErr) {
           console.error(`❌ Gagal kirim reply ke ${senderName}:`, sendErr.message);
-          save(MSG_FILE, messages); // simpan state entry (belum replied)
+          save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj); // simpan state entry (belum replied)
           return; // retry akan handle dalam 5 menit
         }
         
@@ -1204,7 +1224,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
         // Update entry dengan balasan AI
         entry.replied = true; 
         entry.aiReply = cleanReply;
-        save(MSG_FILE, messages);
+        save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
         io.emit('message_updated', entry);
         console.log(`🤖 AI (delay ${Math.round(delayMs/1000)}s): ${cleanReply}`);
         
@@ -1219,7 +1239,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
            // B3: null + flag, bukan string status supaya tidak bocor ke Gemini
            entry.aiReply = null;
            entry.cancelledEntry = true;
-           save(MSG_FILE, messages);
+           save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
         } else {
           console.log('⚠️ AI tidak membalas (cek error di atas atau quota)');
         }
@@ -1300,7 +1320,7 @@ app.post('/webhook', (req, res) => {
               const cmd = body.trim().toLowerCase();
               if (cmd === 'on' || cmd === 'off') {
                 settings.autoReply = (cmd === 'on');
-                save(SET_FILE, settings);
+                save(SET_FILE, settings); persistSettingsToDB(settings);
                 io.emit('settings_updated', settings);
 
                 const confirmText = settings.autoReply
@@ -1393,7 +1413,7 @@ app.post('/webhook/wa-incoming', async (req, res) => {
       const cmd = String(message).trim().toLowerCase();
       if (cmd === 'on' || cmd === 'off') {
         settings.autoReply = (cmd === 'on');
-        save(SET_FILE, settings);
+        save(SET_FILE, settings); persistSettingsToDB(settings);
         io.emit('settings_updated', settings);
         const confirmText = settings.autoReply
           ? '✅ Bot diaktifkan. Auto-reply AI menyala kembali.'
@@ -1440,7 +1460,7 @@ async function flushMacrodroidBuffer(from) {
   };
   messages.unshift(entry);
   if (messages.length > 300) messages = messages.slice(0, 300);
-  save(MSG_FILE, messages);
+  save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
   io.emit('new_message', entry);
 
   // Antre per-pengirim (userLocks dipakai bersama dengan channel Cloud API supaya
@@ -1453,7 +1473,7 @@ async function flushMacrodroidBuffer(from) {
     let reply = await aiReply(combinedBody, senderName, history);
 
     if (!reply) {
-      save(MSG_FILE, messages);
+      save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
       console.log('⚠️ [MacroDroid] AI tidak membalas (cek error/quota di atas)');
       try { finalRes.json({ reply: null, error: 'AI tidak membalas, cek quota/log server' }); } catch (e) {}
       return;
@@ -1478,7 +1498,7 @@ async function flushMacrodroidBuffer(from) {
 
     entry.replied = true;
     entry.aiReply = cleanReply;
-    save(MSG_FILE, messages);
+    save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
     io.emit('message_updated', entry);
     console.log(`🤖 AI (MacroDroid) -> ${senderName}: ${cleanReply}`);
 
@@ -1548,7 +1568,7 @@ app.post('/api/upload-image', (req, res) => {
     }
     
     settings.productImages[productName][slot] = fileName;
-    save(SET_FILE, settings);
+    save(SET_FILE, settings); persistSettingsToDB(settings);
     res.json({ ok: true, fileName });
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -1568,7 +1588,7 @@ app.post('/api/delete-image', (req, res) => {
     }
     
     settings.productImages[productName][slot] = null;
-    save(SET_FILE, settings);
+    save(SET_FILE, settings); persistSettingsToDB(settings);
     res.json({ok: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -1577,7 +1597,7 @@ app.post('/api/delete-image', (req, res) => {
 
 app.post('/api/settings', (req, res) => {
   settings = { ...settings, ...req.body };
-  save(SET_FILE, settings);
+  save(SET_FILE, settings); persistSettingsToDB(settings);
   res.json({ ok: true });
 });
 app.post('/api/format-kb', async (req, res) => {
@@ -1585,7 +1605,7 @@ app.post('/api/format-kb', async (req, res) => {
   if (!knowledgeBase || !knowledgeBase.trim()) {
     settings.knowledgeBase = '';
     settings.followUp = followUp || '';
-    save(SET_FILE, settings);
+    save(SET_FILE, settings); persistSettingsToDB(settings);
     return res.json({ ok: true, knowledgeBase: '' });
   }
 
@@ -1630,7 +1650,7 @@ Aturan Wajib:
       formattedText = formattedText.trim().replace(/^["'`]+|["'`]+$/g, '').trim();
       settings.knowledgeBase = formattedText;
       settings.followUp = followUp || '';
-      save(SET_FILE, settings);
+      save(SET_FILE, settings); persistSettingsToDB(settings);
       res.json({ ok: true, knowledgeBase: formattedText });
     } else {
       res.status(500).json({ error: 'Respons AI kosong' });
@@ -1646,7 +1666,7 @@ app.post('/api/orders/:id/status', (req, res) => {
   const order = orders.find(o => o.id === req.params.id);
   if (order) {
     order.status = status;
-    save(ORDER_FILE, orders);
+    save(ORDER_FILE, orders); if (typeof order !== 'undefined') persistOrderToDB(order);
     io.emit('order_updated', order);
     res.json({ ok: true });
   } else {
@@ -1657,7 +1677,7 @@ app.delete('/api/orders/:id', (req, res) => {
   const initLength = orders.length;
   orders = orders.filter(o => o.id !== req.params.id);
   if (orders.length < initLength) {
-    save(ORDER_FILE, orders);
+    save(ORDER_FILE, orders); if (typeof order !== 'undefined') persistOrderToDB(order);
     res.json({ ok: true });
   } else {
     res.status(404).json({ error: 'Order tidak ditemukan' });
@@ -1852,7 +1872,7 @@ app.post('/api/send', async (req, res) => {
     };
     messages.unshift(msgObj);
     if (messages.length > 300) messages = messages.slice(0, 300);
-    save(MSG_FILE, messages);
+    save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
     io.emit('messages', messages);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -1961,7 +1981,7 @@ async function processOrderAddressAI(orderId) {
       order.ai_cod = '⚠️ Area tidak tercover';
     }
 
-    save(ORDER_FILE, orders);
+    save(ORDER_FILE, orders); if (typeof order !== 'undefined') persistOrderToDB(order);
     io.emit('order_updated', order);
   } catch (e) {
     console.error('AI Address Process Error:', e.message);
@@ -2164,6 +2184,7 @@ app.get('/api/ai-test/result', (req, res) => {
 server.listen(PORT, async () => {
   console.log('\n==========================================');
   console.log('  WA AI Assistant (Cloud API + MacroDroid) berjalan!');
+  try { await db.initDB(); } catch(e) { console.error('Failed to init DB:', e.message); }
   console.log(`  Buka browser: http://localhost:${PORT}`);
   console.log(`  Channel aktif saat ini: ${settings.channel === 'macrodroid' ? 'MacroDroid' : 'WhatsApp Cloud API'} (bisa diganti di dashboard)`);
   console.log(`  Webhook Cloud API (Meta App Dashboard): https://<domain-kamu>/webhook`);
