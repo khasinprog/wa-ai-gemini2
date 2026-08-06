@@ -1802,6 +1802,20 @@ app.post('/api/orders/backfill-ai', async (req, res) => {
   })();
 });
 
+// ── Cek Ulang AI address & COD untuk 1 order spesifik (tombol Cek Ulang di dashboard) ──
+app.post('/api/orders/:id/recheck-ai', async (req, res) => {
+  const { id } = req.params;
+  const order = orders.find(o => o.id === id);
+  if (!order) return res.status(404).json({ error: 'Order tidak ditemukan' });
+  if (!order.alamat) return res.status(400).json({ error: 'Order tidak punya alamat' });
+  // Reset dulu supaya bisa diproses ulang
+  delete order.ai_alamat;
+  delete order.ai_cod;
+  res.json({ ok: true, message: 'Sedang memproses ulang...' });
+  // Jalankan di background
+  processOrderAddressAI(order.id).catch(e => console.error('[recheck-ai] Error:', e.message));
+});
+
 app.post('/api/retry', (req, res) => {
   retryFailedMessages();
   res.json({ ok: true });
