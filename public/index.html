@@ -1181,8 +1181,8 @@ async function initApp() {
     if (log) renderRotationLog(log);
   });
 
-  const kr=await fetch('/api/haskey').then(r=>r.json()).catch(()=>({ok:false}));
-  if(!kr.ok)showSetup();
+  const kr=await fetch('/api/haskey').then(r=>r.json()).catch(()=>null);
+  if(kr && kr.ok === false) showSetup();
   const[sr,mr,or,set]=await Promise.all([
     fetch('/api/status').then(r=>r.json()).catch(()=>({status:'disconnected'})),
     fetch('/api/messages').then(r=>r.json()).catch(()=>[]),

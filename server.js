@@ -95,6 +95,18 @@ app.post('/api/login', (req, res) => {
   }
 });
 
+// Cek apakah Gemini API Key sudah terkonfigurasi — tidak butuh auth,
+// karena dipanggil saat init app (sebelum/sesudah login) untuk tampilkan
+// popup setup jika key belum ada. Tidak mengekspos data sensitif.
+app.get('/api/haskey', (_, res) => {
+  const keys = getApiKeys();
+  res.json({
+    ok: keys.some(k => k.length >= 10),
+    keys: keys.map(k => !!(k && k.length >= 10)),
+    activeIndex: activeKeyIndex,
+  });
+});
+
 // Middleware auth untuk semua rute API setelah login
 app.use('/api', (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -1548,14 +1560,7 @@ app.get('/api/status',   (_, res) => {
 app.get('/api/qr',       (_, res) => res.json({ qr: null })); // Cloud API tidak pakai QR
 app.get('/api/messages', (_, res) => res.json(messages.slice(0, 100)));
 app.get('/api/settings', (_, res) => res.json(settings));
-app.get('/api/haskey', (_, res) => {
-  const keys = getApiKeys();
-  res.json({
-    ok: keys.some(k => k.length >= 10), // minimal 1 key terisi biar app bisa jalan
-    keys: keys.map(k => !!(k && k.length >= 10)), // [true/false, true/false, true/false]
-    activeIndex: activeKeyIndex,
-  });
-});
+// /api/haskey dipindah sebelum middleware auth (baris ~101) — tidak ada duplikat di sini.
 
 app.post('/api/upload-image', (req, res) => {
   try {
