@@ -308,22 +308,12 @@ input:checked+.slider:before{transform:translateX(18px)}
     display: none;
   }
 
-  /* Panel tengah (daftar kontak + chat) ambil semua lebar */
-  #view-ai .main-cols > .col:nth-child(2) {
-    width: 100% !important;
-    max-width: 100% !important;
-    border-radius: 0;
-    border: none;
-    box-shadow: none;
-    display: flex;
-    flex-direction: row;
-    overflow: hidden;
-    position: relative;
-    height: 100%;
-  }
+
+  /* Panel tengah (daftar kontak + chat) sudah ditangani via class .chat-panel-col di bawah */
+
 
   /* ── Daftar Kontak: tampil full saat tidak ada chat aktif ── */
-  #view-ai .main-cols > .col:nth-child(2) > div:first-child {
+  .chat-panel-col > div:first-child {
     width: 100% !important;
     min-width: 100%;
     border-right: none;
@@ -331,7 +321,7 @@ input:checked+.slider:before{transform:translateX(18px)}
     transition: transform 0.3s ease;
     flex-shrink: 0;
   }
-  #view-ai .main-cols > .col:nth-child(2) > div:last-child {
+  .chat-panel-col > div:last-child {
     position: absolute;
     inset: 0;
     background: #efeae2;
@@ -343,10 +333,10 @@ input:checked+.slider:before{transform:translateX(18px)}
   }
 
   /* Saat kontak dipilih (class .chat-open ditambah JS) — slide in */
-  #view-ai .main-cols > .col:nth-child(2).chat-open > div:first-child {
+  .chat-panel-col.chat-open > div:first-child {
     transform: translateX(-100%);
   }
-  #view-ai .main-cols > .col:nth-child(2).chat-open > div:last-child {
+  .chat-panel-col.chat-open > div:last-child {
     transform: translateX(0);
   }
 
@@ -414,12 +404,12 @@ input:checked+.slider:before{transform:translateX(18px)}
   .bubble-time { color: #667781; }
 
   /* Header kontak list ala WA */
-  #view-ai .main-cols > .col:nth-child(2) > div:first-child > div:first-child {
+  .chat-panel-col > div:first-child > div:first-child {
     background: #075e54;
     padding: 14px 16px;
     padding-top: max(14px, env(safe-area-inset-top));
   }
-  #view-ai .main-cols > .col:nth-child(2) > div:first-child > div:first-child .col-title {
+  .chat-panel-col > div:first-child > div:first-child .col-title {
     color: #fff;
     font-size: 1rem;
     text-transform: none;
@@ -602,12 +592,32 @@ input:checked+.slider:before{transform:translateX(18px)}
   #view-ai .main-cols > .col:last-child:not(:nth-child(2)) {
     display: none !important;
   }
-  /* Pastikan col tengah selalu mengisi sisa height (bukan grid) */
-  #view-ai .main-cols > .col:nth-child(2) {
+  /* Mobile: chat-panel-col pakai flex row + slide animation */
+  .chat-panel-col {
     display: flex !important;
     flex-direction: row !important;
     grid-template-columns: unset !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    border-right: none !important;
+    overflow: hidden;
+    position: relative;
+    height: 100%;
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
   }
+}
+
+/* Desktop: chat-panel-col pakai grid 2 kolom */
+.chat-panel-col {
+  flex: 1;
+  width: auto;
+  max-width: none;
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  border-right: none;
+  overflow: hidden;
 }
 </style>
 </head>
@@ -674,7 +684,7 @@ input:checked+.slider:before{transform:translateX(18px)}
       <div class="main-cols">
   <!-- Panel Tengah -->
   <!-- Panel Tengah (Satu-satunya kolom di view-ai sekarang) -->
-    <div class="col" style="flex:1;width:auto;max-width:none;display:grid;grid-template-columns:300px 1fr;border-right:none;overflow:hidden">
+    <div class="col chat-panel-col">
     <div style="border-right:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column">
       <div style="padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0">
         <div class="col-title" style="margin:0">Kontak</div>
@@ -1284,7 +1294,7 @@ function selectContact(jid){
   }
   // Mobile: slide ke panel chat
   if (window.innerWidth <= 768) {
-    const chatPanel = document.querySelector('#view-ai .main-cols > .col:nth-child(2)');
+    const chatPanel = document.querySelector('.chat-panel-col');
     if (chatPanel) chatPanel.classList.add('chat-open');
   }
 }
@@ -1463,7 +1473,7 @@ function mobileNavTo(tab) {
 
 function mobileBackToContacts() {
   // Slide kembali ke daftar kontak
-  const chatPanel = document.querySelector('#view-ai .main-cols > .col:nth-child(2)');
+  const chatPanel = document.querySelector('.chat-panel-col');
   if (chatPanel) chatPanel.classList.remove('chat-open');
   activeContact = null;
   renderContacts();
