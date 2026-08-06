@@ -560,12 +560,20 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage) {
   parts.push('- Kalau pelanggan hanya minta harga ("cek harga", "berapa", dll), jawab harga + 1 kalimat penutup/CTA saja. JANGAN ulang jelaskan keunggulan produk lagi kalau sudah pernah dijelaskan di riwayat chat sebelumnya');
   parts.push('- Panjang balasan: SEDANG — tidak perlu selalu sesingkat mungkin. Untuk pertanyaan sederhana boleh singkat; untuk yang butuh penjelasan boleh lebih panjang asal tidak bertele-tele. Natural dan tidak kaku');
   parts.push('');
-  parts.push('=== TUGAS TAMBAHAN (EKSTRAKSI ORDER) ===');
-  parts.push('- Begitu Nama, Alamat lengkap, dan No HP sudah lengkap terkumpul dari pelanggan: JANGAN langsung sisipkan [ORDER_DATA]. Balas dulu dengan MEREKAP pesanan (produk, jumlah, total harga, nama, alamat, No HP) dan minta konfirmasi eksplisit, contoh: "Baik Kak, saya konfirmasi ya: ... sudah benar semua?"');
+  parts.push('=== ATURAN DATA PEMESANAN (TANYA SATU-SATU, PENTING) ===');
+  parts.push('- JANGAN pernah minta beberapa data sekaligus dalam 1 balasan (misal "boleh minta nama, alamat, dan No HP" dalam 1 kalimat). Banyak pelanggan kurang nyaman ketik panjang/sekaligus — tanya SATU per SATU, tunggu jawabannya, baru lanjut ke data berikutnya');
+  parts.push('- Urutan yang harus diikuti:');
+  parts.push('  1) Kalau varian/warna belum jelas, konfirmasi dulu itu saja');
+  parts.push('  2) Tanya Alamat lengkap (kelurahan/kecamatan/kota/kode pos) — 1 pertanyaan saja');
+  parts.push('  3) Kalau alamat yang diberikan BELUM ada nama jalan/nomor rumah yang jelas (misal cuma level desa/dusun/kampung): tanya patokan rumah saja dulu ("boleh kasih patokan rumahnya Kak, biar kurir gak nyasar? misal dekat masjid/sekolah/warung apa"). Kalau alamat sudah jelas (ada nama jalan & nomor rumah/kompleks), LEWATI langkah ini, jangan tanya patokan');
+  parts.push('  4) Tanya Nama lengkap penerima — 1 pertanyaan saja');
+  parts.push('  5) Untuk No HP: JANGAN langsung minta diketik. Tanya dulu: "Boleh pakai nomor WhatsApp ini juga untuk dihubungi kurir ya, Kak?" — kalau pelanggan setuju (misal "iya"/"boleh"/"sama"), JANGAN minta dia ketik nomornya, cukup catat dengan menulis nilai persis "SAMA_DENGAN_WA" di field hp pada [ORDER_DATA] nanti (sistem otomatis mengisi nomor sebenarnya). Kalau pelanggan mau kasih nomor lain, baru minta diketik dan tulis nomor tersebut di field hp');
+  parts.push('- Tetap patuhi ATURAN CTA (maksimal 1 pertanyaan per balasan) — jangan gabungkan 2 langkah di atas jadi 1 balasan');
+  parts.push('- Begitu SEMUA data (Alamat+patokan bila perlu, Nama, konfirmasi No HP) sudah lengkap terkumpul: JANGAN langsung sisipkan [ORDER_DATA]. Balas dulu dengan MEREKAP pesanan (produk, varian, jumlah, total harga, nama, alamat lengkap+patokan, No HP) dan minta konfirmasi eksplisit, contoh: "Baik Kak, saya konfirmasi ya: ... sudah benar semua?"');
   parts.push('- Order baru dianggap FINAL setelah pelanggan membalas mengonfirmasi (misal "ya", "benar", "betul", "oke fix"). BARU pada balasan konfirmasi tersebut kamu sisipkan blok data khusus di baris paling bawah balasanmu.');
   parts.push('- Kalau pesanan berisi LEBIH DARI 1 produk (order gabungan), jumlahkan semua ke dalam total harga saat merekap, dan tulis semua nama produk pada field "produk" (pisahkan dengan koma)');
   parts.push('Format blok data (harus valid JSON di dalam tag tersebut, dipakai sistem otomatis kami untuk mencatat pesanan — akan disembunyikan otomatis dari mata pelanggan):');
-  parts.push('[ORDER_DATA]{"nama": "Nama Lengkap", "hp": "No HP atau WA", "produk": "Nama Produk yang Dipesan", "alamat": "Alamat Lengkap"}[/ORDER_DATA]');
+  parts.push('[ORDER_DATA]{"nama": "Nama Lengkap", "hp": "No HP, atau SAMA_DENGAN_WA kalau pelanggan setuju pakai nomor WA yang sama", "produk": "Nama Produk yang Dipesan", "alamat": "Alamat Lengkap termasuk patokan bila ada"}[/ORDER_DATA]');
   parts.push('PENTING: Jangan menyertakan blok ini jika pelanggan hanya tanya-tanya, belum pasti memesan, atau belum eksplisit mengonfirmasi rekap pesanan.');
   parts.push('');
   parts.push('=== ATURAN ESKALASI KE ADMIN (SANGAT PENTING — JANGAN MENGARANG) ===');
@@ -702,11 +710,18 @@ function extractOrder(replyText, fromJid) {
   if (match) {
     try {
       const data = JSON.parse(match[1].trim());
+      // Kalau customer konfirmasi pakai nomor WA yang sama (Gemini menulis
+      // placeholder ini persis sesuai instruksi ATURAN DATA PEMESANAN),
+      // isi otomatis dari nomor JID pengirim — customer gak perlu ngetik ulang.
+      let hpValue = data.hp || '';
+      if (/SAMA_DENGAN_WA/i.test(hpValue)) {
+        hpValue = (fromJid || '').split('@')[0];
+      }
       const order = {
         id: Date.now().toString() + Math.floor(Math.random()*1000),
         jid: fromJid,
         nama: data.nama || '',
-        hp: data.hp || '',
+        hp: hpValue,
         produk: data.produk || '',
         alamat: data.alamat || '',
         status: 'order',

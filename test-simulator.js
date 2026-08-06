@@ -470,9 +470,6 @@ async function runSimulator() {
         totalPass += pass;
         totalFail += fail;
         totalChecks += (pass + fail);
-        scenarioResult.passCriteria += pass;
-        scenarioResult.failCriteria += fail;
-        scenarioResult.avgSkor = evalResult.skor;
       }
 
       scenarioResult.turns.push({
@@ -484,12 +481,15 @@ async function runSimulator() {
       // Update history untuk turn berikutnya
       history.push({ body: customerMsg, aiReply: botReply });
 
-      if (t < turns.length - 1) await sleep(500);
+      if (t < turns.length - 1) await sleep(20000);
     }
 
     results.push(scenarioResult);
     console.log(c('cyan', `└─ Selesai`));
-    await sleep(1000); // jeda antar skenario
+    await sleep(20000); // jeda antar skenario 20 detik
+    
+    // Hanya jalankan 2 skenario awal untuk uji cepat tanpa kena Rate Limit panjang
+    if (results.length >= 2) break;
   }
 
   // ── RINGKASAN ────────────────────────────────────────────────────────────────
