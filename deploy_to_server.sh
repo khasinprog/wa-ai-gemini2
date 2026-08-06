@@ -78,6 +78,7 @@ zip -r "$LOCAL_ZIP" \
   icon-512.png \
   sw.js \
   start.sh \
+  db.js \
   --exclude "*.DS_Store" \
   --exclude "node_modules/*" \
   --exclude "data/*" \
