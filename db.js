@@ -149,7 +149,7 @@ async function updateMessage(id, fields) {
   await pool.query(`UPDATE messages SET ${sets.join(', ')} WHERE id = $${i}`, vals);
 }
 
-async function getMessages(limit = 300) {
+async function getMessages(limit = 3000) {
   const res = await pool.query(
     'SELECT * FROM messages ORDER BY timestamp DESC LIMIT $1', [limit]
   );

@@ -1120,7 +1120,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
 
   // 1. Munculkan langsung di dashboard dan history
   messages.unshift(entry);
-  if (messages.length > 300) messages = messages.slice(0, 300);
+  if (messages.length > 3000) messages = messages.slice(0, 3000);
   save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
   io.emit('new_message', entry);
 
@@ -1487,7 +1487,7 @@ async function flushMacrodroidBuffer(from) {
     timestamp: new Date().toISOString(), replied: false, aiReply: null, channel: 'macrodroid',
   };
   messages.unshift(entry);
-  if (messages.length > 300) messages = messages.slice(0, 300);
+  if (messages.length > 3000) messages = messages.slice(0, 3000);
   save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
   io.emit('new_message', entry);
 
@@ -1558,7 +1558,7 @@ app.get('/api/status',   (_, res) => {
   res.json({ status, channel });
 });
 app.get('/api/qr',       (_, res) => res.json({ qr: null })); // Cloud API tidak pakai QR
-app.get('/api/messages', (_, res) => res.json(messages.slice(0, 100)));
+app.get('/api/messages', (_, res) => res.json(messages.slice(0, 2000)));
 app.get('/api/settings', (_, res) => res.json(settings));
 // /api/haskey dipindah sebelum middleware auth (baris ~101) — tidak ada duplikat di sini.
 
@@ -1617,7 +1617,24 @@ app.post('/api/delete-image', (req, res) => {
 });
 
 app.post('/api/settings', (req, res) => {
-  settings = { ...settings, ...req.body };
+  const body = { ...req.body };
+
+  // Validasi originId: HARUS berupa angka (numeric string)
+  // Mencegah user salah isi nama kota alih-alih ID numerik
+  if (body.originId !== undefined) {
+    const rawOrigin = (body.originId || '').trim();
+    if (rawOrigin && !/^\d+$/.test(rawOrigin)) {
+      return res.status(400).json({
+        error: `Origin ID harus berupa angka, bukan nama kota. Nilai "${rawOrigin}" tidak valid.\n` +
+               `Cari ID kecamatan gudangmu di: https://rajaongkir.komerce.id/api/v1/destination/domestic-destination?search=NAMA_KECAMATAN&limit=5\n` +
+               `Contoh yang benar: 73528 (Serua, Ciputat, Tangerang Selatan)`,
+        field: 'originId'
+      });
+    }
+    body.originId = rawOrigin; // simpan versi sudah di-trim
+  }
+
+  settings = { ...settings, ...body };
   save(SET_FILE, settings); persistSettingsToDB(settings);
   res.json({ ok: true });
 });
@@ -1710,17 +1727,8 @@ app.post('/api/cek-alamat-manual', async (req, res) => {
   const { alamat } = req.body;
   if (!alamat) return res.status(400).json({ error: 'Alamat tidak boleh kosong' });
 
-  // Validasi konfigurasi pengiriman
-  const missingConfig = [];
-  if (!(settings.komerceApiKey || '').trim()) missingConfig.push('Komerce API Key');
-  if (!(settings.originId || '').trim()) missingConfig.push('Origin ID (kecamatan asal gudang)');
-  if (missingConfig.length > 0) {
-    return res.status(400).json({
-      error: `Konfigurasi pengiriman belum lengkap: ${missingConfig.join(', ')} belum diisi. Silakan isi di tab "Cek Resi" → Pengaturan Pengiriman terlebih dahulu.`,
-      missingConfig
-    });
-  }
-
+  // Gunakan getKomerceKey() / getOriginId() yang sudah punya default fallback,
+  // konsisten dengan processOrderAddressAI — tidak blokir kalau config belum diisi.
   const picked = getAvailableKey();
   if (!picked) return res.status(500).json({ error: 'Semua API Key kena limit' });
   
@@ -1737,7 +1745,10 @@ app.post('/api/cek-alamat-manual', async (req, res) => {
     };
 
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!r.ok) throw new Error('Gagal menghubungi AI');
+    if (!r.ok) {
+      const errData = await r.json().catch(() => ({}));
+      throw new Error(errData?.error?.message || `Gagal menghubungi AI (HTTP ${r.status})`);
+    }
     
     const aiData = await r.json();
     let text = aiData?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
@@ -1748,6 +1759,7 @@ app.post('/api/cek-alamat-manual', async (req, res) => {
     if (!parsed.desa || !parsed.kecamatan) throw new Error('Desa atau Kecamatan gagal diekstrak');
 
     let ai_cod = '⚠️ Area tidak tercover';
+    let destLabel = null;
     
     // Search RajaOngkir destination
     const searchUrl = 'https://rajaongkir.komerce.id/api/v1/destination/domestic-destination?search=' + encodeURIComponent(parsed.desa + ' ' + parsed.kecamatan) + '&limit=1';
@@ -1755,10 +1767,11 @@ app.post('/api/cek-alamat-manual', async (req, res) => {
     const destData = await destRes.json();
     
     if (destData?.data && destData.data.length > 0) {
-      const destId = destData.data[0].id;
+      const dest = destData.data[0];
+      destLabel = dest.label || null;
       const costPayload = new URLSearchParams();
       costPayload.append('origin', getOriginId());
-      costPayload.append('destination', destId);
+      costPayload.append('destination', dest.id);
       costPayload.append('weight', '1000');
       costPayload.append('courier', 'ide');
       costPayload.append('price', 'lowest');
@@ -1780,6 +1793,7 @@ app.post('/api/cek-alamat-manual', async (req, res) => {
         ai_alamat: parsed.alamat_baku,
         desa: parsed.desa,
         kecamatan: parsed.kecamatan,
+        dest_label: destLabel,
         ai_cod: ai_cod
       }
     });
@@ -1906,7 +1920,7 @@ app.post('/api/send', async (req, res) => {
       manual: true
     };
     messages.unshift(msgObj);
-    if (messages.length > 300) messages = messages.slice(0, 300);
+    if (messages.length > 3000) messages = messages.slice(0, 3000);
     save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
     io.emit('messages', messages);
     res.json({ ok: true });
