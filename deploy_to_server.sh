@@ -79,6 +79,7 @@ zip -r "$LOCAL_ZIP" \
   sw.js \
   start.sh \
   db.js \
+  migrate-to-pg.js \
   --exclude "*.DS_Store" \
   --exclude "node_modules/*" \
   --exclude "data/*" \
@@ -125,7 +126,12 @@ mkdir -p "$REMOTE_DIR"
 cd "$REMOTE_DIR"
 unzip -o /tmp/deploy.zip -d "$REMOTE_DIR"
 
-echo "[3/3] Restart dengan PM2..."
+echo "[3/4] Migrasi data lama ke PostgreSQL..."
+if [ -f "migrate-to-pg.js" ]; then
+  node migrate-to-pg.js || true
+fi
+
+echo "[4/4] Restart dengan PM2..."
 if command -v pm2 &> /dev/null; then
   pm2 restart all --update-env 2>/dev/null || pm2 start server.js --name wa-ai
   echo "✅ PM2 restart selesai!"

@@ -1,3 +1,4 @@
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 const express    = require('express');
 const http       = require('http');
 const { Server } = require('socket.io');
@@ -6,8 +7,6 @@ const db         = require('./db');
 const path       = require('path');
 const cors       = require('cors');
 const crypto     = require('crypto');
-
-require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 // Auto-generate ADMIN_PASSWORD if missing
 if (!process.env.ADMIN_PASSWORD) {
@@ -1711,11 +1710,13 @@ app.post('/api/orders/:id/status', (req, res) => {
     res.status(404).json({ error: 'Order tidak ditemukan' });
   }
 });
-app.delete('/api/orders/:id', (req, res) => {
+app.delete('/api/orders/:id', async (req, res) => {
+  const id = req.params.id;
   const initLength = orders.length;
-  orders = orders.filter(o => o.id !== req.params.id);
+  orders = orders.filter(o => o.id !== id);
   if (orders.length < initLength) {
-    save(ORDER_FILE, orders); if (typeof order !== 'undefined') persistOrderToDB(order);
+    save(ORDER_FILE, orders);
+    try { await db.deleteOrder(id); } catch(e) { console.error('DB delete order error:', e.message); }
     res.json({ ok: true });
   } else {
     res.status(404).json({ error: 'Order tidak ditemukan' });
@@ -1736,7 +1737,8 @@ app.post('/api/cek-alamat-manual', async (req, res) => {
     const model = settings.modelName || 'gemini-3.1-flash-lite';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(picked.key)}`;
 
-    const systemPrompt = `Ekstrak alamat berikut. Kembalikan HANYA JSON murni (tanpa markdown backticks) dengan struktur: {"desa": "nama desa/kelurahan saja", "kecamatan": "nama kecamatan saja", "alamat_baku": "alamat rapi lengkap dengan provinsi dan kodepos"}`;
+    const systemPrompt = `Kamu adalah asisten ekstraksi alamat pengiriman Indonesia. Dari teks alamat berikut, ekstrak informasi dan kembalikan HANYA JSON murni (tanpa markdown backticks, tanpa komentar) dengan struktur PERSIS ini:
+{"desa": "nama desa atau kelurahan saja (tanpa kata Desa/Kel)", "kecamatan": "nama kecamatan saja (tanpa kata Kec)", "kabupaten": "nama kabupaten atau kota (tanpa kata Kab/Kota)", "provinsi": "nama provinsi", "patokan": "nama jalan, nomor rumah, atau patokan lokasi jika ada — kosongkan jika tidak ada", "kodepos": "kode pos 5 digit jika ada — kosongkan jika tidak diketahui", "alamat_baku": "alamat lengkap rapi format: [patokan jika ada], Desa [desa], Kec [kecamatan], [kabupaten], [provinsi] [kodepos]"}\nJika ada informasi yang tidak tersedia dalam teks, isi dengan string kosong. Jangan mengarang informasi yang tidak ada.`;
     
     const body = {
       contents: [{ role: 'user', parts: [{ text: alamat }] }],
@@ -1757,6 +1759,10 @@ app.post('/api/cek-alamat-manual', async (req, res) => {
     let parsed;
     try { parsed = JSON.parse(text); } catch (e) { throw new Error('Respons AI tidak valid format JSON'); }
     if (!parsed.desa || !parsed.kecamatan) throw new Error('Desa atau Kecamatan gagal diekstrak');
+    // Pastikan kabupaten tersedia (fallback dari destData nanti)
+    if (!parsed.kabupaten) parsed.kabupaten = '';
+    if (!parsed.patokan) parsed.patokan = '';
+    if (!parsed.kodepos) parsed.kodepos = '';
 
     let ai_cod = '⚠️ Area tidak tercover';
     let destLabel = null;
@@ -1769,30 +1775,57 @@ app.post('/api/cek-alamat-manual', async (req, res) => {
     if (destData?.data && destData.data.length > 0) {
       const dest = destData.data[0];
       destLabel = dest.label || null;
-      const costPayload = new URLSearchParams();
-      costPayload.append('origin', getOriginId());
-      costPayload.append('destination', dest.id);
-      costPayload.append('weight', '1000');
-      costPayload.append('courier', 'ide');
-      costPayload.append('price', 'lowest');
+      const destProvince = dest.province_name || '';
+      const destCity = dest.city_name || '';
 
-      const costRes = await fetch('https://rajaongkir.komerce.id/api/v1/calculate/domestic-cost', {
-        method: 'POST',
-        headers: { 'key': getKomerceKey(), 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: costPayload.toString()
-      });
+      // Validasi coverage ID Express COD berdasarkan provinsi
+      const isCovered = isIDECODCovered(destProvince);
       
-      const costData = await costRes.json();
-      const hasValidService = costData?.data?.some(d => d.cost > 0);
-      ai_cod = hasValidService ? '✅ ID Express COD Bisa' : '❌ ID Express COD Tidak Bisa';
+      if (!isCovered) {
+        ai_cod = `❌ Tidak Tercover COD (${destCity}, ${destProvince})`;
+      } else {
+        const costPayload = new URLSearchParams();
+        costPayload.append('origin', getOriginId());
+        costPayload.append('destination', dest.id);
+        costPayload.append('weight', '1000');
+        costPayload.append('courier', 'ide');
+        costPayload.append('price', 'lowest');
+
+        const costRes = await fetch('https://rajaongkir.komerce.id/api/v1/calculate/domestic-cost', {
+          method: 'POST',
+          headers: { 'key': getKomerceKey(), 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: costPayload.toString()
+        });
+        
+        const costData = await costRes.json();
+        const services = costData?.data || [];
+        const hasValidService = services.some(d => d.cost > 0);
+        if (hasValidService) {
+          const cheapest = services.reduce((a, b) => a.cost < b.cost ? a : b);
+          ai_cod = `✅ COD Bisa — ${destCity} (${cheapest.etd})`;
+        } else {
+          ai_cod = `❌ COD Tidak Bisa — ${destCity}, ${destProvince}`;
+        }
+      }
     }
 
     res.json({
       ok: true,
       data: {
-        ai_alamat: parsed.alamat_baku,
+        // Susun ai_alamat dari komponen terstruktur, diperkaya destLabel dari RajaOngkir
+        ai_alamat: [
+          parsed.patokan ? parsed.patokan : null,
+          `Kel/Desa ${parsed.desa}`,
+          `Kec ${parsed.kecamatan}`,
+          parsed.kabupaten || (destLabel ? destLabel.split(',')[2]?.trim() : null),
+          parsed.provinsi,
+          parsed.kodepos
+        ].filter(Boolean).join(', '),
         desa: parsed.desa,
         kecamatan: parsed.kecamatan,
+        kabupaten: parsed.kabupaten,
+        patokan: parsed.patokan,
+        kodepos: parsed.kodepos,
         dest_label: destLabel,
         ai_cod: ai_cod
       }
@@ -1950,6 +1983,23 @@ const ORIGIN_ID_DEFAULT = '73528'; // Serua Ciputat
 function getKomerceKey() { return (settings.komerceApiKey || '').trim() || KOMERCE_API_KEY_DEFAULT; }
 function getOriginId()   { return (settings.originId    || '').trim() || ORIGIN_ID_DEFAULT; }
 
+// Provinsi yang dicover ID Express COD (berdasarkan jangkauan resmi ID Express)
+// Sumber: https://idexpress.com/coverage
+const IDE_COD_PROVINCES = [
+  'ACEH', 'SUMATERA UTARA', 'SUMATERA BARAT', 'RIAU', 'KEPULAUAN RIAU',
+  'JAMBI', 'BENGKULU', 'SUMATERA SELATAN', 'KEPULAUAN BANGKA BELITUNG', 'LAMPUNG',
+  'BANTEN', 'DKI JAKARTA', 'JAWA BARAT', 'JAWA TENGAH', 'DI YOGYAKARTA', 'JAWA TIMUR',
+  'BALI', 'NUSA TENGGARA BARAT',
+  'KALIMANTAN BARAT', 'KALIMANTAN TENGAH', 'KALIMANTAN SELATAN', 'KALIMANTAN TIMUR', 'KALIMANTAN UTARA',
+  'SULAWESI SELATAN', 'SULAWESI TENGGARA', 'SULAWESI TENGAH', 'SULAWESI UTARA', 'SULAWESI BARAT', 'GORONTALO',
+];
+
+function isIDECODCovered(provinceName) {
+  if (!provinceName) return false;
+  const p = provinceName.toUpperCase().trim();
+  return IDE_COD_PROVINCES.some(prov => p.includes(prov) || prov.includes(p));
+}
+
 async function processOrderAddressAI(orderId) {
   const order = orders.find(o => o.id === orderId);
   if (!order || !order.alamat) return;
@@ -1972,7 +2022,8 @@ async function processOrderAddressAI(orderId) {
     const model = settings.modelName || 'gemini-3.1-flash-lite';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
-    const systemPrompt = `Ekstrak alamat berikut. Kembalikan HANYA JSON murni (tanpa markdown backticks) dengan struktur: {"desa": "nama desa/kelurahan saja", "kecamatan": "nama kecamatan saja", "alamat_baku": "alamat rapi lengkap dengan provinsi dan kodepos"}`;
+    const systemPrompt = `Kamu adalah asisten ekstraksi alamat pengiriman Indonesia. Dari teks alamat berikut, ekstrak informasi dan kembalikan HANYA JSON murni (tanpa markdown backticks, tanpa komentar) dengan struktur PERSIS ini:
+{"desa": "nama desa atau kelurahan saja (tanpa kata Desa/Kel)", "kecamatan": "nama kecamatan saja (tanpa kata Kec)", "kabupaten": "nama kabupaten atau kota (tanpa kata Kab/Kota)", "provinsi": "nama provinsi", "patokan": "nama jalan, nomor rumah, atau patokan lokasi jika ada — kosongkan jika tidak ada", "kodepos": "kode pos 5 digit jika ada — kosongkan jika tidak diketahui", "alamat_baku": "alamat lengkap rapi format: [patokan jika ada], Desa [desa], Kec [kecamatan], [kabupaten], [provinsi] [kodepos]"}\nJika ada informasi yang tidak tersedia dalam teks, isi dengan string kosong. Jangan mengarang informasi yang tidak ada.`;
     
     const body = {
       contents: [{ role: 'user', parts: [{ text: order.alamat }] }],
@@ -1991,40 +2042,65 @@ async function processOrderAddressAI(orderId) {
     
     const parsed = JSON.parse(text);
     if (!parsed.desa || !parsed.kecamatan) return;
+    if (!parsed.kabupaten) parsed.kabupaten = '';
+    if (!parsed.patokan) parsed.patokan = '';
+    if (!parsed.kodepos) parsed.kodepos = '';
 
-    order.ai_alamat = parsed.alamat_baku || order.alamat;
+    // Susun ai_alamat terstruktur: patokan + desa + kecamatan + kabupaten + provinsi + kodepos
+    const parts_alamat = [
+      parsed.patokan || null,
+      `Kel/Desa ${parsed.desa}`,
+      `Kec ${parsed.kecamatan}`,
+      parsed.kabupaten,
+      parsed.provinsi,
+      parsed.kodepos
+    ].filter(Boolean);
+    order.ai_alamat = parts_alamat.join(', ') || parsed.alamat_baku || order.alamat;
     io.emit('order_updated', order); // update UI partially
 
-    // Search RajaOngkir destination
+    // Search RajaOngkir destination (gunakan desa + kecamatan untuk akurasi)
     const searchUrl = 'https://rajaongkir.komerce.id/api/v1/destination/domestic-destination?search=' + encodeURIComponent(parsed.desa + ' ' + parsed.kecamatan) + '&limit=1';
     const destRes = await fetch(searchUrl, { headers: { 'key': getKomerceKey() } });
     const destData = await destRes.json();
     
     if (destData?.data && destData.data.length > 0) {
-      const destId = destData.data[0].id;
+      const destObj = destData.data[0];
+      const destId = destObj.id;
+      const destProvince = destObj.province_name || '';
+      const destCity = destObj.city_name || '';
+      const destLabel = destObj.label || '';
       
-      // Check Cost for ID Express
-      const costPayload = new URLSearchParams();
-      costPayload.append('origin', getOriginId());
-      costPayload.append('destination', destId);
-      costPayload.append('weight', '1000');
-      costPayload.append('courier', 'ide');
-      costPayload.append('price', 'lowest');
-
-      const costRes = await fetch('https://rajaongkir.komerce.id/api/v1/calculate/domestic-cost', {
-        method: 'POST',
-        headers: { 'key': getKomerceKey(), 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: costPayload.toString()
-      });
+      // Validasi coverage ID Express COD berdasarkan provinsi
+      const isCovered = isIDECODCovered(destProvince);
       
-      const costData = await costRes.json();
-      // BUG FIX #3: Validasi bahwa ada hasil dengan cost > 0
-      // API bisa mengembalikan data array berisi tapi dengan cost:0 jika area tidak tercover
-      const hasValidService = costData?.data?.some(d => d.cost > 0);
-      if (hasValidService) {
-        order.ai_cod = '✅ ID Express COD Bisa';
+      if (!isCovered) {
+        // Provinsi di luar jangkauan COD ID Express sama sekali
+        order.ai_cod = `❌ Tidak Tercover COD (${destCity}, ${destProvince})`;
       } else {
-        order.ai_cod = '❌ ID Express COD Tidak Bisa';
+        // Check Cost for ID Express (hanya untuk provinsi yang covered)
+        const costPayload = new URLSearchParams();
+        costPayload.append('origin', getOriginId());
+        costPayload.append('destination', destId);
+        costPayload.append('weight', '1000');
+        costPayload.append('courier', 'ide');
+        costPayload.append('price', 'lowest');
+
+        const costRes = await fetch('https://rajaongkir.komerce.id/api/v1/calculate/domestic-cost', {
+          method: 'POST',
+          headers: { 'key': getKomerceKey(), 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: costPayload.toString()
+        });
+        
+        const costData = await costRes.json();
+        const services = costData?.data || [];
+        const hasValidService = services.some(d => d.cost > 0);
+        
+        if (hasValidService) {
+          const cheapest = services.reduce((a, b) => a.cost < b.cost ? a : b);
+          order.ai_cod = `✅ COD Bisa — ${destCity} (${cheapest.etd})`;
+        } else {
+          order.ai_cod = `❌ COD Tidak Bisa — ${destCity}, ${destProvince}`;
+        }
       }
     } else {
       order.ai_cod = '⚠️ Area tidak tercover';

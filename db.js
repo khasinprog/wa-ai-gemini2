@@ -1,4 +1,6 @@
 // db.js — PostgreSQL connection & schema setup
+// Load .env lebih awal agar DATABASE_URL tersedia saat Pool dibuat (fix SASL error)
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 const { Pool } = require('pg');
 
 const pool = new Pool({
@@ -267,6 +269,10 @@ async function getOrderById(id) {
   return res.rows[0] || null;
 }
 
+async function deleteOrder(id) {
+  await pool.query('DELETE FROM orders WHERE id = $1', [id]);
+}
+
 // ── Settings ─────────────────────────────────────────────────────
 
 async function loadSettings() {
@@ -297,7 +303,7 @@ module.exports = {
   pool, initDB,
   saveMessage, updateMessage, getMessages, getMessageById, getUnrepliedMessages,
   upsertContact,
-  saveOrder, getOrders, updateOrder, getOrderById,
+  saveOrder, getOrders, updateOrder, getOrderById, deleteOrder,
   loadSettings, saveSettings,
   logWebhook,
 };
