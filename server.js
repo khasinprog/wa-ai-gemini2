@@ -7,6 +7,8 @@ const db         = require('./db');
 const path       = require('path');
 const cors       = require('cors');
 const crypto     = require('crypto');
+const multer     = require('multer');
+
 
 // Auto-generate ADMIN_PASSWORD if missing
 if (!process.env.ADMIN_PASSWORD) {
@@ -125,6 +127,19 @@ app.use('/api', (req, res, next) => {
 const pendingBuffers = new Map();
 const userLocks = new Map(); // Menyimpan antrean promise per pengirim
 const activeProcessing = new Map(); // from -> { controller, timeoutId, resolveDelay }
+
+// Tracking gambar produk yang sudah dikirim otomatis ke tiap nomor customer,
+// supaya tidak dikirim berkali-kali dalam 1 percakapan (in-memory saja —
+// reset kalau server restart, itu sudah didiskusikan & diterima sebagai batasan).
+// Struktur: Map<wa_id, Set<namaProduk>>
+const sentProductImages = new Map();
+function hasSentProductImage(from, productName) {
+  return sentProductImages.get(from)?.has(productName) || false;
+}
+function markProductImageSent(from, productName) {
+  if (!sentProductImages.has(from)) sentProductImages.set(from, new Set());
+  sentProductImages.get(from).add(productName);
+}
 
 // Dedup pesan masuk berdasarkan wamid — webhook Meta bisa mengirim ulang
 // event yang sama (misal kalau respon kita telat), jadi kita tolak wamid
@@ -308,7 +323,8 @@ function getAvailableKey() {
     }
 
     if (state.status === 'ON') {
-      lastUsedKeyIndex = (pos + 1) % n; // key berikutnya jadi starting point round-robin selanjutnya
+      // JANGAN geser lastUsedKeyIndex di sini — key hanya berpindah kalau kena 429.
+      // Geser dilakukan di markKeyLimited(), bukan di sini.
       return { key: validKeys[pos].key, slot: validKeys[pos].slot, pos };
     }
   }
@@ -316,9 +332,14 @@ function getAvailableKey() {
 }
 
 // Tandai key kena limit berdasarkan quotaId & retryDelay dari response 429.
+// Di sinilah satu-satunya tempat lastUsedKeyIndex digeser — bukan di getAvailableKey().
 function markKeyLimited(pos, quotaId, retryDelaySec) {
   const state = apiKeyStates[pos];
   if (!state) return;
+
+  // Geser pointer ke key berikutnya supaya percobaan selanjutnya langsung pakai key lain
+  const validKeys = getValidKeys();
+  lastUsedKeyIndex = (pos + 1) % Math.max(validKeys.length, 1);
 
   if (quotaId && quotaId.includes('PerDay')) {
     state.status = 'OFF_RPD';
@@ -415,6 +436,32 @@ async function sendWhatsAppImageByPath(to, filePath, mimetype) {
   const body = { messaging_product: 'whatsapp', to, type: 'image', image: { id: mediaId } };
   return graphFetch('/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 }
+
+// Upload buffer langsung (dari file yang di-upload dashboard) ke Graph API
+async function uploadWhatsAppMediaBuffer(buffer, mimetype, filename) {
+  const blob = new Blob([buffer], { type: mimetype });
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('file', blob, filename);
+  form.append('type', mimetype);
+  const data = await graphFetch('/media', { method: 'POST', body: form });
+  return data?.id || null;
+}
+
+// Kirim video atau gambar ke nomor WA menggunakan media_id yang sudah diupload
+async function sendWhatsAppMediaById(to, mediaId, mediaType, caption) {
+  const key = mediaType === 'video' ? 'video' : 'image';
+  const mediaObj = { id: mediaId };
+  if (caption) mediaObj.caption = caption;
+  const body = {
+    messaging_product: 'whatsapp',
+    to,
+    type: key,
+    [key]: mediaObj,
+  };
+  return graphFetch('/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+}
+
 
 // Tandai pesan sudah dibaca, sekalian tampilkan indikator "sedang mengetik"
 // (fitur typing_indicator Cloud API — otomatis hilang begitu kita kirim balasan
@@ -525,7 +572,7 @@ function getRelevantKnowledge(message, history = []) {
   return chosen.map(b => b.text).join('\n\n');
 }
 
-function buildSystemPrompt(name, relevantKB, isFirstMessage) {
+function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
   const greetingRule = '- Sapaan ke pelanggan: panggil "Kak" saja tanpa menyebut nama sama sekali (jangan pakai nama dari WhatsApp, baik di pesan pertama maupun balasan berikutnya)';
 
   const parts = [
@@ -588,6 +635,11 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage) {
   parts.push('[ORDER_DATA]{"nama": "Nama Lengkap", "hp": "No HP, atau SAMA_DENGAN_WA kalau pelanggan setuju pakai nomor WA yang sama", "produk": "Nama Produk yang Dipesan", "alamat": "Alamat Lengkap termasuk patokan bila ada"}[/ORDER_DATA]');
   parts.push('PENTING: Jangan menyertakan blok ini jika pelanggan hanya tanya-tanya, belum pasti memesan, atau belum eksplisit mengonfirmasi rekap pesanan.');
   parts.push('');
+  parts.push('=== KALIMAT PENUTUP KHUSUS UNTUK PRODUK COD (PENTING) ===');
+  parts.push('- Cek INFORMASI PRODUK & BISNIS: kalau produk yang dipesan ini menyatakan bisa COD (misal tertulis "COD: bisa" atau sejenisnya), maka PADA BALASAN KONFIRMASI ORDER FINAL (balasan yang menyertakan [ORDER_DATA]) WAJIB tambahkan kalimat berikut PERSIS setelah kalimat "pesanan diproses" dan SEBELUM kalimat CTA penutup biasa: "Kalau sering di luar rumah, boleh titip uangnya ke keluarga ya, biar paket tetap bisa diterima pas kurir datang 😊 Kalau ada yang mau ditanyakan lagi nanti, tinggal chat ke sini aja ya Kak."');
+  parts.push('- Kalimat ini HANYA untuk produk yang statusnya bisa COD. Kalau produk tidak COD (atau statusnya tidak disebutkan), JANGAN tambahkan kalimat ini sama sekali.');
+  parts.push('- Kalimat ini boleh disesuaikan redaksinya secara natural (tidak perlu kata-per-kata), tapi wajib menyampaikan 2 hal: (1) titip uang ke keluarga kalau customer sering di luar rumah supaya kurir tetap bisa nyerahin paket, (2) boleh chat lagi ke nomor ini kalau ada yang mau ditanyakan');
+  parts.push('');
   parts.push('=== ATURAN ESKALASI KE ADMIN (SANGAT PENTING — JANGAN MENGARANG) ===');
   parts.push('- Kalau ada pertanyaan yang jawabannya TIDAK tertulis eksplisit di INFORMASI PRODUK & BISNIS di atas (contoh: asal/lokasi pengiriman, estimasi hari sampai yang spesifik, stok riil, kebijakan yang tidak disebutkan) — JANGAN PERNAH mengarang atau menebak jawaban, walau kedengarannya masuk akal');
   parts.push('- Untuk kasus itu, sisipkan tag berikut di balasanmu (boleh lebih dari satu kalau ada beberapa hal yang tidak diketahui sekaligus): [ESCALATE:Nama Produk Persis Sesuai Header Info Produk]pertanyaan singkat untuk admin[/ESCALATE]. Kalau pertanyaannya bukan soal produk tertentu (misal jam operasional toko, kebijakan retur umum), gunakan tag [ESCALATE:UMUM]pertanyaan singkat[/ESCALATE]');
@@ -598,10 +650,15 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage) {
   
   const productsWithImages = Object.keys(settings.productImages || {}).filter(k => settings.productImages[k] && settings.productImages[k].some(img => img));
   if (productsWithImages.length > 0) {
+    const alreadyImaged = productsWithImages.filter(p => hasSentProductImage(from, p));
+    const notYetImaged = productsWithImages.filter(p => !hasSentProductImage(from, p));
     parts.push('=== ATURAN GAMBAR (PENTING) ===');
     parts.push(`Produk berikut memiliki gambar yang siap dikirim: ${productsWithImages.join(', ')}.`);
-    parts.push('JIKA pelanggan MEMINTA untuk melihat foto/gambar produk tersebut, balas dengan penjelasan singkat dan WAJIB tambahkan persis kode ini di akhir kalimatmu: [KIRIM_GAMBAR:Nama Produk]. Contoh jika nama produknya "Massage Gun": "[KIRIM_GAMBAR:Massage Gun]".');
-    parts.push('Sistem akan otomatis mengirim gambar ke WhatsApp pelanggan jika kode itu disertakan. JANGAN gunakan kode ini jika pelanggan tidak secara eksplisit meminta gambar.');
+    parts.push('- Begitu kamu SUDAH menjelaskan produk dan menawarkan/menyebutkan varian yang tersedia (bukan sebelum itu), WAJIB tambahkan persis kode ini di akhir kalimatmu: [KIRIM_GAMBAR:Nama Produk]. Contoh jika nama produknya "Massage Gun": "[KIRIM_GAMBAR:Massage Gun]". Ini berlaku OTOMATIS — TIDAK perlu menunggu pelanggan minta foto secara eksplisit.');
+    parts.push('- Sistem akan otomatis mengirim gambar ke WhatsApp pelanggan jika kode itu disertakan.');
+    parts.push('- Gambar HANYA dikirim SEKALI per produk dalam 1 percakapan. JANGAN sertakan kode [KIRIM_GAMBAR:...] untuk produk yang gambarnya SUDAH pernah dikirim sebelumnya di percakapan ini (lihat daftar di bawah) — kecuali pelanggan secara eksplisit minta dikirim ulang.');
+    if (alreadyImaged.length) parts.push(`- Produk yang GAMBARNYA SUDAH dikirim di percakapan ini (jangan kirim ulang kecuali diminta eksplisit): ${alreadyImaged.join(', ')}.`);
+    if (notYetImaged.length) parts.push(`- Produk yang gambarnya BELUM dikirim di percakapan ini: ${notYetImaged.join(', ')}.`);
     parts.push('');
   }
   
@@ -630,7 +687,7 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Panggil Gemini REST API langsung dengan key tertentu
-async function callGeminiDirect(key, keySlot, message, name, history, signal) {
+async function callGeminiDirect(key, keySlot, message, name, history, signal, from) {
   const model = settings.modelName || 'gemini-3.1-flash-lite';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
@@ -650,7 +707,7 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal) {
 
   const body = {
     contents,
-    systemInstruction: { parts: [{ text: buildSystemPrompt(name, relevantKB, isFirstMessage) }] },
+    systemInstruction: { parts: [{ text: buildSystemPrompt(name, relevantKB, isFirstMessage, from) }] },
     generationConfig: { temperature: settings.temperature ?? 0.7 },
   };
 
@@ -856,29 +913,45 @@ function appendFaqToKB(productTag, question, answer) {
 
 // Panggilan Gemini sederhana (tanpa histori/KB produk) untuk tugas internal:
 // memetakan balasan borongan admin ke ID pertanyaan pending yang sesuai.
+// Pakai getAvailableKey() supaya ikut rotasi & state yang sama dengan aiReply().
 async function callGeminiRaw(systemPrompt, userText) {
-  const keys = getApiKeys().filter(k => k && k.length >= 10);
-  if (!keys.length) return null;
+  const picked = getAvailableKey();
+  if (!picked) return null;
   const model = settings.modelName || 'gemini-3.1-flash-lite';
-  for (const key of keys) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: userText }] }],
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          generationConfig: { temperature: 0.1 },
-        }),
-      });
-      if (!res.ok) continue;
-      const data = await res.json();
-      const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
-      if (text.trim()) return text.trim();
-    } catch(e) { /* coba key berikutnya */ }
-  }
-  return null;
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(picked.key)}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: userText }] }],
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        generationConfig: { temperature: 0.1 },
+      }),
+    });
+    if (res.status === 429) {
+      let errData = null;
+      try { errData = await res.json(); } catch(e) {}
+      const details = errData?.error?.details || [];
+      let quotaId = null, retryDelaySec = null;
+      for (const d of details) {
+        if (!quotaId && Array.isArray(d.violations)) {
+          for (const v of d.violations) { if (v?.quotaId) { quotaId = v.quotaId; break; } }
+        }
+        if (retryDelaySec === null && d?.retryDelay) {
+          const rd = d.retryDelay;
+          const m = typeof rd === 'string' ? rd.match(/^(\d+(?:\.\d+)?)s?$/) : null;
+          retryDelaySec = m ? parseFloat(m[1]) : (typeof rd === 'number' ? rd : null);
+        }
+      }
+      markKeyLimited(picked.pos, quotaId, retryDelaySec);
+      return null;
+    }
+    if (!res.ok) return null;
+    const data = await res.json();
+    const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+    return text.trim() || null;
+  } catch(e) { return null; }
 }
 
 // Dipanggil saat superadmin membalas WA (bukan command on/off) DAN ada
@@ -933,7 +1006,7 @@ async function handleAdminEscalationAnswer(adminText) {
 }
 
 // ── Rotasi key REAKTIF: anggap semua key 'ON' sampai terbukti kena 429 ──
-async function aiReply(message, name, history, signal) {
+async function aiReply(message, name, history, signal, from) {
   if (getValidKeys().length === 0) {
     console.error('❌ Tidak ada API key yang valid di .env');
     return null;
@@ -955,7 +1028,7 @@ async function aiReply(message, name, history, signal) {
     emitKeyStatuses();
     console.log(`🔑 Mencoba Key ${picked.slot + 1}...`);
 
-    const result = await callGeminiDirect(picked.key, picked.slot, message, name, history, signal);
+    const result = await callGeminiDirect(picked.key, picked.slot, message, name, history, signal, from);
 
     if (result.ok) {
       emitKeyStatuses();
@@ -1006,7 +1079,7 @@ async function retryFailedMessages() {
       // Tambah hitungan retry
       entry.retryCount = (entry.retryCount || 0) + 1;
 
-      let reply = await aiReply(entry.body, entry.senderName, history);
+      let reply = await aiReply(entry.body, entry.senderName, history, null, entry.from);
       
       if (reply) {
          reply = extractOrder(reply, entry.from);
@@ -1036,7 +1109,12 @@ async function retryFailedMessages() {
          await sendWhatsAppText(entry.from, cleanReply, entry.wamid);
          
          for (const productToImage of productsToImage) {
+           if (hasSentProductImage(entry.from, productToImage)) {
+             console.log(`⏭️  Lewati kirim gambar "${productToImage}" (retry) ke ${entry.senderName} — sudah pernah dikirim.`);
+             continue;
+           }
            if (settings.productImages && settings.productImages[productToImage]) {
+             let anySent = false;
              for (const filename of settings.productImages[productToImage]) {
                if (filename) {
                   const imgPath = path.join(IMAGES_DIR, filename);
@@ -1045,10 +1123,12 @@ async function retryFailedMessages() {
                       const ext = filename.split('.').pop().toLowerCase();
                       const mimetype = ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg');
                       await sendWhatsAppImageByPath(entry.from, imgPath, mimetype);
+                      anySent = true;
                     } catch(e) { console.error('Gagal kirim gambar retry:', e.message); }
                   }
                }
              }
+             if (anySent) markProductImageSent(entry.from, productToImage);
            }
          }
 
@@ -1141,7 +1221,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
         .filter(m => m.from === from && m.id !== entry.id && !m.cancelledEntry)
         .sort((a, b) => a.id - b.id)
         .slice(-8);
-      let reply = await aiReply(combinedBody, senderName, history, controller.signal);
+      let reply = await aiReply(combinedBody, senderName, history, controller.signal, from);
 
       if (reply) {
         // ── B1: Hold check — cek ada pesan susulan sebelum lanjut ──────────
@@ -1232,7 +1312,14 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
         
         // Kirim gambar jika diminta dan tersedia
         for (const productToImage of productsToImage) {
+          // Jaga-jaga ganda: walau prompt sudah diinstruksikan jangan kirim ulang,
+          // dedupe fisik di sini biar tidak dobel walau AI kelewat menyertakan tag lagi.
+          if (hasSentProductImage(from, productToImage)) {
+            console.log(`⏭️  Lewati kirim gambar "${productToImage}" ke ${senderName} — sudah pernah dikirim di percakapan ini.`);
+            continue;
+          }
           if (settings.productImages && settings.productImages[productToImage]) {
+            let anySent = false;
             for (const filename of settings.productImages[productToImage]) {
               if (filename) {
                  const imgPath = path.join(IMAGES_DIR, filename);
@@ -1241,10 +1328,12 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid)
                      const ext = filename.split('.').pop().toLowerCase();
                      const mimetype = ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg');
                      await sendWhatsAppImageByPath(from, imgPath, mimetype);
+                     anySent = true;
                    } catch(e) { console.error('Gagal kirim gambar:', e.message); }
                  }
               }
             }
+            if (anySent) markProductImageSent(from, productToImage);
           }
         }
         
@@ -1497,7 +1586,7 @@ async function flushMacrodroidBuffer(from) {
     if (entry.replied) return; // sudah dibalas manual saat antre
 
     const history = messages.filter(m => m.from === from && m.id !== entry.id).slice(0, 8).reverse();
-    let reply = await aiReply(combinedBody, senderName, history);
+    let reply = await aiReply(combinedBody, senderName, history, null, from);
 
     if (!reply) {
       save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
@@ -1517,10 +1606,15 @@ async function flushMacrodroidBuffer(from) {
 
     // Kumpulkan URL gambar produk yang diminta (kalau ada) — dikirim sebagai info
     // tambahan; pengiriman gambar via MacroDroid perlu macro/step terpisah di HP.
+    // Dedupe sama seperti jalur Cloud API: skip & jangan tandai ulang produk yang
+    // gambarnya sudah pernah dikirim di percakapan ini.
     const imageUrls = [];
     for (const p of productsToImage) {
+      if (hasSentProductImage(from, p)) continue;
       const files = settings.productImages?.[p];
-      if (files) for (const f of files) if (f) imageUrls.push(`/images/${f}`);
+      let anySent = false;
+      if (files) for (const f of files) if (f) { imageUrls.push(`/images/${f}`); anySent = true; }
+      if (anySent) markProductImageSent(from, p);
     }
 
     entry.replied = true;
@@ -1942,7 +2036,14 @@ app.post('/api/send', async (req, res) => {
   if (!waConfigured) return res.status(400).json({ error: 'WhatsApp Cloud API belum dikonfigurasi (cek WHATSAPP_TOKEN & PHONE_NUMBER_ID di .env)' });
   try {
     const target = normalizeIdNumber(number);
-    await sendWhatsAppText(target, message);
+    console.log(`📤 [Manual Send] Kirim ke: ${target}, panjang pesan: ${message.length} karakter`);
+    const metaResponse = await sendWhatsAppText(target, message);
+    console.log(`📤 [Manual Send] Respons Meta:`, JSON.stringify(metaResponse));
+    if (!metaResponse || !metaResponse.messages?.[0]?.id) {
+      console.error(`❌ [Manual Send] Meta tidak mengembalikan message ID! Response:`, metaResponse);
+      return res.status(500).json({ error: 'WhatsApp tidak mengkonfirmasi pengiriman pesan. Kemungkinan nomor tidak terdaftar di WhatsApp atau di luar jendela 24 jam.' });
+    }
+    console.log(`✅ [Manual Send] Berhasil! Message ID: ${metaResponse.messages[0].id}`);
     const msgObj = {
       id: 'man-' + Date.now(),
       from: target,
@@ -1957,10 +2058,55 @@ app.post('/api/send', async (req, res) => {
     save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
     io.emit('messages', messages);
     res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) {
+    console.error(`❌ [Manual Send] Error:`, e.message, e.graphError || '');
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Kirim Video/Gambar dari chat panel dashboard ke customer ──────────────
+const multerMemory = multer({ storage: multer.memoryStorage(), limits: { fileSize: 64 * 1024 * 1024 } }); // max 64MB
+app.post('/api/chat/send-media', multerMemory.single('file'), async (req, res) => {
+  const { number, caption } = req.body;
+  const file = req.file;
+  if (!file || !number) return res.status(400).json({ error: 'File dan nomor tujuan wajib diisi' });
+  if (settings.channel === 'macrodroid') return res.status(400).json({ error: 'Kirim media dari dashboard tidak didukung untuk channel MacroDroid.' });
+  if (!waConfigured) return res.status(400).json({ error: 'WhatsApp Cloud API belum dikonfigurasi' });
+  try {
+    const target = normalizeIdNumber(number);
+    const mimetype = file.mimetype;
+    const mediaType = mimetype.startsWith('video/') ? 'video' : 'image';
+    console.log(`📤 [Chat Media] Upload ${mediaType} "${file.originalname}" ke Meta...`);
+    const mediaId = await uploadWhatsAppMediaBuffer(file.buffer, mimetype, file.originalname);
+    if (!mediaId) return res.status(500).json({ error: 'Gagal upload media ke WhatsApp' });
+    console.log(`📤 [Chat Media] Kirim ${mediaType} ke ${target}...`);
+    const metaResp = await sendWhatsAppMediaById(target, mediaId, mediaType, caption || '');
+    if (!metaResp?.messages?.[0]?.id) return res.status(500).json({ error: 'WhatsApp tidak mengkonfirmasi pengiriman media' });
+    console.log(`✅ [Chat Media] Berhasil! Message ID: ${metaResp.messages[0].id}`);
+    const label = mediaType === 'video' ? '🎥 Video' : '🖼️ Gambar';
+    const msgObj = {
+      id: 'man-' + Date.now(),
+      from: target,
+      body: '[Anda mengirim pesan]',
+      timestamp: new Date().toISOString(),
+      replied: true,
+      aiReply: caption ? `${label}: ${caption}` : `${label} dikirim`,
+      manual: true
+    };
+    messages.unshift(msgObj);
+    if (messages.length > 3000) messages = messages.slice(0, 3000);
+    save(MSG_FILE, messages);
+    try { persistMessageToDB(msgObj); } catch(e) {}
+    io.emit('messages', messages);
+    res.json({ ok: true });
+  } catch(e) {
+    console.error(`❌ [Chat Media] Error:`, e.message, e.graphError || '');
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post('/api/logout', async (_, res) => {
+
   // Tidak ada sesi/QR untuk di-logout di WhatsApp Cloud API — nomor terpasang
   // lewat Embedded Signup di Meta App Dashboard, bukan lewat scan QR di sini.
   res.json({ ok: true, note: 'WhatsApp Cloud API tidak menggunakan sesi QR. Kelola koneksi nomor dari Meta App Dashboard.' });
@@ -2167,8 +2313,8 @@ const AI_TEST_PERSONAS = [
 
 // Evaluasi satu giliran pakai Gemini sebagai juri
 async function evaluateTestTurn(personaName, customerMsg, botReply, turnIndex) {
-  const key = getAvailableKey();
-  if (!key) return { skor: 0, catatan: 'Key tidak tersedia untuk evaluasi' };
+  const picked = getAvailableKey();
+  if (!picked) return { skor: 0, catatan: 'Key tidak tersedia untuk evaluasi' };
 
   const evalPrompt = `Kamu adalah evaluator kualitas chatbot CS toko online Indonesia.
 
@@ -2186,8 +2332,11 @@ Balas HANYA JSON valid (tidak ada teks lain):
 {"skor": <1-5>, "aspek": {"relevansi": <1-5>, "gaya": <1-5>, "cta": <1-5>, "kepatuhan": <1-5>}, "catatan": "<1 kalimat singkat>"}`;
 
   try {
-    const result = await callGeminiDirect(key.key, key.slot, evalPrompt, 'evaluator', [], null);
-    if (!result.ok) return { skor: 0, catatan: 'Evaluasi gagal: ' + (result.error || 'unknown') };
+    const result = await callGeminiDirect(picked.key, picked.slot, evalPrompt, 'evaluator', [], null);
+    if (!result.ok) {
+      if (result.status429) markKeyLimited(picked.pos, result.quotaId, result.retryDelaySec);
+      return { skor: 0, catatan: 'Evaluasi gagal: ' + (result.error || 'unknown') };
+    }
     const clean = result.text.replace(/```json|```/g, '').trim();
     return JSON.parse(clean);
   } catch (e) {
