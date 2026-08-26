@@ -494,12 +494,33 @@ input:checked+.slider:before{transform:translateX(18px)}
   display: none;
   align-items: flex-end;
   gap: 8px;
-  padding: 10px 14px;
   background: var(--s1);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
-.desk-input-bar.active { display: flex; }
+.desk-input-bar.active { display: flex; flex-direction: column; }
+.desk-input-bar-row { display: flex; align-items: flex-end; gap: 8px; }
+
+.desk-attach-btn {
+  min-width: 36px; height: 36px; border-radius: 50%;
+  background: var(--s2); border: 1px solid var(--border);
+  cursor: pointer; font-size: 1.1rem; display: flex;
+  align-items: center; justify-content: center;
+  color: var(--muted); transition: background .15s;
+  flex-shrink: 0;
+}
+.desk-attach-btn:hover { background: var(--border); color: var(--text); }
+.desk-media-preview {
+  display: none; padding: 6px 14px 0;
+  background: var(--s1);
+}
+.desk-media-preview-inner {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--s2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 7px 12px;
+  font-size: .8rem;
+}
+
 .desk-input-wrap {
   flex: 1;
   background: var(--s2);
@@ -694,19 +715,31 @@ input:checked+.slider:before{transform:translateX(18px)}
       </div>
       <!-- Desktop input bar -->
       <div class="desk-input-bar" id="deskInputBar">
-        <div class="desk-input-wrap">
-          <textarea
-            id="deskChatInput"
-            rows="1"
-            placeholder="Tulis balasan manual... (Enter kirim, Shift+Enter baris baru)"
-            oninput="deskAutoResize(this)"
-            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();deskSend();}"
-          ></textarea>
+        <!-- Preview file yang dipilih -->
+        <div class="desk-media-preview" id="deskMediaPreview"></div>
+        <!-- Baris input + tombol kirim -->
+        <div class="desk-input-bar-row" style="padding:10px 14px 10px">
+          <div class="desk-input-wrap">
+            <!-- Tombol attach file -->
+            <input type="file" id="deskMediaFileInput" accept="video/*,image/*" style="display:none" onchange="deskSelectMedia(this)">
+            <button class="desk-attach-btn" onclick="document.getElementById('deskMediaFileInput').click()" title="Kirim Foto/Video" type="button">
+              📎
+            </button>
+            <textarea
+              id="deskChatInput"
+              rows="1"
+              placeholder="Tulis balasan manual... (Enter kirim, Shift+Enter baris baru)"
+              oninput="deskAutoResize(this)"
+              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();deskSend();}"
+            ></textarea>
+          </div>
+          <button class="desk-send-btn" onclick="deskSend()" id="deskSendBtn" aria-label="Kirim">
+            <svg viewBox="0 0 24 24" fill="white" width="20" height="20"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+          </button>
         </div>
-        <button class="desk-send-btn" onclick="deskSend()" id="deskSendBtn" aria-label="Kirim">
-          <svg viewBox="0 0 24 24" fill="white" width="20" height="20"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
-        </button>
       </div>
+
+
       <!-- Mobile input bar -->
       <div class="mob-input-bar" id="mobInputBar">
         <div class="mob-input-wrap">
@@ -818,6 +851,7 @@ input:checked+.slider:before{transform:translateX(18px)}
       <div class="tab" onclick="switchTab('send')"><div style="font-size:1.2rem">🚚</div>Cek Resi</div>
       <div class="tab" onclick="switchTab('key')"><div style="font-size:1.2rem">🔑</div>Key</div>
       <div class="tab" onclick="switchTab('aitest')"><div style="font-size:1.2rem">🧪</div>AI Test</div>
+      <div class="tab" onclick="switchTab('manual-send')"><div style="font-size:1.2rem">📤</div>Kirim</div>
     </div>
     <div style="flex:1; overflow-y:auto; display:flex; flex-direction:column; background:var(--s1)">
       <div class="tab-content active" id="tab-ai" style="flex:1">
@@ -907,6 +941,26 @@ Garansi: 6 bulan"></textarea>
     </div>
 
     
+    <!-- Tab: Kirim Pesan Manual -->
+    <div class="tab-content" id="tab-manual-send" style="flex:1">
+      <div class="tab-panel">
+        <div class="col-title" style="margin-bottom:16px">📤 Kirim Pesan ke Nomor Baru</div>
+        <div class="ts" style="margin-bottom:16px;line-height:1.6;background:var(--s2);border-radius:8px;padding:12px;border:1px solid var(--border)">
+          💡 Kirim pesan langsung ke nomor WhatsApp manapun tanpa menunggu mereka chat duluan.
+        </div>
+        <div class="fg">
+          <label class="lbl">Nomor Tujuan</label>
+          <input type="text" id="sendNum" placeholder="628123456789" style="font-family:monospace;font-size:0.95rem"/>
+          <div class="ts" style="margin-top:5px;line-height:1.5">⚠️ Format: <strong>628xxxxxxxxxx</strong> — ganti angka <strong>0</strong> di depan dengan <strong>62</strong>, tanpa tanda +</div>
+        </div>
+        <div class="fg">
+          <label class="lbl">Isi Pesan</label>
+          <textarea id="sendMsg" rows="6" placeholder="Tulis pesan yang ingin dikirim..."></textarea>
+        </div>
+        <button class="btn btn-green" onclick="doSend()" style="width:100%;justify-content:center;font-size:1rem;padding:12px">📤 Kirim Pesan</button>
+      </div>
+    </div>
+
     <div class="tab-content" id="tab-send" style="flex:1">
       <div class="tab-panel">
 
@@ -2060,6 +2114,8 @@ function deskAutoResize(el) {
 
 async function deskSend() {
   if (!activeContact) return;
+  // Jika ada file yang dipilih, kirim media dulu
+  if (deskSelectedMedia) { await deskSendMedia(); return; }
   const input = document.getElementById('deskChatInput');
   const message = input.value.trim();
   if (!message) return;
@@ -2103,6 +2159,93 @@ async function deskSend() {
   btn.style.opacity = '1';
   btn.disabled = false;
   input.focus();
+}
+
+// ── Media (foto/video) dari chat panel ───────────────────────────────────
+let deskSelectedMedia = null;
+
+function deskSelectMedia(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const isVideo = file.type.startsWith('video/');
+  const isImage = file.type.startsWith('image/');
+  const sizeMB = file.size / 1024 / 1024;
+
+  // Cek batas WhatsApp Cloud API
+  if (isVideo && sizeMB > 16) {
+    alert(`❌ Video terlalu besar (${sizeMB.toFixed(1)}MB).\n\nWhatsApp Cloud API hanya mendukung video maks 16MB.\n\nSilakan kompres video terlebih dahulu.`);
+    input.value = '';
+    return;
+  }
+  if (isImage && sizeMB > 5) {
+    alert(`❌ Gambar terlalu besar (${sizeMB.toFixed(1)}MB).\n\nWhatsApp Cloud API hanya mendukung gambar maks 5MB.`);
+    input.value = '';
+    return;
+  }
+
+  deskSelectedMedia = file;
+  const preview = document.getElementById('deskMediaPreview');
+  preview.innerHTML = `<div class="desk-media-preview-inner">
+    <span style="font-size:1.2rem">${isVideo ? '🎥' : '🖼️'}</span>
+    <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)">${file.name}</span>
+    <span style="color:var(--muted);font-size:.75rem">${sizeMB.toFixed(1)}MB</span>
+    <button onclick="deskClearMedia()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:1rem;line-height:1" title="Hapus">&times;</button>
+  </div>`;
+  preview.style.display = 'block';
+}
+
+
+function deskClearMedia() {
+  deskSelectedMedia = null;
+  document.getElementById('deskMediaFileInput').value = '';
+  const preview = document.getElementById('deskMediaPreview');
+  preview.style.display = 'none';
+  preview.innerHTML = '';
+}
+
+async function deskSendMedia() {
+  if (!activeContact || !deskSelectedMedia) return;
+  const btn = document.getElementById('deskSendBtn');
+  const caption = document.getElementById('deskChatInput').value.trim();
+  btn.style.opacity = '0.5'; btn.disabled = true;
+  try {
+    const formData = new FormData();
+    formData.append('file', deskSelectedMedia, deskSelectedMedia.name);
+    formData.append('number', activeContact);
+    if (caption) formData.append('caption', caption);
+    const r = await fetch('/api/chat/send-media', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` },
+      body: formData
+    }).then(r => r.json());
+    if (r.ok) {
+      const isVideo = deskSelectedMedia.type.startsWith('video/');
+      const label = isVideo ? '🎥 Video' : '🖼️ Gambar';
+      const msgObj = {
+        id: 'man-' + Date.now(),
+        from: activeContact,
+        body: '[Anda mengirim pesan]',
+        timestamp: new Date().toISOString(),
+        replied: true,
+        aiReply: caption ? `${label}: ${caption}` : `${label} dikirim`,
+        manual: true
+      };
+      allMessages.unshift(msgObj);
+      if (!contacts[activeContact]) contacts[activeContact] = { name: activeContact, messages: [] };
+      contacts[activeContact].messages.unshift(msgObj);
+      renderChat(activeContact);
+      renderContacts();
+      document.getElementById('deskChatInput').value = '';
+      deskAutoResize(document.getElementById('deskChatInput'));
+      deskClearMedia();
+    } else {
+      alert('❌ Gagal kirim media: ' + (r.error || 'Unknown error'));
+    }
+  } catch(err) {
+    alert('❌ Koneksi error saat kirim media');
+  }
+  btn.style.opacity = '1'; btn.disabled = false;
+  document.getElementById('deskChatInput').focus();
 }
 
 // ── AI Auto Cek Alamat & ID Express ──
