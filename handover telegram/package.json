@@ -1,0 +1,25 @@
+{
+  "name": "telegram-wa-escalation-bridge",
+  "version": "1.0.0",
+  "description": "Telegram Escalation and Live-Chat Bridge for WhatsApp AI Assistant",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "simulate": "node test-simulate.js"
+  },
+  "keywords": [
+    "telegram",
+    "whatsapp",
+    "bot",
+    "escalation"
+  ],
+  "author": "Khasin",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "grammy": "^1.23.0"
+  }
+}

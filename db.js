@@ -65,6 +65,8 @@ async function initDB() {
         alamat TEXT,
         ai_alamat TEXT,
         ai_cod VARCHAR(100),
+        payment_method VARCHAR(30) DEFAULT NULL,
+        cold_lead BOOLEAN DEFAULT FALSE,
         status VARCHAR(30) DEFAULT 'baru',
         created_at TIMESTAMP DEFAULT NOW()
       );
@@ -83,7 +85,32 @@ async function initDB() {
         error_message TEXT,
         received_at TIMESTAMP DEFAULT NOW()
       );
+
+      -- Dedup: track processed webhook message IDs to prevent duplicate processing
+      CREATE TABLE IF NOT EXISTS processed_wamids (
+        wamid VARCHAR(100) PRIMARY KEY,
+        processed_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_processed_wamids_cleanup
+        ON processed_wamids(processed_at);
+
+      -- Active warranty claims: persist across server restarts
+      CREATE TABLE IF NOT EXISTS active_claims (
+        wa_id VARCHAR(50) PRIMARY KEY,
+        description TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
     `);
+    // F1: Migration — tambah kolom payment_method jika belum ada
+    await client.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(30) DEFAULT NULL`);
+    // F3-D: Migration — tambah kolom cold_lead jika belum ada
+    await client.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS cold_lead BOOLEAN DEFAULT FALSE`);
+
+    // Cleanup old processed_wamids (older than 7 days) — non-fatal
+    try {
+      await client.query(`DELETE FROM processed_wamids WHERE processed_at < NOW() - INTERVAL '7 days'`);
+    } catch(e) { /* ignore */ }
+
     console.log('✅ Database schema ready');
   } finally {
     client.release();
@@ -233,13 +260,14 @@ async function upsertContact(waId, name) {
 
 async function saveOrder(order) {
   await pool.query(`
-    INSERT INTO orders (id, wa_id, nama, hp, produk, alamat, ai_alamat, ai_cod, status)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    INSERT INTO orders (id, wa_id, nama, hp, produk, alamat, ai_alamat, ai_cod, payment_method, status)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
     ON CONFLICT (id) DO UPDATE SET
       ai_alamat = EXCLUDED.ai_alamat,
       ai_cod = EXCLUDED.ai_cod,
+      payment_method = EXCLUDED.payment_method,
       status = EXCLUDED.status
-  `, [order.id, order.jid || order.wa_id, order.nama, order.hp, order.produk, order.alamat, order.ai_alamat || null, order.ai_cod || null, order.status || 'baru']);
+  `, [order.id, order.jid || order.wa_id, order.nama, order.hp, order.produk, order.alamat, order.ai_alamat || null, order.ai_cod || null, order.payment_method || null, order.status || 'baru']);
 }
 
 async function getOrders() {
@@ -248,12 +276,14 @@ async function getOrders() {
     id: r.id, jid: r.wa_id, wa_id: r.wa_id,
     nama: r.nama, hp: r.hp, produk: r.produk,
     alamat: r.alamat, ai_alamat: r.ai_alamat, ai_cod: r.ai_cod,
+    payment_method: r.payment_method || null,
+    cold_lead: r.cold_lead || false,
     status: r.status, created_at: r.created_at,
   }));
 }
 
 async function updateOrder(id, fields) {
-  const allowed = ['ai_alamat','ai_cod','status'];
+  const allowed = ['ai_alamat','ai_cod','payment_method','cold_lead','status'];
   const sets = [], vals = [];
   let i = 1;
   for (const [k, v] of Object.entries(fields)) {
@@ -299,6 +329,73 @@ async function logWebhook(eventType, payload) {
   } catch(e) { /* non-fatal */ }
 }
 
+// ── Processed Wamids (Dedup) ─────────────────────────────────────
+// Persist webhook dedup state to survive server restarts
+
+async function saveProcessedWamid(wamid) {
+  if (!wamid) return;
+  try {
+    await pool.query(
+      `INSERT INTO processed_wamids (wamid, processed_at)
+       VALUES ($1, NOW())
+       ON CONFLICT (wamid) DO NOTHING`,
+      [wamid]
+    );
+  } catch(e) { /* non-fatal */ }
+}
+
+async function isWamidProcessed(wamid) {
+  if (!wamid) return false;
+  try {
+    const res = await pool.query(
+      'SELECT 1 FROM processed_wamids WHERE wamid = $1',
+      [wamid]
+    );
+    return res.rowCount > 0;
+  } catch(e) { return false; }
+}
+
+// ── Active Claims (Warranty) ─────────────────────────────────────
+// Persist active warranty claims across server restarts
+
+async function saveActiveClaim(waId, description) {
+  if (!waId) return;
+  try {
+    await pool.query(
+      `INSERT INTO active_claims (wa_id, description, created_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (wa_id) DO UPDATE SET description = $2, created_at = NOW()`,
+      [waId, description]
+    );
+  } catch(e) { /* non-fatal */ }
+}
+
+async function getActiveClaim(waId) {
+  if (!waId) return null;
+  try {
+    const res = await pool.query(
+      'SELECT * FROM active_claims WHERE wa_id = $1',
+      [waId]
+    );
+    return res.rows[0] || null;
+  } catch(e) { return null; }
+}
+
+async function deleteActiveClaim(waId) {
+  if (!waId) return;
+  try {
+    await pool.query('DELETE FROM active_claims WHERE wa_id = $1', [waId]);
+  } catch(e) { /* non-fatal */ }
+}
+
+// Load all active claims on startup
+async function loadActiveClaims() {
+  try {
+    const res = await pool.query('SELECT * FROM active_claims');
+    return res.rows;
+  } catch(e) { return []; }
+}
+
 module.exports = {
   pool, initDB,
   saveMessage, updateMessage, getMessages, getMessageById, getUnrepliedMessages,
@@ -306,4 +403,6 @@ module.exports = {
   saveOrder, getOrders, updateOrder, getOrderById, deleteOrder,
   loadSettings, saveSettings,
   logWebhook,
+  saveProcessedWamid, isWamidProcessed,
+  saveActiveClaim, getActiveClaim, deleteActiveClaim, loadActiveClaims,
 };

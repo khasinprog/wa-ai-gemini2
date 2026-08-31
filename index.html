@@ -390,6 +390,16 @@ input:checked+.slider:before{transform:translateX(18px)}
           <input type="text" id="replyDelayMax" placeholder="15" onchange="patch('replyDelayMax',parseInt(this.value)||0)"/>
           <div class="ts" style="margin-top:5px;line-height:1.6">Kalau balasan AI pendek (basa-basi/harga singkat), bot menunggu sekitar durasi "Singkat" sebelum kirim. Kalau balasannya panjang (penjelasan produk dll), bot menunggu sekitar durasi "Panjang" — biar terasa natural seperti orang mengetik, bukan langsung dijawab AI. Ada sedikit variasi acak ±2 detik supaya tidak terasa kaku.</div>
         </div>
+        <!-- F1-D: Prioritas Kurir -->
+        <div class="fg" style="grid-column:1/-1">
+          <label class="lbl">Prioritas Kurir Ongkir</label>
+          <div class="ts" style="margin-bottom:8px;line-height:1.6">Seret untuk mengubah urutan. Kurir paling atas ditampilkan pertama ke customer saat cek ongkir otomatis.</div>
+          <div id="courierSortList" style="display:flex;flex-direction:column;gap:6px;max-width:360px"></div>
+          <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+            <input type="text" id="newCourierInput" placeholder="Tambah kurir baru..." style="flex:1;max-width:200px" onkeydown="if(event.key==='Enter')addCourier()"/>
+            <button onclick="addCourier()" style="padding:6px 12px;border-radius:8px;background:var(--accent);color:#fff;border:none;cursor:pointer;font-size:.8rem">+ Tambah</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -743,7 +753,8 @@ function applySettings(s){
   document.getElementById('debounceSeconds').value=s.debounceSeconds??6;
   document.getElementById('replyDelayMin').value=s.replyDelayMin??10;
   document.getElementById('replyDelayMax').value=s.replyDelayMax??15;
-  
+  loadCourierPriority(s.courierPriority || ['J&T','iDexpress','JNE','SiCepat','Anteraja']);
+
   window.productImagesData = s.productImages || {};
   const oh=s.opHours||{};
   document.getElementById('ohToggle').checked=oh.enabled||false;
@@ -826,6 +837,70 @@ async function onChannelChange(v){
   const sr = await fetch('/api/status').then(r=>r.json()).catch(()=>({status:'disconnected'}));
   setStatus(sr.status);
 }
+// ── F1-D: Kurir Priority Drag-Reorder ────────────────────────────
+let _courierList = [];
+let _dragSrc = null;
+
+function loadCourierPriority(list) {
+  _courierList = Array.isArray(list) ? [...list] : ['J&T','iDexpress','JNE'];
+  renderCourierList();
+}
+
+function renderCourierList() {
+  const el = document.getElementById('courierSortList');
+  if (!el) return;
+  el.innerHTML = '';
+  _courierList.forEach((name, i) => {
+    const row = document.createElement('div');
+    row.draggable = true;
+    row.dataset.idx = i;
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;background:var(--card-bg,#1e2130);border:1px solid var(--border);border-radius:8px;padding:7px 10px;cursor:grab;user-select:none;font-size:.82rem;transition:opacity .15s';
+    row.innerHTML = `<span style="color:var(--muted);font-size:.9rem">☰</span>
+      <span style="flex:1;font-weight:500">${i+1}. ${name}</span>
+      <button onclick="removeCourier(${i})" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.85rem;padding:2px 4px" title="Hapus">✕</button>`;
+    row.addEventListener('dragstart', e => { _dragSrc = i; row.style.opacity = '.4'; });
+    row.addEventListener('dragend',   e => { row.style.opacity = '1'; });
+    row.addEventListener('dragover',  e => { e.preventDefault(); });
+    row.addEventListener('drop',      e => {
+      e.preventDefault();
+      if (_dragSrc === null || _dragSrc === i) return;
+      const moved = _courierList.splice(_dragSrc, 1)[0];
+      _courierList.splice(i, 0, moved);
+      _dragSrc = null;
+      renderCourierList();
+      saveCourierPriority();
+    });
+    el.appendChild(row);
+  });
+}
+
+function removeCourier(idx) {
+  _courierList.splice(idx, 1);
+  renderCourierList();
+  saveCourierPriority();
+}
+
+function addCourier() {
+  const inp = document.getElementById('newCourierInput');
+  const name = (inp?.value || '').trim();
+  if (!name) return;
+  if (!_courierList.includes(name)) {
+    _courierList.push(name);
+    renderCourierList();
+    saveCourierPriority();
+  }
+  if (inp) inp.value = '';
+}
+
+async function saveCourierPriority() {
+  await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ courierPriority: _courierList }),
+  });
+}
+// ─────────────────────────────────────────────────────────────────
+
 async function patch(k,v){await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({[k]:v})});}
 
 async function saveSettings(){
@@ -1033,6 +1108,11 @@ function renderOrders(){
     if(o.status === 'retur') { badgeClass = 'badge-retur'; badgeText = 'RETUR'; }
     if(o.status === 'batal') { badgeClass = 'badge-batal'; badgeText = 'BATAL'; }
 
+    // F3-D3: Cold lead badge & payment method badge
+    const coldBadge = o.cold_lead ? `<span style="display:inline-block;margin-left:5px;font-size:.65rem;background:#4b2033;color:#f9a8d4;padding:1px 5px;border-radius:4px">❄️ Cold</span>` : '';
+    const payBadge = o.payment_method
+      ? `<span style="display:inline-block;margin-top:3px;font-size:.65rem;background:${o.payment_method==='Transfer'?'#1a3a2a':'#2a1a10'};color:${o.payment_method==='Transfer'?'#6ee7b7':'#fbbf24'};padding:1px 5px;border-radius:4px">${o.payment_method==='Transfer'?'💳 Transfer':'📦 COD'}</span>` : '';
+
     return `
     <tr>
       <td>
@@ -1040,8 +1120,9 @@ function renderOrders(){
         <div style="font-size:0.7rem;color:var(--muted)">${ft(o.timestamp)}</div>
       </td>
       <td>
-        <div style="font-weight:600;margin-bottom:4px">${x(o.nama)}</div>
+        <div style="font-weight:600;margin-bottom:2px">${x(o.nama)}${coldBadge}</div>
         <div style="font-size:0.75rem;color:var(--muted)">${o.hp}</div>
+        ${payBadge}
       </td>
       <td><div style="font-size:0.8rem;font-weight:500">${x(o.produk)}</div></td>
       <td><div style="font-size:0.75rem;line-height:1.5;max-width:250px">${x(o.alamat)}</div></td>

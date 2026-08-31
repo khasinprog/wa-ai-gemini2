@@ -4,7 +4,12 @@
   "description": "WhatsApp AI Auto-Reply Assistant with PostgreSQL",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "jest --coverage",
+    "test:unit": "jest tests/unit --coverage",
+    "test:integration": "jest tests/integration --coverage",
+    "test:qa": "node tests/qa/qa-test-runner.js",
+    "test:watch": "jest --watch"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -13,10 +18,15 @@
     "cors": "2.8.5",
     "dotenv": "^16.4.5",
     "express": "4.18.2",
+    "grammy": "^1.46.0",
     "multer": "1.4.5-lts.1",
     "node-fetch": "3.3.2",
     "open-graph-scraper": "6.3.3",
     "pg": "^8.11.3",
     "socket.io": "4.7.5"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^6.3.4"
   }
 }
