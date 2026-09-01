@@ -94,6 +94,7 @@ const SET_FILE = path.join(DATA_DIR, 'settings.json');
 const ORDER_FILE = path.join(DATA_DIR, 'orders.json');
 const ESC_FILE = path.join(DATA_DIR, 'escalations.json'); // pertanyaan yang di-escalate ke admin (belum terjawab)
 const IMAGES_DIR = path.join(DATA_DIR, 'images');
+const AUDIO_DIR = path.join(DATA_DIR, 'audio');
 
 // ── F1: Konfigurasi Pembayaran ────────────────────────────────────
 const PAYMENT = {
@@ -111,6 +112,7 @@ const DEFAULT_COURIER_PRIORITY = (process.env.COURIER_PRIORITY || 'J&T,iDexpress
 
 
 app.use('/images', express.static(IMAGES_DIR));
+app.use('/audio', express.static(AUDIO_DIR));
 
 // P2-C: Mount router ongkir — endpoint proxy ke Mengantar API
 // Dipasang SEBELUM auth middleware agar bisa diakses internal jika perlu
@@ -193,6 +195,20 @@ app.use('/api', (req, res, next) => {
 const pendingBuffers = new Map();
 const userLocks = new Map(); // Menyimpan antrean promise per pengirim
 const activeProcessing = new Map(); // from -> { controller, timeoutId, resolveDelay }
+const productFocus = new Map(); // from → nama produk fokus saat ini (misal: "Baby Walking Assistant")
+
+// Deteksi produk mana yang sedang ditanyakan customer dari teks pesan
+function detectProductFocus(message) {
+  const blocks = parseProductBlocks(settings.knowledgeBase);
+  if (!blocks.length) return null;
+  const lowerMsg = message.toLowerCase();
+  for (const b of blocks) {
+    if (!b.name) continue;
+    const words = b.name.toLowerCase().split(/\s+/).filter(w => w.length >= 3);
+    if (words.some(w => lowerMsg.includes(w))) return b.name;
+  }
+  return null;
+}
 
 // Tracking gambar produk yang sudah dikirim otomatis ke tiap nomor customer,
 // supaya tidak dikirim berkali-kali dalam 1 percakapan (in-memory saja —
@@ -246,7 +262,7 @@ function isWamidProcessed(id) {
   return false;
 }
 
-[DATA_DIR, IMAGES_DIR].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
+[DATA_DIR, IMAGES_DIR, AUDIO_DIR].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
 
 const DEF = {
   autoReply: true,
@@ -570,6 +586,18 @@ async function downloadAndSaveCustomerMedia(mediaId, wamid, mimetype) {
         [mediaUrlPath, wamid]
       );
       console.log(`🖼️ [P2-A] Gambar customer disimpan: ${filename}`);
+      // Update in-memory messages agar media_url tersimpan di messages.json
+      const inMemMsg = messages.find(m => m.wamid === wamid || m.waba_message_id === wamid);
+      if (inMemMsg) {
+        inMemMsg.mediaUrl = mediaUrlPath;
+        inMemMsg.media_url = mediaUrlPath;
+        inMemMsg.messageType = 'image';
+        inMemMsg.message_type = 'image';
+        save(MSG_FILE, messages);
+        console.log(`✅ [P2-A] In-memory updated & saved for wamid: ${wamid}`);
+      } else {
+        console.warn(`❌ [P2-A] Message NOT found in memory for wamid: ${wamid} (messages count: ${messages.length})`);
+      }
       // Emit ke dashboard agar gambar tampil tanpa perlu reload
       io.emit('message_media_updated', { wamid, mediaUrl: mediaUrlPath });
     } catch(dbErr) {
@@ -577,6 +605,62 @@ async function downloadAndSaveCustomerMedia(mediaId, wamid, mimetype) {
     }
   } catch (e) {
     console.warn(`⚠️ [P2-A] Gagal download gambar customer (mediaId=${mediaId}):`, e.message);
+    return null;
+  }
+}
+// ──────────────────────────────────────────────────────────────────
+
+// ── P2-A2: Download pesan suara dari customer via Graph API ───────
+async function downloadAndSaveCustomerAudio(mediaId, wamid, mimetype) {
+  if (!waConfigured) return null;
+  try {
+    const infoRes = await fetch(
+      `https://graph.facebook.com/${GRAPH_API_VERSION}/${mediaId}`,
+      { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } }
+    );
+    if (!infoRes.ok) throw new Error(`Graph API error ${infoRes.status}`);
+    const { url } = await infoRes.json();
+    if (!url) throw new Error('URL audio tidak ditemukan');
+
+    const audioRes = await fetch(url, {
+      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!audioRes.ok) throw new Error(`Download gagal: HTTP ${audioRes.status}`);
+    const buffer = Buffer.from(await audioRes.arrayBuffer());
+
+    const ext = (mimetype || '').includes('mp4') ? 'mp4' : 'ogg';
+    const safeName = (wamid || Date.now().toString()).replace(/[^a-z0-9_-]/gi, '_');
+    const filename = `customer_${safeName}.${ext}`;
+    const savePath = path.join(AUDIO_DIR, filename);
+    fs.writeFileSync(savePath, buffer);
+
+    const mediaUrlPath = `/audio/${filename}`;
+    try {
+      await db.pool.query(
+        'UPDATE messages SET media_url = $1, message_type = $2 WHERE waba_message_id = $3',
+        [mediaUrlPath, 'audio', wamid]
+      );
+      console.log(`🎙️ [P2-A2] Audio customer disimpan: ${filename}`);
+      const inMemMsg = messages.find(m => m.wamid === wamid || m.waba_message_id === wamid);
+      if (inMemMsg) {
+        inMemMsg.mediaUrl = mediaUrlPath;
+        inMemMsg.media_url = mediaUrlPath;
+        inMemMsg.messageType = 'audio';
+        inMemMsg.message_type = 'audio';
+        inMemMsg.mediaMimeType = mimetype || 'audio/ogg';
+        inMemMsg.media_mime_type = mimetype || 'audio/ogg';
+        save(MSG_FILE, messages);
+        console.log(`✅ [P2-A2] In-memory updated & saved for wamid: ${wamid}`);
+      } else {
+        console.warn(`❌ [P2-A2] Message NOT found in memory for wamid: ${wamid}`);
+      }
+      io.emit('message_media_updated', { wamid, mediaUrl: mediaUrlPath, messageType: 'audio' });
+    } catch(dbErr) {
+      console.warn('[P2-A2] Gagal update audio di DB:', dbErr.message);
+    }
+  } catch (e) {
+    console.warn(`⚠️ [P2-A2] Gagal download audio customer (mediaId=${mediaId}):`, e.message);
     return null;
   }
 }
@@ -757,17 +841,27 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
     parts.push(relevantKB.trim());
     parts.push('');
   }
+  // Product focus: kunci AI ke produk yang sedang dibahas
+  const focus = from ? productFocus.get(from) : null;
+  if (focus) {
+    parts.push(`=== PRODUK FOKUS SAAT INI: ${focus} ===`);
+    parts.push(`Customer sedang membahas "${focus}". Fokus HANYA pada produk ini. JANGAN campur informasi produk lain dari riwayat chat. Jika customer tanya produk lain, barulah pindah fokus ke produk baru tersebut.`);
+    parts.push('');
+  }
   if (settings.followUp?.trim()) {
     parts.push('=== PROSEDUR MENJAWAB (WAJIB DIIKUTI, BUKAN SEKADAR REFERENSI) ===');
     parts.push(settings.followUp.trim());
     parts.push('');
   }
   parts.push('=== ATURAN MENJAWAB ===');
+  parts.push('- FOKUS pada produk yang sedang ditanyakan customer SAAT INI. Jangan campur informasi produk lain dari riwayat chat sebelumnya. Contoh: kalau customer tanya "pasta dempul", jawab HANYA tentang pasta dempul — jangan membahas baby walking assistant');
   parts.push('- Balas secara natural seperti manusia, bukan robot');
   parts.push('- Gunakan bahasa percakapan sehari-hari yang hangat, gaya tetap profesional (bukan lebay/berlebihan)');
   parts.push('- JANGAN gunakan tanda petik di awal atau akhir pesan');
+  parts.push('- Jika menerima pesan suara (audio), DENGARKAN isi audionya dan balas berdasarkan konten suara pelanggan. Jangan mengabaikan audio');
   parts.push('- Kamu mengaku sebagai "admin"/"kami" toko — JANGAN pakai nama persona apapun, dan JANGAN sebut bahwa kamu AI kecuali ditanya langsung');
   parts.push('- Emoji dipakai JARANG saja (boleh sesekali, jangan tiap kalimat) — jangan berlebihan');
+  parts.push('- Pisahkan paragraf dengan baris baru (enter) agar mudah dibaca. Contoh: sapaan di baris pertama, informasi produk di baris berikutnya, lalu CTA/pertanyaan di baris terakhir. Jangan gabung semua jadi 1 blok teks panjang');
   parts.push('');
   parts.push('=== ATURAN NEGO HARGA & SITUASI SULIT ===');
   parts.push('- Kalau pelanggan minta nego/diskon harga: boleh kasih potongan MAKSIMAL Rp10.000 dari harga normal, putuskan sendiri tanpa perlu tanya admin. Kalau minta lebih dari itu, tetap tolak sopan dan pertahankan harga setelah potongan Rp10.000 tersebut');
@@ -952,7 +1046,7 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Panggil Gemini REST API langsung dengan key tertentu
-async function callGeminiDirect(key, keySlot, message, name, history, signal, from, imagePath) {
+async function callGeminiDirect(key, keySlot, message, name, history, signal, from, imagePath, audioPath) {
   const model = settings.modelName || 'gemini-3.1-flash-lite';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
@@ -980,7 +1074,19 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal, fr
       console.warn('[P2-B] Gagal baca gambar untuk Gemini:', e.message);
     }
   }
-  userParts.push({ text: message || '[customer mengirim gambar tanpa teks]' });
+  // P2-B2: Sertakan audio pesan suara ke Gemini (multimodal audio input)
+  if (audioPath && fs.existsSync(audioPath)) {
+    try {
+      const audioBuffer = fs.readFileSync(audioPath);
+      const ext = path.extname(audioPath).toLowerCase().replace('.', '');
+      const audioMime = ext === 'mp4' ? 'audio/mp4' : 'audio/ogg';
+      userParts.push({ inline_data: { mime_type: audioMime, data: audioBuffer.toString('base64') } });
+      console.log(`🎙️ [P2-B2] Audio disertakan ke Gemini: ${path.basename(audioPath)} (${Math.round(audioBuffer.length/1024)}KB)`);
+    } catch (e) {
+      console.warn('[P2-B2] Gagal baca audio untuk Gemini:', e.message);
+    }
+  }
+  userParts.push({ text: message || '[customer mengirim pesan suara]' });
   contents.push({ role: 'user', parts: userParts });
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -1038,6 +1144,11 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal, fr
         }
       } catch(e) {}
       return { ok: false, status429: true, quotaId, retryDelaySec, error: msg };
+    }
+
+    // 503 "high demand" → transient overload, bisa dicoba lagi dengan key lain
+    if (res.status === 503) {
+      return { ok: false, status503: true, error: msg };
     }
 
     return { ok: false, error: msg };
@@ -1348,19 +1459,22 @@ async function handleAdminEscalationAnswer(adminText) {
 }
 
 // ── Rotasi key REAKTIF: anggap semua key 'ON' sampai terbukti kena 429 ──
-async function aiReply(message, name, history, signal, from, imagePath) {
+async function aiReply(message, name, history, signal, from, imagePath, audioPath) {
   if (getValidKeys().length === 0) {
     console.error('❌ Tidak ada API key yang valid di .env');
     return null;
   }
+
+  const MAX_503_RETRIES = 3;       // maksimal fast-retry untuk 503 transient
+  const RETRY_503_DELAY_MS = 2000; // jeda antar retry 503 (2 detik)
+  let retry503Count = 0;
+  const tried503Keys = new Set();  // track key yang sudah gagal503 di sesi ini
 
   while (true) {
     if (signal?.aborted) return null;
 
     const picked = getAvailableKey();
     if (!picked) {
-      // Semua key sedang WAITING_RPM / OFF_RPD → jangan kirim request sama sekali,
-      // pesan akan dicoba lagi oleh retryFailedMessages.
       console.warn('⏸️ Semua API key sedang kena limit → pesan diqueue untuk retry');
       emitKeyStatuses();
       return null;
@@ -1370,7 +1484,7 @@ async function aiReply(message, name, history, signal, from, imagePath) {
     emitKeyStatuses();
     console.log(`🔑 Mencoba Key ${picked.slot + 1}...`);
 
-    const result = await callGeminiDirect(picked.key, picked.slot, message, name, history, signal, from, imagePath);
+    const result = await callGeminiDirect(picked.key, picked.slot, message, name, history, signal, from, imagePath, audioPath);
 
     if (result.ok) {
       emitKeyStatuses();
@@ -1386,9 +1500,45 @@ async function aiReply(message, name, history, signal, from, imagePath) {
       continue; // otomatis coba key lain untuk pesan yang sama
     }
 
-    // Error selain 429 → lempar seperti biasa, jangan diperlakukan sebagai rate limit
-    console.error(`❌ Key ${picked.slot + 1} gagal (bukan rate limit): ${result.error?.slice(0, 200)}`);
-    throw new Error(result.error || 'Gagal memanggil Gemini API');
+    // 503 "high demand" → transient overload, coba key lain dengan jeda singkat
+    if (result.status503) {
+      retry503Count++;
+      tried503Keys.add(picked.pos);
+
+      // Jika sudah coba semua key atau max retries tercapai → fallback ke retry queue
+      const totalKeys = getValidKeys().length;
+      if (retry503Count >= MAX_503_RETRIES || tried503Keys.size >= totalKeys) {
+        console.warn(`⚠️ ${retry503Count}x 503 "high demand" setelah coba ${tried503Keys.size} key → pesan diqueue untuk retry`);
+        emitKeyStatuses();
+        return null; // kembali ke retry queue (bukan throw!)
+      }
+
+      // Skip key ini sementara, geser pointer ke key berikutnya
+      lastUsedKeyIndex = (picked.pos + 1) % Math.max(totalKeys, 1);
+      console.warn(`⚠️ Key ${picked.slot + 1} 503 "high demand" → skip, coba key lain (${retry503Count}/${MAX_503_RETRIES})`);
+      emitKeyStatuses();
+
+      // Jeda singkat sebelum retry (transient error, biasanya cepat recover)
+      await new Promise(r => setTimeout(r, RETRY_503_DELAY_MS));
+      continue;
+    }
+
+    // Error selain 429/503 → coba key lain dulu (transient error), jangan throw
+    retry503Count++;
+    tried503Keys.add(picked.pos);
+    const totalKeys = getValidKeys().length;
+
+    if (retry503Count >= MAX_503_RETRIES || tried503Keys.size >= totalKeys) {
+      console.error(`❌ ${retry503Count}x error setelah coba ${tried503Keys.size} key: ${result.error?.slice(0, 150)} → pesan diqueue untuk retry`);
+      emitKeyStatuses();
+      return null; // ke retry queue daripada throw
+    }
+
+    lastUsedKeyIndex = (picked.pos + 1) % Math.max(totalKeys, 1);
+    console.warn(`⚠️ Key ${picked.slot + 1} error (${result.error?.slice(0, 80)}) → skip, coba key lain (${retry503Count}/${MAX_503_RETRIES})`);
+    emitKeyStatuses();
+    await new Promise(r => setTimeout(r, RETRY_503_DELAY_MS));
+    continue;
   }
 }
 async function retryFailedMessages() {
@@ -1415,7 +1565,7 @@ async function retryFailedMessages() {
       // BUG FIX: messages disimpan dengan unshift (terbaru di index 0), harus diurutkan
       // dari terlama ke terbaru sebelum dikirim ke Gemini sebagai history percakapan.
       const history = messages
-        .filter(m => m.from === entry.from && m.id !== entry.id && !m.cancelledEntry)
+        .filter(m => m.from === entry.from && m.id !== entry.id && !m.cancelledEntry && m.aiReply)
         .sort((a, b) => a.id - b.id)
         .slice(-8);
       // Tambah hitungan retry
@@ -1522,7 +1672,7 @@ function getReplyDelayMs(text) {
 
 // Proses satu "giliran" pelanggan (bisa gabungan beberapa bubble yang
 // dikirim berurutan dalam window debounce) lalu kirim balasan AI.
-async function processCustomerMessage(from, senderName, combinedBody, lastWamid, imagePath) {
+async function processCustomerMessage(from, senderName, combinedBody, lastWamid, imagePath, customerMediaId, customerMediaMime, customerAudioId, customerAudioMime) {
   // PREEMPTION: Batalkan proses AI sebelumnya dari user ini jika masih berjalan
   if (activeProcessing.has(from)) {
     const currentTask = activeProcessing.get(from);
@@ -1550,6 +1700,18 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
   save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
   io.emit('new_message', entry);
 
+  // P2-A (deferred): Update in-memory message dengan media_url
+  // Dipanggil SETELAH message masuk array agar messages.find() berhasil
+  if (customerMediaId && customerMediaMime) {
+    downloadAndSaveCustomerMedia(customerMediaId, lastWamid, customerMediaMime)
+      .catch(e => console.warn('[P2-A] deferred download error:', e.message));
+  }
+  // P2-A2 (deferred): Update in-memory message dengan audio media_url
+  if (customerAudioId && customerAudioMime) {
+    downloadAndSaveCustomerAudio(customerAudioId, lastWamid, customerAudioMime)
+      .catch(e => console.warn('[P2-A2] deferred download error:', e.message));
+  }
+
   // 2. Masukkan proses AI ke dalam antrean (queue) khusus user ini
   const prevTask = userLocks.get(from) || Promise.resolve();
   
@@ -1565,10 +1727,37 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
       // BUG FIX: messages disimpan dengan unshift (terbaru di index 0), harus diurutkan
       // dari terlama ke terbaru, dan skip cancelledEntry agar tidak membingungkan Gemini.
       const history = messages
-        .filter(m => m.from === from && m.id !== entry.id && !m.cancelledEntry)
+        .filter(m => m.from === from && m.id !== entry.id && !m.cancelledEntry && m.aiReply)
         .sort((a, b) => a.id - b.id)
         .slice(-8);
-      let reply = await aiReply(combinedBody, senderName, history, controller.signal, from, imagePath);
+      // P2-B2: Cek apakah audio pesan suara sudah di-download
+      let audioPathForAI = null;
+      if (customerAudioId) {
+        const audioExt = (customerAudioMime || '').includes('mp4') ? 'mp4' : 'ogg';
+        const audioSafeName = (lastWamid || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+        const audioFilename = `customer_${audioSafeName}.${audioExt}`;
+        const audioFullPath = path.join(AUDIO_DIR, audioFilename);
+        if (fs.existsSync(audioFullPath)) {
+          audioPathForAI = audioFullPath;
+          console.log(`🎙️ [P2-B2] Audio ditemukan di disk: ${audioFilename}`);
+        } else {
+          console.log(`🎙️ [P2-B2] Audio belum ada di disk: ${audioFilename}, download dulu...`);
+          try {
+            const audioUrl = await downloadAndSaveCustomerAudio(customerAudioId, lastWamid, customerAudioMime);
+            if (audioUrl) audioPathForAI = path.join(AUDIO_DIR, path.basename(audioUrl));
+          } catch(e) { console.warn('[P2-B2] Gagal download audio untuk Gemini:', e.message); }
+        }
+      }
+      // Update product focus — deteksi apakah customer pindah ke produk berbeda
+      const detectedProduct = detectProductFocus(combinedBody);
+      if (detectedProduct) {
+        const prevFocus = productFocus.get(from);
+        if (prevFocus && prevFocus !== detectedProduct) {
+          console.log(`🔄 [ProductFocus] ${senderName}: ${prevFocus} → ${detectedProduct}`);
+        }
+        productFocus.set(from, detectedProduct);
+      }
+      let reply = await aiReply(combinedBody, senderName, history, controller.signal, from, imagePath, audioPathForAI);
 
 
       if (reply) {
@@ -1604,6 +1793,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
           activeProcessing.delete(from);
           entry.replied = true;
           entry.aiReply = null;
+          entry.cancelledEntry = true;
           entry.awaitingAdmin = true;
           save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
           io.emit('message_updated', entry);
@@ -1708,10 +1898,22 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
         }
         // ────────────────────────────────────────────────────────────────
 
-        const productsToImage = [];
+        const imgMatches = [...cleanReply.matchAll(/\[KIRIM_GAMBAR:(.*?)\]/gi)];
+        let productsToImage = [];
         for (const match of imgMatches) {
           productsToImage.push(match[1].trim());
           cleanReply = cleanReply.replace(match[0], '').trim();
+        }
+
+        // Fallback: jika AI tidak sertakan tag [KIRIM_GAMBAR:...] tapi menyebut nama produk,
+        // kirim gambar otomatis berdasarkan nama produk yang ada di response
+        if (productsToImage.length === 0 && settings.productImages) {
+          const lowerReply = cleanReply.toLowerCase();
+          for (const productName of Object.keys(settings.productImages)) {
+            if (!hasSentProductImage(from, productName) && lowerReply.includes(productName.toLowerCase())) {
+              productsToImage.push(productName);
+            }
+          }
         }
 
         const delayMs = getReplyDelayMs(cleanReply);
@@ -1932,8 +2134,21 @@ app.post('/webhook', (req, res) => {
               continue;
             }
             else if (msg.type === 'audio' || msg.type === 'voice') {
-              // Pesan suara: beri tahu customer bahwa AI tidak bisa mendengar
-              body = '[customer mengirim pesan suara — mohon balas dengan sopan bahwa kamu hanya bisa menerima pesan teks, dan minta customer ketik ulang pertanyaannya]';
+              body = '[Customer mengirim pesan suara. Dengarkan audio yang disertakan dan balas berdasarkan isi suaranya. Jika tidak bisa memahami, minta dengan sopan untuk mengetik ulang.]';
+              // Download audio ke disk untuk ditampilkan di dashboard
+              if (msg.audio?.id && wamid) {
+                const audioMimetype = msg.audio?.mime_type || 'audio/ogg';
+                downloadAndSaveCustomerAudio(msg.audio.id, wamid, audioMimetype)
+                  .catch(e => console.warn('[P2-A2] audio download error:', e.message));
+                // Simpan metadata audio di buffer agar bisa dikirim ke Gemini
+                if (!pendingBuffers.has(from)) {
+                  pendingBuffers.set(from, { texts: [], lastWamid: wamid, senderName: contactName || from });
+                }
+                const audioBuf = pendingBuffers.get(from);
+                audioBuf.audioId = msg.audio.id;
+                audioBuf.audioMime = audioMimetype;
+                audioBuf.audioWamid = wamid;
+              }
             }
             else if (msg.type === 'document') {
               // File/dokumen: beri tahu customer bahwa AI tidak memproses file
@@ -2026,7 +2241,7 @@ app.post('/webhook', (req, res) => {
                 }
               }
 
-              processCustomerMessage(from, buffer.senderName, combinedBody, buffer.lastWamid, imagePathForAI)
+              processCustomerMessage(from, buffer.senderName, combinedBody, buffer.lastWamid, imagePathForAI, buffer.mediaId, buffer.mediaMime, buffer.audioId, buffer.audioMime)
                 .catch(e => console.error('Msg error:', e.message));
             }, debounceMs);
             pendingBuffers.set(from, buffer);

@@ -206,6 +206,7 @@ input:checked+.slider:before{transform:translateX(18px)}
 .contact-item.new-chat{animation:flashGreen 2s ease-out}
 @keyframes flashGreen{0%{background:#d1fae5}100%{background:transparent}}
 .bubble-img{max-width:220px;max-height:200px;border-radius:8px;display:block;cursor:pointer;margin-bottom:4px}
+.bubble-audio{margin-bottom:4px}.bubble-audio audio{height:36px;max-width:220px}
 .link-preview{background:#f0f4f8;border-left:3px solid #25D366;border-radius:6px;padding:8px 10px;margin-top:6px;max-width:100%;cursor:pointer;text-decoration:none;display:block}
 .link-preview:hover{background:#e2e8f0}
 .lp-thumb{width:100%;max-height:120px;object-fit:cover;border-radius:4px;margin-bottom:6px;display:block}
@@ -1208,14 +1209,14 @@ async function initApp() {
     if(activeContact===jid) renderChat(jid);
   });
   // P2-A: Update gambar customer setelah download selesai (fire-and-forget di server)
-  socket.on('message_media_updated', ({ wamid, mediaUrl }) => {
+  socket.on('message_media_updated', ({ wamid, mediaUrl, messageType }) => {
     if (!wamid || !mediaUrl) return;
     const msg = allMessages.find(m => m.wamid === wamid || m.waba_message_id === wamid);
     if (!msg) return;
     msg.mediaUrl = mediaUrl;
     msg.media_url = mediaUrl;
-    msg.messageType = 'image';
-    msg.message_type = 'image';
+    msg.messageType = messageType || 'image';
+    msg.message_type = messageType || 'image';
     processContacts();
     if (activeContact === msg.from) renderChat(msg.from);
   });
@@ -1360,10 +1361,15 @@ function selectContact(jid){
 }
 
 function renderMsgBubble(m) {
-  // Render isi bubble: teks, gambar, link preview
+  // Render isi bubble: teks, gambar, audio, link preview
   let inner = '';
-  if (m.mediaUrl && (m.messageType === 'image' || (m.mediaMimeType||'').startsWith('image/'))) {
-    inner += `<img class="bubble-img" src="${x(m.mediaUrl)}" alt="gambar" onclick="window.open('${x(m.mediaUrl)}','_blank')"/>`;
+  const mediaUrl = m.mediaUrl || m.media_url;
+  const msgType = m.messageType || m.message_type || '';
+  const mimeType = m.mediaMimeType || m.media_mime_type || '';
+  if (mediaUrl && (msgType === 'image' || mimeType.startsWith('image/'))) {
+    inner += `<img class="bubble-img" src="${x(mediaUrl)}" alt="gambar" onclick="window.open('${x(mediaUrl)}','_blank')"/>`;
+  } else if (mediaUrl && (msgType === 'audio' || mimeType.startsWith('audio/'))) {
+    inner += `<div class="bubble-audio"><audio controls preload="metadata" src="${x(mediaUrl)}"></audio></div>`;
   }
   if (m.body) inner += `<span>${x(m.body)}</span>`;
   if (m.linkUrl) {
