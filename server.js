@@ -195,9 +195,29 @@ app.use('/api', (req, res, next) => {
 const pendingBuffers = new Map();
 const userLocks = new Map(); // Menyimpan antrean promise per pengirim
 const activeProcessing = new Map(); // from -> { controller, timeoutId, resolveDelay }
-const productFocus = new Map(); // from → nama produk fokus saat ini (misal: "Baby Walking Assistant")
 
-// Deteksi produk mana yang sedang ditanyakan customer dari teks pesan
+// ═══════════════════════════════════════════════════════════════════
+// ORDER STATE: Track status order per user (ganti productFocus lama)
+// ═══════════════════════════════════════════════════════════════════
+const orderStates = new Map();
+// from → {
+//   product, stage, color, name, address, phone, lastUpdate
+// }
+
+const ORDER_STAGES = ['idle', 'product_inquired', 'color_selected', 'name_given', 'address_given', 'phone_given', 'confirmed'];
+
+function createOrderState(product) {
+  return {
+    product,
+    stage: 'product_inquired',
+    color: null,
+    name: null,
+    address: null,
+    phone: null,
+    lastUpdate: Date.now(),
+  };
+}
+
 function detectProductFocus(message) {
   const blocks = parseProductBlocks(settings.knowledgeBase);
   if (!blocks.length) return null;
@@ -208,6 +228,190 @@ function detectProductFocus(message) {
     if (words.some(w => lowerMsg.includes(w))) return b.name;
   }
   return null;
+}
+
+function detectOrderData(message, currentStage) {
+  const lower = message.toLowerCase().trim();
+  const data = {};
+
+  // Deteksi warna
+  const colorMap = {
+    'biru muda': 'Biru Muda', 'biru': 'Biru Muda',
+    'pink muda': 'Pink Muda', 'pink': 'Pink Muda',
+    'abu': 'Abu-abu', 'abu-abu': 'Abu-abu',
+    'navy': 'Navy', 'red': 'Red', 'merah': 'Red',
+  };
+  for (const [key, val] of Object.entries(colorMap)) {
+    if (lower === key || lower.includes(key)) {
+      data.color = val;
+      break;
+    }
+  }
+
+  // Deteksi nama (jika stage menunggu nama)
+  if (currentStage === 'color_selected' || currentStage === 'product_inquired') {
+    const words = message.trim().split(/\s+/);
+    if (words.length <= 3 && !lower.includes('?') && !data.color && !lower.includes('jl')) {
+      data.name = message.trim();
+    }
+  }
+
+  // Deteksi alamat
+  if (lower.includes('jl') || lower.includes('jalan') || lower.includes('gang') || lower.includes('rt') || lower.includes('rw')) {
+    data.address = message.trim();
+  }
+
+  // Deteksi HP
+  const phoneMatch = message.replace(/\s/g, '').match(/(08\d{8,12})/);
+  if (phoneMatch) {
+    data.phone = phoneMatch[1];
+  }
+
+  return data;
+}
+
+function updateOrderState(from, message) {
+  let state = orderStates.get(from);
+  const detectedProduct = detectProductFocus(message);
+
+  if (detectedProduct) {
+    if (!state || state.product !== detectedProduct) {
+      state = createOrderState(detectedProduct);
+      orderStates.set(from, state);
+    }
+  }
+
+  if (!state || state.stage === 'idle') return state;
+
+  const data = detectOrderData(message, state.stage);
+  if (data.color && !state.color) { state.color = data.color; state.stage = 'color_selected'; }
+  if (data.name && !state.name) { state.name = data.name; state.stage = 'name_given'; }
+  if (data.address && !state.address) { state.address = data.address; state.stage = 'address_given'; }
+  if (data.phone && !state.phone) { state.phone = data.phone; state.stage = 'phone_given'; }
+
+  if (state.color && state.name && state.address && state.phone) {
+    state.stage = 'confirmed';
+  }
+
+  state.lastUpdate = Date.now();
+  orderStates.set(from, state);
+  return state;
+}
+
+function getNextOrderField(state) {
+  const flow = ['color', 'name', 'address', 'phone'];
+  const labels = { color: 'warna', name: 'nama lengkap', address: 'alamat lengkap', phone: 'nomor HP' };
+  for (const field of flow) {
+    if (!state[field]) return labels[field];
+  }
+  return null;
+}
+
+function getOrderSummary(from) {
+  const state = orderStates.get(from);
+  if (!state || state.stage === 'idle') return null;
+  const parts = [`Produk: ${state.product}`];
+  if (state.color) parts.push(`Warna: ${state.color}`);
+  if (state.name) parts.push(`Nama: ${state.name}`);
+  if (state.address) parts.push(`Alamat: ${state.address}`);
+  if (state.phone) parts.push(`HP: ${state.phone}`);
+  parts.push(`Status: ${state.stage}`);
+  return parts.join(' | ');
+}
+
+// Cleanup order state setelah 30 menit idle
+setInterval(() => {
+  const now = Date.now();
+  for (const [from, state] of orderStates) {
+    if (now - state.lastUpdate > 30 * 60 * 1000) {
+      orderStates.delete(from);
+    }
+  }
+}, 5 * 60 * 1000);
+
+// ═══════════════════════════════════════════════════════════════════
+// TESTING LOG: Log semua data yang dikirim ke Gemini
+// ═══════════════════════════════════════════════════════════════════
+function logGeminiRequest(direction, data) {
+  if (direction === 'request') {
+    const { user, phone, systemPrompt, history, message, tokenEstimate } = data;
+    console.log(`\n${'═'.repeat(60)}`);
+    console.log(`📤 GEMINI REQUEST [${new Date().toLocaleTimeString('id-ID')}] User: ${user} (${phone})`);
+    console.log(`${'═'.repeat(60)}`);
+    console.log(`\n--- SYSTEM PROMPT (${tokenEstimate?.system || '?'} tokens) ---`);
+    console.log(systemPrompt?.slice(0, 500));
+    if (systemPrompt?.length > 500) console.log('... (truncated)');
+    console.log(`\n--- HISTORY (${history?.length || 0} entries) ---`);
+    (history || []).forEach((h, i) => {
+      if (h._summary) {
+        console.log(`[summary] ${h.summary}`);
+      } else {
+        console.log(`[${i+1}] User: "${(h.body || '').slice(0, 80)}"`);
+        console.log(`    AI: "${(h.aiReply || '').slice(0, 80)}"`);
+      }
+    });
+    console.log(`\n--- CURRENT MESSAGE ---`);
+    console.log(`"${message}"`);
+    console.log(`\n--- TOKEN ESTIMATE ---`);
+    console.log(`System: ${tokenEstimate?.system || '?'} | History: ${tokenEstimate?.history || '?'} | Current: ${tokenEstimate?.current || '?'}`);
+  }
+
+  if (direction === 'response') {
+    const { ok, text, error, duration, outputTokens } = data;
+    console.log(`\n${'═'.repeat(60)}`);
+    console.log(`📥 GEMINI RESPONSE [${new Date().toLocaleTimeString('id-ID')}] (${duration}ms)`);
+    console.log(`${'═'.repeat(60)}`);
+    if (ok) {
+      console.log(`"${text?.slice(0, 200)}"`);
+      console.log(`Output tokens: ${outputTokens}`);
+    } else {
+      console.log(`❌ ERROR: ${error}`);
+    }
+    console.log(`${'═'.repeat(60)}\n`);
+  }
+}
+
+function estimateTokens(text) {
+  if (!text) return 0;
+  return Math.ceil(text.length / 4);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// HISTORY BUILDING: Dynamic length + summary untuk percakapan panjang
+// ═══════════════════════════════════════════════════════════════════
+function buildHistory(from, currentEntryId, maxEntries = 20) {
+  const relevantMessages = messages
+    .filter(m => m.from === from && m.id !== currentEntryId && !m.cancelledEntry && m.aiReply)
+    .sort((a, b) => a.id - b.id);
+
+  if (relevantMessages.length <= maxEntries) {
+    return relevantMessages;
+  }
+
+  const recent = relevantMessages.slice(-maxEntries);
+  const old = relevantMessages.slice(0, -maxEntries);
+  const summary = buildConversationSummary(old);
+
+  return [{ _summary: true, summary }, ...recent];
+}
+
+function buildConversationSummary(oldEntries) {
+  const products = new Set();
+  const discussed = [];
+  for (const entry of oldEntries) {
+    const userText = (entry.body || '').toLowerCase();
+    if (userText.includes('baby walking')) products.add('Baby Walking Assistant');
+    if (userText.includes('pasta dempul')) products.add('Pasta Dempul');
+    if (userText.includes('harga') || userText.includes('berapa')) discussed.push('harga');
+    if (userText.includes('warna') || userText.includes('biru') || userText.includes('pink')) discussed.push('warna');
+    if (userText.includes('order') || userText.includes('mau')) discussed.push('order');
+    if (userText.includes('alamat') || userText.includes('jalan') || userText.includes('jl')) discussed.push('alamat');
+    if (userText.includes('ongkir') || userText.includes('kirim')) discussed.push('ongkir');
+  }
+  const parts = [];
+  if (products.size) parts.push(`Produk dibahas: ${[...products].join(', ')}`);
+  if (discussed.length) parts.push(`Topik: ${[...new Set(discussed)].join(', ')}`);
+  return parts.join('. ') || 'Percakapan sebelumnya.';
 }
 
 // Tracking gambar produk yang sudah dikirim otomatis ke tiap nomor customer,
@@ -841,11 +1045,28 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
     parts.push(relevantKB.trim());
     parts.push('');
   }
-  // Product focus: kunci AI ke produk yang sedang dibahas
-  const focus = from ? productFocus.get(from) : null;
+  // Product focus + Order State: kunci AI ke produk & stage order
+  const orderState = from ? orderStates.get(from) : null;
+  const focus = orderState?.product || null;
   if (focus) {
     parts.push(`=== PRODUK FOKUS SAAT INI: ${focus} ===`);
     parts.push(`Customer sedang membahas "${focus}". Fokus HANYA pada produk ini. JANGAN campur informasi produk lain dari riwayat chat. Jika customer tanya produk lain, barulah pindah fokus ke produk baru tersebut.`);
+    parts.push('');
+  }
+
+  // Order State: beri tahu AI stage order & data yang sudah terkumpul
+  if (orderState && orderState.stage !== 'idle') {
+    parts.push('=== STATUS ORDER SAAT INI ===');
+    parts.push(`Stage: ${orderState.stage}`);
+    if (orderState.color) parts.push(`Warna: ${orderState.color}`);
+    if (orderState.name) parts.push(`Nama: ${orderState.name}`);
+    if (orderState.address) parts.push(`Alamat: ${orderState.address}`);
+    if (orderState.phone) parts.push(`HP: ${orderState.phone}`);
+    const nextField = getNextOrderField(orderState);
+    if (nextField) {
+      parts.push(`→ Menunggu: ${nextField}`);
+      parts.push(`Jika customer memberikan ${nextField}, langsung catat dan konfirmasi.`);
+    }
     parts.push('');
   }
   if (settings.followUp?.trim()) {
@@ -1047,12 +1268,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Panggil Gemini REST API langsung dengan key tertentu
 async function callGeminiDirect(key, keySlot, message, name, history, signal, from, imagePath, audioPath) {
+  const startTime = Date.now();
   const model = settings.modelName || 'gemini-3.1-flash-lite';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
   const contents = [];
   if (history?.length) {
-    for (const h of history.slice(-8)) {
+    for (const h of history) {
+      // Summary entries: append ke system prompt, bukan ke contents
+      if (h._summary) continue;
       contents.push({ role: 'user', parts: [{ text: h.body }] });
       // B4: Jangan inject model reply dari entry yang di-cancel (cancelledEntry)
       // supaya string internal tidak bocor ke konteks Gemini
@@ -1093,11 +1317,33 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal, fr
   const relevantKB = getRelevantKnowledge(message, history);
   const isFirstMessage = !history?.length;
 
+  let systemPromptText = buildSystemPrompt(name, relevantKB, isFirstMessage, from);
+
+  // Tambah summary dari percakapan lama ke system prompt
+  const summaryEntry = history?.find(h => h._summary);
+  if (summaryEntry) {
+    systemPromptText += '\n\n=== RINGKASAN PERCAKAPAN SEBELUMNYA ===\n' + summaryEntry.summary;
+  }
+
   const body = {
     contents,
-    systemInstruction: { parts: [{ text: buildSystemPrompt(name, relevantKB, isFirstMessage, from) }] },
+    systemInstruction: { parts: [{ text: systemPromptText }] },
     generationConfig: { temperature: settings.temperature ?? 0.7 },
   };
+
+  // Testing log: log semua data yang dikirim ke Gemini
+  logGeminiRequest('request', {
+    user: name,
+    phone: from,
+    systemPrompt: systemPromptText,
+    history: history || [],
+    message,
+    tokenEstimate: {
+      system: estimateTokens(systemPromptText),
+      history: estimateTokens(JSON.stringify(history || [])),
+      current: estimateTokens(message),
+    },
+  });
 
   let res;
   try {
@@ -1159,11 +1405,22 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal, fr
   if (!text.trim()) return { ok: false, error: 'Respons kosong dari Gemini' };
 
   const usage = data.usageMetadata;
+  const duration = Date.now() - startTime;
   if (usage) {
     console.log(`📊 [Token] Key ${keySlot + 1} | Prompt: ${usage.promptTokenCount} | Output: ${usage.candidatesTokenCount}`);
   }
 
-  return { ok: true, text: text.trim().replace(/^["'`]+|["'`]+$/g, '').trim() };
+  const cleanText = text.trim().replace(/^["'`]+|["'`]+$/g, '').trim();
+
+  // Testing log: log response dari Gemini
+  logGeminiRequest('response', {
+    ok: true,
+    text: cleanText,
+    duration,
+    outputTokens: usage?.candidatesTokenCount || 0,
+  });
+
+  return { ok: true, text: cleanText };
 }
 
 function extractOrder(replyText, fromJid) {
@@ -1562,12 +1819,8 @@ async function retryFailedMessages() {
       if (entry.replied) return;
       if (!isOpHour() || !isWhitelisted(entry.from)) return;
 
-      // BUG FIX: messages disimpan dengan unshift (terbaru di index 0), harus diurutkan
-      // dari terlama ke terbaru sebelum dikirim ke Gemini sebagai history percakapan.
-      const history = messages
-        .filter(m => m.from === entry.from && m.id !== entry.id && !m.cancelledEntry && m.aiReply)
-        .sort((a, b) => a.id - b.id)
-        .slice(-8);
+      // History — dynamic length + summary
+      const history = buildHistory(entry.from, entry.id);
       // Tambah hitungan retry
       entry.retryCount = (entry.retryCount || 0) + 1;
 
@@ -1723,13 +1976,8 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
 
       try { await markAsReadWithTyping(lastWamid, true); } catch(e) {}
 
-      // Fetch history here. Pesan sebelumnya yang batal terbalas akan terbaca di sini!
-      // BUG FIX: messages disimpan dengan unshift (terbaru di index 0), harus diurutkan
-      // dari terlama ke terbaru, dan skip cancelledEntry agar tidak membingungkan Gemini.
-      const history = messages
-        .filter(m => m.from === from && m.id !== entry.id && !m.cancelledEntry && m.aiReply)
-        .sort((a, b) => a.id - b.id)
-        .slice(-8);
+      // Fetch history — dynamic length + summary untuk percakapan panjang
+      const history = buildHistory(from, entry.id);
       // P2-B2: Cek apakah audio pesan suara sudah di-download
       let audioPathForAI = null;
       if (customerAudioId) {
@@ -1748,14 +1996,10 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
           } catch(e) { console.warn('[P2-B2] Gagal download audio untuk Gemini:', e.message); }
         }
       }
-      // Update product focus — deteksi apakah customer pindah ke produk berbeda
-      const detectedProduct = detectProductFocus(combinedBody);
-      if (detectedProduct) {
-        const prevFocus = productFocus.get(from);
-        if (prevFocus && prevFocus !== detectedProduct) {
-          console.log(`🔄 [ProductFocus] ${senderName}: ${prevFocus} → ${detectedProduct}`);
-        }
-        productFocus.set(from, detectedProduct);
+      // Update order state — deteksi produk + data order dari pesan customer
+      const orderState = updateOrderState(from, combinedBody);
+      if (orderState) {
+        console.log(`📋 [OrderState] ${senderName}: stage=${orderState.stage}, product=${orderState.product}, color=${orderState.color || '-'}, name=${orderState.name || '-'}`);
       }
       let reply = await aiReply(combinedBody, senderName, history, controller.signal, from, imagePath, audioPathForAI);
 
@@ -2043,6 +2287,85 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
   userLocks.set(from, nextTask);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// MESSAGE BUFFERING: Proses buffer + cek susulan sebelum kirim reply
+// ═══════════════════════════════════════════════════════════════════
+async function processBufferedMessages(from) {
+  const buf = pendingBuffers.get(from);
+  if (!buf || buf.texts.length === 0) return;
+
+  // Tandai sedang proses
+  const controller = new AbortController();
+  activeProcessing.set(from, { controller, timeoutId: null });
+
+  try {
+    while (buf.texts.length > 0) {
+      // Ambil semua pesan yang pending
+      const texts = buf.texts.splice(0);
+      const combinedBody = texts.join('\n');
+      const currentWamid = buf.lastWamid;
+      const currentSenderName = buf.senderName;
+
+      console.log(`🔄 [Buffer] Proses ${texts.length} pesan: "${combinedBody.slice(0, 60)}"`);
+
+      // P2-B: Siapkan gambar jika ada
+      let imagePathForAI = null;
+      if (buf.mediaId) {
+        try {
+          const ext = (buf.mediaMime || '').includes('png') ? 'png' : 'jpg';
+          const safeName = (buf.mediaWamid || Date.now().toString()).replace(/[^a-z0-9_-]/gi, '_');
+          const filename = `customer_${safeName}.${ext}`;
+          const savePath = path.join(IMAGES_DIR, filename);
+          if (fs.existsSync(savePath)) {
+            imagePathForAI = savePath;
+          } else {
+            const mediaUrlPath = await downloadAndSaveCustomerMedia(buf.mediaId, buf.mediaWamid, buf.mediaMime);
+            if (mediaUrlPath) imagePathForAI = path.join(IMAGES_DIR, path.basename(mediaUrlPath));
+          }
+        } catch(imgErr) {
+          console.warn('[Buffer] Gagal siapkan gambar untuk AI:', imgErr.message);
+        }
+      }
+
+      // Siapkan audio jika ada
+      let audioPathForAI = null;
+      if (buf.audioId) {
+        try {
+          const audioExt = (buf.audioMime || '').includes('mp4') ? 'mp4' : 'ogg';
+          const audioSafeName = (buf.audioWamid || currentWamid || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+          const audioFilename = `customer_${audioSafeName}.${audioExt}`;
+          const audioFullPath = path.join(AUDIO_DIR, audioFilename);
+          if (fs.existsSync(audioFullPath)) {
+            audioPathForAI = audioFullPath;
+          } else {
+            const audioUrl = await downloadAndSaveCustomerAudio(buf.audioId, buf.audioWamid || currentWamid, buf.audioMime);
+            if (audioUrl) audioPathForAI = path.join(AUDIO_DIR, path.basename(audioUrl));
+          }
+        } catch(audErr) {
+          console.warn('[Buffer] Gagal siapkan audio untuk AI:', audErr.message);
+        }
+      }
+
+      // Proses ke AI (via processCustomerMessage yang sudah ada)
+      await processCustomerMessage(from, currentSenderName, combinedBody, currentWamid, imagePathForAI, buf.mediaId, buf.mediaMime, buf.audioId, buf.audioMime);
+
+      // ═══════════════════════════════════════════════════════════
+      // CEK SUSULAN: Sebelum lanjut, apakah ada pesan baru masuk?
+      // ═══════════════════════════════════════════════════════════
+      if (buf.texts.length > 0) {
+        console.log(`⚡ [Buffer] Ada ${buf.texts.length} susulan → gabung & proses ulang`);
+        continue; // loop lagi → gabung pesan lama + susulan
+      }
+
+      // Tidak ada susulan → selesai
+      break;
+    }
+  } finally {
+    activeProcessing.delete(from);
+    pendingBuffers.delete(from);
+  }
+}
+
 // ── Webhook WhatsApp Cloud API ─────────────────────────────────────
 
 // 1. Handshake verifikasi — dipanggil Meta sekali waktu setup webhook di App Dashboard
@@ -2196,55 +2519,32 @@ app.post('/webhook', (req, res) => {
               // Tidak ada pending sama sekali — biarkan lanjut diproses sebagai chat biasa
             }
 
-            // ── Buffer & debounce: tunggu beberapa detik untuk menampung bubble
-            // berikutnya dari pengirim yang sama sebelum diproses sebagai satu
-            // pesan gabungan. Ini mencegah customer yang ngetik dalam beberapa
-            // bubble terpisah (misal "Halo mau tanya X" lalu "cek harga") dibalas
-            // dua kali secara terpisah/parsial. ──
+            // ── Buffer & cek susulan: seperti cara kerja manusia ──
+            // Pesan masuk → masuk buffer → proses AI → sebelum kirim, cek ada susulan?
+            // Kalau ada: gabung & proses ulang. Kalau tidak: kirim jawaban.
             const existing = pendingBuffers.get(from);
             if (existing) {
-              clearTimeout(existing.timer);
               existing.texts.push(body);
-              existing.lastWamid = wamid; // pakai wamid terakhir sebagai context reply
-              // Kalau ada gambar di pesan ini, update info gambar di buffer
+              existing.lastWamid = wamid;
               if (msg.type === 'image' && msg.image?.id) {
                 existing.mediaId = msg.image.id;
                 existing.mediaMime = msg.image?.mime_type || 'image/jpeg';
                 existing.mediaWamid = wamid;
               }
-            }
-            const buffer = existing || { texts: [body], lastWamid: wamid, senderName };
-            const debounceMs = Math.max(1, Number(settings.debounceSeconds) || 6) * 1000;
-            buffer.timer = setTimeout(async () => {
-              pendingBuffers.delete(from);
-              const combinedBody = buffer.texts.join('\n');
-
-              // P2-B: Kalau ada gambar di pesan ini, download dulu sebelum AI diproses
-              let imagePathForAI = null;
-              if (buffer.mediaId) {
-                try {
-                  const ext = (buffer.mediaMime || '').includes('png') ? 'png' : 'jpg';
-                  const safeName = (buffer.mediaWamid || Date.now().toString()).replace(/[^a-z0-9_-]/gi, '_');
-                  const filename = `customer_${safeName}.${ext}`;
-                  const savePath = path.join(IMAGES_DIR, filename);
-                  // Cek apakah sudah didownload oleh P2-A (async tadi)
-                  if (fs.existsSync(savePath)) {
-                    imagePathForAI = savePath;
-                    console.log(`🖼️ [P2-B] Gambar sudah ada di disk, langsung pakai: ${filename}`);
-                  } else {
-                    // Belum ada — download sekarang (synchronous dalam debounce callback)
-                    const mediaUrlPath = await downloadAndSaveCustomerMedia(buffer.mediaId, buffer.mediaWamid, buffer.mediaMime);
-                    if (mediaUrlPath) imagePathForAI = path.join(IMAGES_DIR, path.basename(mediaUrlPath));
-                  }
-                } catch(imgErr) {
-                  console.warn('[P2-B] Gagal siapkan gambar untuk AI:', imgErr.message);
-                }
+              if (msg.type === 'audio' && msg.audio?.id) {
+                existing.audioId = msg.audio.id;
+                existing.audioMime = msg.audio?.mime_type || 'audio/ogg';
               }
+              console.log(`📥 [Buffer] ${senderName}: "${body}" (pending: ${existing.texts.length})`);
+            } else {
+              pendingBuffers.set(from, { texts: [body], lastWamid: wamid, senderName });
+              console.log(`📥 [Buffer] ${senderName}: "${body}" (pending: 1)`);
+            }
 
-              processCustomerMessage(from, buffer.senderName, combinedBody, buffer.lastWamid, imagePathForAI, buffer.mediaId, buffer.mediaMime, buffer.audioId, buffer.audioMime)
-                .catch(e => console.error('Msg error:', e.message));
-            }, debounceMs);
-            pendingBuffers.set(from, buffer);
+            // Mulai proses jika belum ada yang proses
+            if (!activeProcessing.has(from)) {
+              processBufferedMessages(from).catch(e => console.error('Buffer error:', e.message));
+            }
 
           } catch(e) { console.error('Msg error:', e.message); }
         }
@@ -2354,7 +2654,7 @@ async function flushMacrodroidBuffer(from) {
   const nextTask = prevTask.then(async () => {
     if (entry.replied) return; // sudah dibalas manual saat antre
 
-    const history = messages.filter(m => m.from === from && m.id !== entry.id).slice(0, 8).reverse();
+    const history = buildHistory(from, entry.id);
     let reply = await aiReply(combinedBody, senderName, history, null, from);
 
     if (!reply) {
