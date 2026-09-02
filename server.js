@@ -197,23 +197,61 @@ const userLocks = new Map(); // Menyimpan antrean promise per pengirim
 const activeProcessing = new Map(); // from -> { controller, timeoutId, resolveDelay }
 
 // ═══════════════════════════════════════════════════════════════════
-// ORDER STATE: Track status order per user (ganti productFocus lama)
+// ORDER STATE: Track status order per user (step-based system)
 // ═══════════════════════════════════════════════════════════════════
-const orderStates = new Map();
-// from → {
-//   product, stage, color, name, address, phone, lastUpdate
-// }
+const ORDER_STATE_FILE = path.join(__dirname, 'orderStates.json');
+const ORDER_STATE_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 2 minggu
 
-const ORDER_STAGES = ['idle', 'product_inquired', 'color_selected', 'name_given', 'address_given', 'phone_given', 'confirmed'];
+const orderStates = new Map();
+
+// ── Persist: simpan ke file saat state berubah ──
+function persistOrderState() {
+  const obj = {};
+  for (const [phone, state] of orderStates) obj[phone] = state;
+  try {
+    fs.writeFileSync(ORDER_STATE_FILE, JSON.stringify(obj, null, 2));
+  } catch (e) {
+    console.error('⚠️  [OrderState] Gagal persist:', e.message);
+  }
+}
+
+// ── Load: muat dari file saat server start, auto-cleanup >14 hari ──
+function loadOrderStates() {
+  try {
+    const data = JSON.parse(fs.readFileSync(ORDER_STATE_FILE, 'utf-8'));
+    const now = Date.now();
+    let loaded = 0, cleaned = 0;
+    for (const [phone, state] of Object.entries(data)) {
+      if (!state.lastUpdate || (now - state.lastUpdate) > ORDER_STATE_TTL_MS) {
+        cleaned++; continue;
+      }
+      orderStates.set(phone, state);
+      loaded++;
+    }
+    console.log(`📦 [OrderState] Loaded ${loaded} state, cleaned ${cleaned} expired`);
+    // Hapus file jika ada yang di-cleanup
+    if (cleaned > 0) persistOrderState();
+  } catch {
+    console.log('📦 [OrderState] File tidak ada, mulai fresh');
+  }
+}
 
 function createOrderState(product) {
   return {
+    step: 1,
     product,
-    stage: 'product_inquired',
     color: null,
-    name: null,
-    address: null,
-    phone: null,
+    namaLengkap: null,
+    namaVerified: false,
+    dusun: null,
+    desa: null,
+    kecamatan: null,
+    kota: null,
+    rtRw: null,
+    patokan: null,
+    alamatLengkap: null,
+    noHp: null,
+    orderConfirmed: false,
     lastUpdate: Date.now(),
   };
 }
@@ -230,12 +268,12 @@ function detectProductFocus(message) {
   return null;
 }
 
-function detectOrderData(message, currentStage) {
+function detectOrderData(message, currentStep) {
   const lower = message.toLowerCase().trim();
   const data = {};
 
-  // ═══ WARNA: Hanya deteksi jika stage memungkinkan ═══
-  if (['product_inquired', 'color_selected'].includes(currentStage)) {
+  // ═══ WARNA: Step 1-2 (product inquiry / follow-up) ═══
+  if ([1, 2].includes(currentStep)) {
     const colorMap = {
       'biru muda': 'Biru Muda', 'biru': 'Biru Muda',
       'pink muda': 'Pink Muda', 'pink': 'Pink Muda',
@@ -250,20 +288,8 @@ function detectOrderData(message, currentStage) {
     }
   }
 
-  // ═══ NAMA: JANGAN auto-detect — biarkan AI handle lewat konversasi ═══
-  // Nama terlalu ambigu untuk di-auto-detect (bisa salah tangkap
-  // alamat/pertanyaan/produk sebagai nama). AI lebih akurat karena
-  // punya konteks pertanyaan sebelumnya.
-
-  // ═══ ALAMAT: Hanya deteksi yang pasti alamat (ada kata kunci jalan) ═══
-  if (['name_given', 'address_given'].includes(currentStage)) {
-    if (lower.includes('jl') || lower.includes('jalan') || lower.includes('gang') || lower.includes('rt') || lower.includes('rw')) {
-      data.address = message.trim();
-    }
-  }
-
-  // ═══ HP: Deteksi nomor telepon ═══
-  if (['address_given', 'phone_given'].includes(currentStage)) {
+  // ═══ HP: Step 3 (collecting data) ═══
+  if (currentStep === 3) {
     const phoneMatch = message.replace(/\s/g, '').match(/(08\d{8,12})/);
     if (phoneMatch) {
       data.phone = phoneMatch[1];
@@ -277,53 +303,116 @@ function updateOrderState(from, message) {
   let state = orderStates.get(from);
   const detectedProduct = detectProductFocus(message);
 
-  if (detectedProduct) {
-    if (!state || state.product !== detectedProduct) {
-      state = createOrderState(detectedProduct);
-      orderStates.set(from, state);
-    }
+  // Product lock: berubah hanya kalau customer tanya produk LAIN
+  if (detectedProduct && (!state || state.product !== detectedProduct)) {
+    state = createOrderState(detectedProduct);
+    orderStates.set(from, state);
+    persistOrderState();
   }
 
-  if (!state || state.stage === 'idle') return state;
+  if (!state) return null;
 
-  const data = detectOrderData(message, state.stage);
+  const data = detectOrderData(message, state.step);
 
   // Hanya auto-detect yang PASTI benar: warna + HP
-  // Nama & alamat: biarkan AI handle lewat konversasi (lebih akurat)
   if (data.color && !state.color) {
     state.color = data.color;
-    state.stage = 'color_selected';
-  } else if (data.phone && !state.phone && ['address_given', 'phone_given'].includes(state.stage)) {
-    state.phone = data.phone;
-    state.stage = 'phone_given';
+  } else if (data.phone && !state.noHp) {
+    state.noHp = data.phone;
+  }
+
+  // Step 3: extract fields dari pesan customer (name, address, RT/RW, patokan)
+  if (state.step === 3) {
+    extractCustomerFields(state, message);
   }
 
   state.lastUpdate = Date.now();
   orderStates.set(from, state);
+  persistOrderState();
   return state;
 }
 
-function getNextOrderField(state) {
-  // Flow: warna → nama → alamat → patokan → HP
-  // Nama & alamat tidak di-auto-detect, jadi selalu "menunggu" di system prompt
-  // kecuali sudah ada (dari AI conversation, bukan auto-detect)
-  if (!state.color) return 'warna';
-  if (!state.name) return 'nama lengkap penerima';
-  if (!state.address) return 'alamat lengkap';
-  if (!state.phone) return 'nomor HP';
-  return null;
+// ═══════════════════════════════════════════════════════════════════
+// EXTRACT CUSTOMER FIELDS: Deteksi input customer di Step 3
+// ═══════════════════════════════════════════════════════════════════
+function extractCustomerFields(state, message) {
+  const lower = message.toLowerCase().trim();
+  const words = message.trim().split(/\s+/);
+
+  // ── NAMA: ≥ 2 kata → langsung catat sebagai nama verified ──
+  if (!state.namaLengkap || !state.namaVerified) {
+    if (words.length >= 2 && !looksLikeAddress(lower) && !looksLikeQuestion(lower)) {
+      state.namaLengkap = message.trim();
+      state.namaVerified = true;
+    } else if (words.length === 1 && !looksLikeAddress(lower) && !looksLikeQuestion(lower)) {
+      // 1 kata → catat tapi belum verified (AI akan verifikasi)
+      if (!state.namaLengkap) {
+        state.namaLengkap = message.trim();
+        state.namaVerified = false;
+      }
+    }
+  }
+
+  // ── ALAMAT: Deteksi dusun, desa, kecamatan, kota dari pesan ──
+  if (!state.desa || !state.kecamatan || !state.kota) {
+    // Pola: "Rukeman, Tamantirto, Kasihan, Bantul"
+    const parts = message.split(/[,\n]+/).map(p => p.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      // Jika ada 2-4 bagian, asumsikan: dusun, desa, kecamatan, kota
+      if (!state.dusun && parts[0] && !/^\d/.test(parts[0])) state.dusun = parts[0];
+      if (!state.desa && parts[1]) state.desa = parts[1];
+      if (!state.kecamatan && parts[2]) state.kecamatan = parts[2];
+      if (!state.kota && parts[3]) state.kota = parts[3];
+      // Jika hanya 2 bagian: desa, kecamatan (kota belum ada)
+      if (parts.length === 2) {
+        if (!state.desa) state.desa = parts[0];
+        if (!state.kecamatan) state.kecamatan = parts[1];
+      }
+    }
+  }
+
+  // ── RT/RW ──
+  if (!state.rtRw) {
+    const rtMatch = message.match(/rt\s*(\d{1,3})\s*\/?\s*rw\s*(\d{1,3})/i);
+    if (rtMatch) {
+      state.rtRw = `RT ${rtMatch[1]}/RW ${rtMatch[2]}`;
+    }
+  }
+
+  // ── PATOKAN: baris yang bukan nama/bukan alamat/bukan HP ──
+  if (!state.patokan) {
+    const lowerClean = lower.replace(/rt\s*\d+\s*\/?\s*rw\s*\d+/gi, '').trim();
+    if (
+      lowerClean.length > 3 &&
+      !/^\d{8,13}$/.test(lowerClean.replace(/\s/g, '')) &&
+      !looksLikeAddress(lower) &&
+      words.length >= 2
+    ) {
+      // Patokan biasanya kalimat pendek: "deket masjid", "sebelah warung"
+      const patokanKeywords = ['dekat', 'deket', 'sebelah', 'samping', 'belakang', 'depan', 'sudut', 'ujung', 'masjid', 'sekolah', 'warung', 'jalan'];
+      if (patokanKeywords.some(k => lowerClean.includes(k))) {
+        state.patokan = message.trim();
+      }
+    }
+  }
 }
 
-function getOrderSummary(from) {
-  const state = orderStates.get(from);
-  if (!state || state.stage === 'idle') return null;
-  const parts = [`Produk: ${state.product}`];
-  if (state.color) parts.push(`Warna: ${state.color}`);
-  if (state.name) parts.push(`Nama: ${state.name}`);
-  if (state.address) parts.push(`Alamat: ${state.address}`);
-  if (state.phone) parts.push(`HP: ${state.phone}`);
-  parts.push(`Status: ${state.stage}`);
-  return parts.join(' | ');
+function looksLikeAddress(text) {
+  return /jalan|jl|gang|rt|rw|desa|kecamatan|kota|kabupaten|dusun|rukeman|kampung/.test(text);
+}
+
+function looksLikeQuestion(text) {
+  return /\?|harga|berapa|stok|warna|ukuran|manfaat|cara|kirim|tok/.test(text);
+}
+
+function getNextOrderField(state) {
+  if (!state.color) return 'warna';
+  if (!state.namaLengkap || !state.namaVerified) return 'nama lengkap penerima';
+  if (!state.desa) return 'alamat (dusun, desa, kecamatan, kota)';
+  if (!state.patokan) return 'patokan rumah';
+  if (!state.rtRw) return 'RT/RW';
+  if (!state.noHp) return 'nomor HP';
+  return null;
 }
 
 // Cleanup order state setelah 30 menit idle
@@ -1037,6 +1126,82 @@ function getRelevantKnowledge(message, history = []) {
   return chosen.map(b => b.text).join('\n\n');
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// STEP RULES: Aturan behavior per step
+// ═══════════════════════════════════════════════════════════════════
+
+const STEP1_RULES = `
+STEP 1 — JAWAB PRODUK:
+- Customer bertanya tentang produk (nama, harga, manfaat, varian, stok)
+- Jawab LENGKAP dari informasi produk di atas
+- Sebutkan: harga, varian, manfaat utama (1-2 poin), CTA
+- JANGAN tanya data order di step ini
+`;
+
+const STEP2_RULES = `
+STEP 2 — FOLLOW-UP:
+- Customer bertanya DETAIL tentang produk yang SUDAH dibahas di Step 1
+- Jawab SINGKAT langsung ke inti, JANGAN ulang penjelasan dari Step 1
+- Contoh: "ukurannya berapa?" → "250 gram per unit Kak"
+- JANGAN sebut manfaat lagi jika sudah dijelaskan di Step 1
+- JANGAN sebut harga lagi jika sudah disebut di Step 1
+`;
+
+const STEP3_RULES = `
+STEP 3 — KUMPULKAN DATA:
+- Customer sudah menunjukkan minat order (bilang "mau order", "pesan", pilih warna)
+- Tanya data SATU PER SATU dalam urutan:
+  1. Nama lengkap penerima
+  2. Alamat: dusun/kampung, desa/kelurahan, kecamatan, kota/kabupaten
+  3. Patokan rumah
+  4. RT/RW
+  5. Konfirmasi nomor HP (pakai nomor WA ini?)
+
+- VERIFIKASI NAMA: Kalau customer kasih 1 kata saja (misal "Khasin"),
+  WAJIB tanya: "Ini sudah nama lengkap Kak? Mohon nama lengkap ya."
+  JANGAN langsung catat sebagai nama lengkap.
+
+- CEK FLAG: Sebelum tanya, cek field mana yang BELUM terisi.
+  JANGAN tanya field yang sudah ada.
+
+- Tanda akhir: tampilkan tag [STEP=3] di baris terakhir balasanmu.
+  Contoh: "Siap Kak Khasin Khafabi. Sekarang alamat lengkapnya ya [STEP=3]"
+`;
+
+const STEP4_RULES = `
+STEP 4 — KONFIRMASI:
+- SEMUA data sudah lengkap (cek flag: nama, desa, kecamatan, kota, patokan, RT/RW, HP)
+- Rekap pesanan: produk, warna, harga, nama, alamat lengkap+patokan, HP
+- Tanya: "Apakah data sudah benar semua Kak?"
+- JANGAN tanya data tambahan di step ini
+- Setelah customer konfirmasi "ya/benar/oke":
+  - Sisipkan [ORDER_DATA]...[/ORDER_DATA]
+  - Tanda akhir: tampilkan tag [STEP=4] di baris terakhir balasanmu
+`;
+
+const STEP5_RULES = `
+STEP 5 — ESKALASI KE ADMIN:
+- Pertanyaan yang TIDAK bisa dijawab dari KB (estimasi, stok, kebijakan, dll)
+- JANGAN jawab sendiri, JANGAN mengarang
+- Balas ke customer: "Sebentar ya Kak, saya tanyakan ke admin dulu."
+- Tanda akhir: tampilkan tag [STEP=5] di baris terakhir balasanmu
+  Contoh: "Sebentar ya Kak, saya tanyakan ke admin dulu. [STEP=5]"
+- JANGAN tanya data tambahan di step ini
+`;
+
+// Helper: field mana yang belum terisi
+function getMissingFields(state) {
+  const missing = [];
+  if (!state.namaLengkap || !state.namaVerified) missing.push('nama lengkap');
+  if (!state.desa)               missing.push('dusun/desa');
+  if (!state.kecamatan)          missing.push('kecamatan');
+  if (!state.kota)               missing.push('kota');
+  if (!state.patokan)            missing.push('patokan');
+  if (!state.rtRw)               missing.push('RT/RW');
+  if (!state.noHp)               missing.push('nomor HP');
+  return missing;
+}
+
 function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
   const greetingRule = '- Sapaan ke pelanggan: panggil "Kak" saja tanpa menyebut nama sama sekali (jangan pakai nama dari WhatsApp, baik di pesan pertama maupun balasan berikutnya)';
 
@@ -1052,27 +1217,32 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
     parts.push(relevantKB.trim());
     parts.push('');
   }
-  // Product focus + Order State: kunci AI ke produk & stage order
+  // Product focus + Step State: kunci AI ke produk & step order
   const orderState = from ? orderStates.get(from) : null;
   const focus = orderState?.product || null;
   if (focus) {
-    parts.push(`=== PRODUK FOKUS SAAT INI: ${focus} ===`);
-    parts.push(`Customer sedang membahas "${focus}". Fokus HANYA pada produk ini. JANGAN campur informasi produk lain dari riwayat chat. Jika customer tanya produk lain, barulah pindah fokus ke produk baru tersebut.`);
+    parts.push(`=== PRODUK FOKUS: ${focus} ===`);
+    parts.push(`Customer sedang membahas "${focus}". Fokus HANYA pada produk ini. Jika customer tanya produk lain, barulah pindah fokus.`);
     parts.push('');
   }
 
-  // Order State: beri tahu AI stage order & data yang sudah terkumpul
-  if (orderState && orderState.stage !== 'idle') {
-    parts.push('=== STATUS ORDER SAAT INI ===');
-    parts.push(`Stage: ${orderState.stage}`);
+  // Step State + flags: beri tahu AI posisi saat ini & field yang sudah terisi
+  if (orderState && orderState.step) {
+    parts.push('=== STATUS SAAT INI ===');
+    parts.push(`Step: ${orderState.step}`);
     if (orderState.color) parts.push(`Warna: ${orderState.color}`);
-    if (orderState.name) parts.push(`Nama: ${orderState.name}`);
-    if (orderState.address) parts.push(`Alamat: ${orderState.address}`);
-    if (orderState.phone) parts.push(`HP: ${orderState.phone}`);
-    const nextField = getNextOrderField(orderState);
-    if (nextField) {
-      parts.push(`→ Menunggu: ${nextField}`);
-      parts.push(`Jika customer memberikan ${nextField}, langsung catat dan konfirmasi.`);
+    if (orderState.namaLengkap) parts.push(`Nama: ${orderState.namaLengkap} (verified: ${orderState.namaVerified})`);
+    if (orderState.desa) parts.push(`Desa: ${orderState.desa}`);
+    if (orderState.kecamatan) parts.push(`Kecamatan: ${orderState.kecamatan}`);
+    if (orderState.kota) parts.push(`Kota: ${orderState.kota}`);
+    if (orderState.rtRw) parts.push(`RT/RW: ${orderState.rtRw}`);
+    if (orderState.patokan) parts.push(`Patokan: ${orderState.patokan}`);
+    if (orderState.noHp) parts.push(`HP: ${orderState.noHp}`);
+
+    const missing = getMissingFields(orderState);
+    if (missing.length) {
+      parts.push(`→ Belum ada: ${missing.join(', ')}`);
+      parts.push(`Tanyakan field yang masih kurang, satu per satu.`);
     }
     parts.push('');
   }
@@ -1081,6 +1251,12 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
     parts.push(settings.followUp.trim());
     parts.push('');
   }
+  // Step rules: hanya kirim rules untuk step saat ini
+  if (!orderState || orderState.step === 1) parts.push(STEP1_RULES);
+  else if (orderState.step === 2) parts.push(STEP2_RULES);
+  else if (orderState.step === 3) parts.push(STEP3_RULES);
+  else if (orderState.step === 4) parts.push(STEP4_RULES);
+  else if (orderState.step === 5) parts.push(STEP5_RULES);
   parts.push('=== ATURAN MENJAWAB ===');
   parts.push('- FOKUS pada produk yang sedang ditanyakan customer SAAT INI. Jangan campur informasi produk lain dari riwayat chat sebelumnya. Contoh: kalau customer tanya "pasta dempul", jawab HANYA tentang pasta dempul — jangan membahas baby walking assistant');
   parts.push('- Balas secara natural seperti manusia, bukan robot');
@@ -2006,7 +2182,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
       // Update order state — deteksi produk + data order dari pesan customer
       const orderState = updateOrderState(from, combinedBody);
       if (orderState) {
-        console.log(`📋 [OrderState] ${senderName}: stage=${orderState.stage}, product=${orderState.product}, color=${orderState.color || '-'}, name=${orderState.name || '-'}`);
+        console.log(`📋 [OrderState] ${senderName}: step=${orderState.step}, product=${orderState.product}, color=${orderState.color || '-'}, nama=${orderState.namaLengkap || '-'} desa=${orderState.desa || '-'}`);
       }
       let reply = await aiReply(combinedBody, senderName, history, controller.signal, from, imagePath, audioPathForAI);
 
@@ -2191,6 +2367,20 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
 
         // Hapus dari activeProcessing karena sudah mau dikirim
         activeProcessing.delete(from);
+
+        // Step tag detection: [STEP=X] → update orderState.step, strip dari reply
+        const stepTagMatch = cleanReply.match(/\[STEP=(\d)\]/i);
+        if (stepTagMatch) {
+          const newStep = parseInt(stepTagMatch[1]);
+          const st = orderStates.get(from);
+          if (st && [1,2,3,4,5].includes(newStep)) {
+            st.step = newStep;
+            st.lastUpdate = Date.now();
+            orderStates.set(from, st);
+            persistOrderState();
+          }
+          cleanReply = cleanReply.replace(/\[STEP=\d\]/gi, '').trim();
+        }
 
         // E1: Wrap send — kalau gagal (Meta down/timeout), jangan tandai replied=true
         // supaya retry logic (retryFailedMessages) bisa handle. extractOrder sudah punya
@@ -3541,6 +3731,7 @@ server.listen(PORT, async () => {
   console.log('\n==========================================');
   console.log('  WA AI Assistant (Cloud API + MacroDroid) berjalan!');
   try { await db.initDB(); } catch(e) { console.error('Failed to init DB:', e.message); }
+  loadOrderStates();
   console.log(`  Buka browser: http://localhost:${PORT}`);
   console.log(`  Channel aktif saat ini: ${settings.channel === 'macrodroid' ? 'MacroDroid' : 'WhatsApp Cloud API'} (bisa diganti di dashboard)`);
   console.log(`  Webhook Cloud API (Meta App Dashboard): https://<domain-kamu>/webhook`);
