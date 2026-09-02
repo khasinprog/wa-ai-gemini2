@@ -1550,6 +1550,20 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal, fr
     },
   });
 
+  // RAW PAYLOAD LOG — JSON lengkap yang dikirim ke Gemini API
+  const rawLog = {
+    endpoint: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+    systemInstruction: { parts: [{ text: systemPromptText }] },
+    contents: contents.map(c => ({
+      role: c.role,
+      parts: c.parts.map(p => p.text ? { text: p.text } : { inline_data: { mime_type: p.inline_data?.mime_type, data: '[base64...]' } })
+    })),
+    generationConfig: body.generationConfig,
+  };
+  console.log(`\n🔍 RAW PAYLOAD KE GEMINI:`);
+  console.log(JSON.stringify(rawLog, null, 2));
+  console.log(`🔍 END RAW PAYLOAD\n`);
+
   let res;
   try {
     res = await fetch(url, {
