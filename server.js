@@ -429,41 +429,63 @@ setInterval(() => {
 // TESTING LOG: Log semua data yang dikirim ke Gemini
 // ═══════════════════════════════════════════════════════════════════
 function logGeminiRequest(direction, data) {
+  const SEP = '═'.repeat(60);
+
   if (direction === 'request') {
     const { user, phone, systemPrompt, history, message, tokenEstimate } = data;
-    console.log(`\n${'═'.repeat(60)}`);
-    console.log(`📤 GEMINI REQUEST [${new Date().toLocaleTimeString('id-ID')}] User: ${user} (${phone})`);
-    console.log(`${'═'.repeat(60)}`);
-    console.log(`\n--- SYSTEM PROMPT (${tokenEstimate?.system || '?'} tokens) ---`);
-    console.log(systemPrompt?.slice(0, 500));
-    if (systemPrompt?.length > 500) console.log('... (truncated)');
-    console.log(`\n--- HISTORY (${history?.length || 0} entries) ---`);
+    const ts = new Date().toLocaleTimeString('id-ID');
+
+    console.log(`\n${SEP}`);
+    console.log(`📤 GEMINI REQUEST [${ts}] User: ${user} (${phone})`);
+    console.log(SEP);
+
+    // ── FULL SYSTEM PROMPT ──
+    console.log(`\n┌─── SYSTEM PROMPT (${tokenEstimate?.system || '?'} tokens) ───`);
+    const lines = (systemPrompt || '').split('\n');
+    for (const line of lines) {
+      if (line.startsWith('==='))  console.log(`│ 🔹 ${line}`);
+      else if (line.startsWith('→'))  console.log(`│ ⚠️  ${line}`);
+      else if (line.startsWith('STEP')) console.log(`│ 📌 ${line}`);
+      else console.log(`│    ${line}`);
+    }
+    console.log(`└─── END SYSTEM PROMPT ───`);
+
+    // ── HISTORY ──
+    console.log(`\n┌─── HISTORY (${history?.length || 0} entries) ───`);
     (history || []).forEach((h, i) => {
       if (h._summary) {
-        console.log(`[summary] ${h.summary}`);
+        console.log(`│ 📝 [summary] ${h.summary}`);
       } else {
-        console.log(`[${i+1}] User: "${(h.body || '').slice(0, 80)}"`);
-        console.log(`    AI: "${(h.aiReply || '').slice(0, 80)}"`);
+        const userText = (h.body || '').slice(0, 100);
+        const aiText  = (h.aiReply || '').slice(0, 100);
+        console.log(`│ 👤 User: "${userText}"`);
+        console.log(`│ 🤖 AI:   "${aiText}"`);
       }
     });
-    console.log(`\n--- CURRENT MESSAGE ---`);
-    console.log(`"${message}"`);
-    console.log(`\n--- TOKEN ESTIMATE ---`);
-    console.log(`System: ${tokenEstimate?.system || '?'} | History: ${tokenEstimate?.history || '?'} | Current: ${tokenEstimate?.current || '?'}`);
+    console.log(`└─── END HISTORY ───`);
+
+    // ── CURRENT MESSAGE ──
+    console.log(`\n┌─── CURRENT MESSAGE ───`);
+    console.log(`│ 👤 "${message}"`);
+    console.log(`└─── END MESSAGE ───`);
+
+    // ── TOKEN ESTIMATE ──
+    console.log(`\n📊 Tokens → System: ${tokenEstimate?.system || '?'} | History: ${tokenEstimate?.history || '?'} | Current: ${tokenEstimate?.current || '?'}`);
+    console.log(SEP);
   }
 
   if (direction === 'response') {
     const { ok, text, error, duration, outputTokens } = data;
-    console.log(`\n${'═'.repeat(60)}`);
-    console.log(`📥 GEMINI RESPONSE [${new Date().toLocaleTimeString('id-ID')}] (${duration}ms)`);
-    console.log(`${'═'.repeat(60)}`);
+    const ts = new Date().toLocaleTimeString('id-ID');
+    console.log(`\n┌─── GEMINI RESPONSE [${ts}] (${duration}ms) ───`);
     if (ok) {
-      console.log(`"${text?.slice(0, 200)}"`);
-      console.log(`Output tokens: ${outputTokens}`);
+      console.log(`│ 🤖 "${text?.slice(0, 300)}"`);
+      if (text?.length > 300) console.log(`│    ... (panjang total: ${text.length} chars)`);
+      console.log(`│ 📊 Output tokens: ${outputTokens}`);
     } else {
-      console.log(`❌ ERROR: ${error}`);
+      console.log(`│ ❌ ERROR: ${error}`);
     }
-    console.log(`${'═'.repeat(60)}\n`);
+    console.log(`└─── END RESPONSE ───\n`);
   }
 }
 
