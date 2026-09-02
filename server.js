@@ -3763,6 +3763,84 @@ app.get('/api/ai-test/result', (req, res) => {
   res.json(activeTestSession || { status: 'idle' });
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// TEST ENDPOINT: Simulasi pesan customer untuk testing flow
+// ═══════════════════════════════════════════════════════════════════
+app.post('/test/simulate', async (req, res) => {
+  try {
+    const { sender, message, senderName } = req.body || {};
+    if (!sender || !message) {
+      return res.status(400).json({ error: 'Isi sender dan message' });
+    }
+
+    const from = sender.replace(/\D/g, '');
+    const name = senderName || sender;
+    const wamid = 'test_' + Date.now();
+
+    console.log(`\n🧪 [TEST SIMULATE] ${name} (${from}): "${message}"`);
+
+    // Simulasi incoming message — proses seperti webhook biasa
+    const entry = {
+      id: Date.now(),
+      from,
+      body: message,
+      timestamp: Date.now(),
+      wamid,
+      replied: false,
+      aiReply: null,
+      type: 'text',
+    };
+    messages.push(entry);
+    save(MSG_FILE, messages);
+
+    // Emit ke dashboard
+    io.emit('new_message', entry);
+
+    // Proses via processCustomerMessage (async, tidak block response)
+    processCustomerMessage(from, name, message, wamid, null, null, null, null, null)
+      .catch(e => console.error('🧪 [TEST] Error:', e.message));
+
+    // Tunggu 5 detik lalu kirim response awal
+    await new Promise(r => setTimeout(r, 3000));
+
+    // Cek apakah ada reply
+    const updated = messages.find(m => m.wamid === wamid);
+    res.json({
+      ok: true,
+      received: true,
+      entryId: entry.id,
+      aiReplyPending: !updated?.aiReply,
+      message: 'Pesan diterima, AI sedang proses...'
+    });
+  } catch (e) {
+    console.error('🧪 [TEST] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// TEST ENDPOINT: Cek response terakhir untuk nomor tertentu
+// ═══════════════════════════════════════════════════════════════════
+app.get('/test/response/:phone', (req, res) => {
+  const phone = req.params.phone.replace(/\D/g, '');
+  const entries = messages
+    .filter(m => m.from === phone)
+    .sort((a, b) => a.id - b.id)
+    .slice(-5);
+
+  res.json({
+    phone,
+    totalMessages: messages.filter(m => m.from === phone).length,
+    last5: entries.map(e => ({
+      id: e.id,
+      body: e.body,
+      aiReply: e.aiReply,
+      replied: e.replied,
+      timestamp: new Date(e.timestamp).toISOString(),
+    })),
+  });
+});
+
 server.listen(PORT, async () => {
   console.log('\n==========================================');
   console.log('  WA AI Assistant (Cloud API + MacroDroid) berjalan!');
