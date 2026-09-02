@@ -234,37 +234,40 @@ function detectOrderData(message, currentStage) {
   const lower = message.toLowerCase().trim();
   const data = {};
 
-  // Deteksi warna
-  const colorMap = {
-    'biru muda': 'Biru Muda', 'biru': 'Biru Muda',
-    'pink muda': 'Pink Muda', 'pink': 'Pink Muda',
-    'abu': 'Abu-abu', 'abu-abu': 'Abu-abu',
-    'navy': 'Navy', 'red': 'Red', 'merah': 'Red',
-  };
-  for (const [key, val] of Object.entries(colorMap)) {
-    if (lower === key || lower.includes(key)) {
-      data.color = val;
-      break;
+  // ═══ WARNA: Hanya deteksi jika stage memungkinkan ═══
+  if (['product_inquired', 'color_selected'].includes(currentStage)) {
+    const colorMap = {
+      'biru muda': 'Biru Muda', 'biru': 'Biru Muda',
+      'pink muda': 'Pink Muda', 'pink': 'Pink Muda',
+      'abu': 'Abu-abu', 'abu-abu': 'Abu-abu',
+      'navy': 'Navy', 'red': 'Red', 'merah': 'Red',
+    };
+    for (const [key, val] of Object.entries(colorMap)) {
+      if (lower === key || (lower.includes(key) && !lower.includes('bukan'))) {
+        data.color = val;
+        break;
+      }
     }
   }
 
-  // Deteksi nama (jika stage menunggu nama)
-  if (currentStage === 'color_selected' || currentStage === 'product_inquired') {
-    const words = message.trim().split(/\s+/);
-    if (words.length <= 3 && !lower.includes('?') && !data.color && !lower.includes('jl')) {
-      data.name = message.trim();
+  // ═══ NAMA: JANGAN auto-detect — biarkan AI handle lewat konversasi ═══
+  // Nama terlalu ambigu untuk di-auto-detect (bisa salah tangkap
+  // alamat/pertanyaan/produk sebagai nama). AI lebih akurat karena
+  // punya konteks pertanyaan sebelumnya.
+
+  // ═══ ALAMAT: Hanya deteksi yang pasti alamat (ada kata kunci jalan) ═══
+  if (['name_given', 'address_given'].includes(currentStage)) {
+    if (lower.includes('jl') || lower.includes('jalan') || lower.includes('gang') || lower.includes('rt') || lower.includes('rw')) {
+      data.address = message.trim();
     }
   }
 
-  // Deteksi alamat
-  if (lower.includes('jl') || lower.includes('jalan') || lower.includes('gang') || lower.includes('rt') || lower.includes('rw')) {
-    data.address = message.trim();
-  }
-
-  // Deteksi HP
-  const phoneMatch = message.replace(/\s/g, '').match(/(08\d{8,12})/);
-  if (phoneMatch) {
-    data.phone = phoneMatch[1];
+  // ═══ HP: Deteksi nomor telepon ═══
+  if (['address_given', 'phone_given'].includes(currentStage)) {
+    const phoneMatch = message.replace(/\s/g, '').match(/(08\d{8,12})/);
+    if (phoneMatch) {
+      data.phone = phoneMatch[1];
+    }
   }
 
   return data;
@@ -284,13 +287,15 @@ function updateOrderState(from, message) {
   if (!state || state.stage === 'idle') return state;
 
   const data = detectOrderData(message, state.stage);
-  if (data.color && !state.color) { state.color = data.color; state.stage = 'color_selected'; }
-  if (data.name && !state.name) { state.name = data.name; state.stage = 'name_given'; }
-  if (data.address && !state.address) { state.address = data.address; state.stage = 'address_given'; }
-  if (data.phone && !state.phone) { state.phone = data.phone; state.stage = 'phone_given'; }
 
-  if (state.color && state.name && state.address && state.phone) {
-    state.stage = 'confirmed';
+  // Hanya auto-detect yang PASTI benar: warna + HP
+  // Nama & alamat: biarkan AI handle lewat konversasi (lebih akurat)
+  if (data.color && !state.color) {
+    state.color = data.color;
+    state.stage = 'color_selected';
+  } else if (data.phone && !state.phone && ['address_given', 'phone_given'].includes(state.stage)) {
+    state.phone = data.phone;
+    state.stage = 'phone_given';
   }
 
   state.lastUpdate = Date.now();
@@ -299,11 +304,13 @@ function updateOrderState(from, message) {
 }
 
 function getNextOrderField(state) {
-  const flow = ['color', 'name', 'address', 'phone'];
-  const labels = { color: 'warna', name: 'nama lengkap', address: 'alamat lengkap', phone: 'nomor HP' };
-  for (const field of flow) {
-    if (!state[field]) return labels[field];
-  }
+  // Flow: warna → nama → alamat → patokan → HP
+  // Nama & alamat tidak di-auto-detect, jadi selalu "menunggu" di system prompt
+  // kecuali sudah ada (dari AI conversation, bukan auto-detect)
+  if (!state.color) return 'warna';
+  if (!state.name) return 'nama lengkap penerima';
+  if (!state.address) return 'alamat lengkap';
+  if (!state.phone) return 'nomor HP';
   return null;
 }
 
