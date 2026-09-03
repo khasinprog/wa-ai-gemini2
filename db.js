@@ -3,12 +3,20 @@
 require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 const { Pool } = require('pg');
 
-const pool = new Pool({
+// Fix-4: Guard — jika DATABASE_URL tidak dikonfigurasi, skip semua operasi DB
+// tanpa throw error. Mencegah spam error SASL di PM2 log.
+const DB_ENABLED = !!process.env.DATABASE_URL;
+
+const pool = DB_ENABLED ? new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : false,
-});
+}) : null;
 
 async function initDB() {
+  if (!DB_ENABLED) {
+    console.log('⚠️  [DB] DATABASE_URL tidak dikonfigurasi — skip init, pakai penyimpanan JSON lokal');
+    return;
+  }
   const client = await pool.connect();
   try {
     await client.query(`
@@ -120,6 +128,7 @@ async function initDB() {
 // ── Messages ──────────────────────────────────────────────────────
 
 async function saveMessage(msg) {
+  if (!DB_ENABLED) return null;
   const q = `
     INSERT INTO messages 
       (waba_message_id, wa_id, sender_name, direction, sender_type, message_type,
@@ -167,6 +176,7 @@ async function saveMessage(msg) {
 }
 
 async function updateMessage(id, fields) {
+  if (!DB_ENABLED) return;
   const allowed = ['ai_reply','replied','manual','cancelled_entry','retry_count','media_url','link_url','link_title','link_thumbnail','link_domain'];
   const sets = [], vals = [];
   let i = 1;
@@ -179,6 +189,7 @@ async function updateMessage(id, fields) {
 }
 
 async function getMessages(limit = 3000) {
+  if (!DB_ENABLED) return [];
   const res = await pool.query(
     'SELECT * FROM messages ORDER BY timestamp DESC LIMIT $1', [limit]
   );
@@ -186,11 +197,13 @@ async function getMessages(limit = 3000) {
 }
 
 async function getMessageById(id) {
+  if (!DB_ENABLED) return null;
   const res = await pool.query('SELECT * FROM messages WHERE id = $1', [id]);
   return res.rows[0] ? dbRowToMsg(res.rows[0]) : null;
 }
 
 async function getUnrepliedMessages() {
+  if (!DB_ENABLED) return [];
   const res = await pool.query(`
     SELECT * FROM messages 
     WHERE replied = false 
@@ -247,6 +260,7 @@ function dbRowToMsg(row) {
 // ── Contacts ─────────────────────────────────────────────────────
 
 async function upsertContact(waId, name) {
+  if (!DB_ENABLED) return;
   await pool.query(`
     INSERT INTO contacts (wa_id, name, last_active_at)
     VALUES ($1, $2, NOW())
@@ -259,6 +273,7 @@ async function upsertContact(waId, name) {
 // ── Orders ────────────────────────────────────────────────────────
 
 async function saveOrder(order) {
+  if (!DB_ENABLED) return;
   await pool.query(`
     INSERT INTO orders (id, wa_id, nama, hp, produk, alamat, ai_alamat, ai_cod, payment_method, status)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
@@ -271,6 +286,7 @@ async function saveOrder(order) {
 }
 
 async function getOrders() {
+  if (!DB_ENABLED) return [];
   const res = await pool.query('SELECT * FROM orders ORDER BY created_at DESC LIMIT 500');
   return res.rows.map(r => ({
     id: r.id, jid: r.wa_id, wa_id: r.wa_id,
@@ -283,6 +299,7 @@ async function getOrders() {
 }
 
 async function updateOrder(id, fields) {
+  if (!DB_ENABLED) return;
   const allowed = ['ai_alamat','ai_cod','payment_method','cold_lead','status'];
   const sets = [], vals = [];
   let i = 1;
@@ -295,22 +312,26 @@ async function updateOrder(id, fields) {
 }
 
 async function getOrderById(id) {
+  if (!DB_ENABLED) return null;
   const res = await pool.query('SELECT * FROM orders WHERE id = $1', [id]);
   return res.rows[0] || null;
 }
 
 async function deleteOrder(id) {
+  if (!DB_ENABLED) return;
   await pool.query('DELETE FROM orders WHERE id = $1', [id]);
 }
 
 // ── Settings ─────────────────────────────────────────────────────
 
 async function loadSettings() {
+  if (!DB_ENABLED) return null;
   const res = await pool.query("SELECT value FROM settings_store WHERE key = 'main'");
   return res.rows[0] ? res.rows[0].value : null;
 }
 
 async function saveSettings(data) {
+  if (!DB_ENABLED) return;
   await pool.query(`
     INSERT INTO settings_store (key, value, updated_at)
     VALUES ('main', $1, NOW())

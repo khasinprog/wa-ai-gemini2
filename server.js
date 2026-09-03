@@ -346,9 +346,12 @@ function updateOrderState(from, message) {
     state.step = 3;
   }
 
-  // Step 3→4: Semua data terkumpul + customer konfirmasi
-  const confirmPattern = /^(ya|y|iya|oke|ok|betul|benar|siap|fix|setuju|sudah|lengkap|mantap|gas|proses)$/i;
-  if (state.step === 3 && confirmPattern.test(lower)) {
+  // Step 3→4: Semua data terkumpul + customer kasih sinyal konfirmasi
+  // Fix-1: pakai \b (word boundary) agar cocok dalam kalimat pendek (≤5 kata),
+  // bukan hanya kata tunggal persis — lebih toleran tanpa false positive
+  const confirmPattern = /\b(ya|y|iya|oke|ok|betul|benar|siap|fix|setuju|sudah|lengkap|mantap|gas|proses|lanjut|boleh)\b/i;
+  const isShortConfirm = lower.split(/\s+/).length <= 5;
+  if (state.step === 3 && confirmPattern.test(lower) && isShortConfirm) {
     const missing = getMissingFields(state);
     if (missing.length === 0) {
       state.step = 4;
@@ -1799,6 +1802,16 @@ function extractOrder(replyText, fromJid) {
         save(ORDER_FILE, orders); if (typeof order !== 'undefined') persistOrderToDB(order);
         io.emit('new_order', order);
         console.log('🛒 Order baru tertangkap:', order.nama);
+        // Fix-2: Update orderState → step 4 + orderConfirmed=true setelah ORDER_DATA diterima
+        const _st = orderStates.get(fromJid);
+        if (_st) {
+          _st.step = 4;
+          _st.orderConfirmed = true;
+          _st.lastUpdate = Date.now();
+          orderStates.set(fromJid, _st);
+          persistOrderState();
+          console.log(`📊 [Step] ${fromJid.slice(-4)}: →4 (ORDER_DATA diterima, order confirmed)`);
+        }
         // Jalankan background process AI Address & Komerce COD secara asinkron
         processOrderAddressAI(order.id);
       } else {
@@ -2027,6 +2040,16 @@ async function handleAdminEscalationAnswer(adminText) {
     try {
       await sendWhatsAppText(item.from, customerMsg);
       console.log(`✅ Jawaban eskalasi #${item.id} terkirim ke ${item.senderName || item.from}`);
+      // Fix-3: Step 5 → kembali ke step sebelumnya (4 jika sudah confirmed, 3 jika belum)
+      const _escSt = orderStates.get(item.from);
+      if (_escSt && _escSt.step === 5) {
+        const prevStep = _escSt.orderConfirmed ? 4 : 3;
+        _escSt.step = prevStep;
+        _escSt.lastUpdate = Date.now();
+        orderStates.set(item.from, _escSt);
+        persistOrderState();
+        console.log(`📊 [Step] ${item.from.slice(-4)}: 5→${prevStep} (admin jawab eskalasi #${item.id})`);
+      }
     } catch(e) {
       console.error(`❌ Gagal kirim jawaban eskalasi #${item.id} ke customer:`, e.message);
     }
