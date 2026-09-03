@@ -290,7 +290,8 @@ function detectOrderData(message, currentStep) {
 
   // ═══ HP: Step 3 (collecting data) ═══
   if (currentStep === 3) {
-    const phoneMatch = message.replace(/\s/g, '').match(/(08\d{8,12})/);
+    // BUG-07 fix: gunakan word boundary pada teks asli (bukan stripped) agar tidak false match ke "RT 08/05" dll
+    const phoneMatch = message.match(/\b(08\d{8,12})\b/);
     if (phoneMatch) {
       data.phone = phoneMatch[1];
     }
@@ -302,6 +303,7 @@ function detectOrderData(message, currentStep) {
 function updateOrderState(from, message) {
   let state = orderStates.get(from);
   const detectedProduct = detectProductFocus(message);
+  const lower = message.toLowerCase().trim();
 
   // Product lock: berubah hanya kalau customer tanya produk LAIN
   if (detectedProduct && (!state || state.product !== detectedProduct)) {
@@ -312,6 +314,7 @@ function updateOrderState(from, message) {
 
   if (!state) return null;
 
+  // ── EXTRACT FIELDS DULU (sebelum step transitions) ───────────────
   const data = detectOrderData(message, state.step);
 
   // Hanya auto-detect yang PASTI benar: warna + HP
@@ -321,10 +324,53 @@ function updateOrderState(from, message) {
     state.noHp = data.phone;
   }
 
-  // Step 3: extract fields dari pesan customer (name, address, RT/RW, patokan)
-  if (state.step === 3) {
+  // Step 3+: extract fields dari pesan customer (name, address, RT/RW, patokan)
+  if (state.step >= 3) {
     extractCustomerFields(state, message);
   }
+  // ──────────────────────────────────────────────────────────────────
+
+  // ── AUTO-DETECT STEP TRANSITION ──────────────────────────────────
+  const priorReplies = messages.filter(m => m.from === from && m.aiReply && !m.cancelledEntry).length;
+  const prevStep = state.step;
+
+  // Step 1→2: AI sudah jawab produk ≥1x
+  // BUG-02 fix: jangan naik ke 2 kalau pesan ini detect produk BARU (sudah di-reset ke step 1)
+  if (state.step === 1 && priorReplies >= 1 && !detectedProduct) {
+    state.step = 2;
+  }
+
+  // Step 2→3: Customer tunjukkan intent order
+  const orderIntent = /\b(iya|mau|order|pesan|proses|ambil|fix|oke\s*(bayar|proses|lanjut)|setuju)\b/i;
+  if (state.step === 2 && orderIntent.test(lower)) {
+    state.step = 3;
+  }
+
+  // Step 3→4: Semua data terkumpul + customer konfirmasi
+  const confirmPattern = /^(ya|y|iya|oke|ok|betul|benar|siap|fix|setuju|sudah|lengkap|mantap|gas|proses)$/i;
+  if (state.step === 3 && confirmPattern.test(lower)) {
+    const missing = getMissingFields(state);
+    if (missing.length === 0) {
+      state.step = 4;
+    }
+  }
+
+  // Step 3→5: Eskalasi
+  if ([3, 4].includes(state.step)) {
+    const escKeywords = ['estimasi', 'berapa hari', 'stok', 'retur', 'garansi', 'komplain',
+      'batal', 'gak jadi', 'kirim kapan', 'kirim kapn', 'hari sampai', 'kurir sampai', 'kapan sampai'];
+    const isEscalation = escKeywords.some(k => lower.includes(k));
+    const isConfirm = confirmPattern.test(lower);
+    if (isEscalation && !isConfirm) {
+      state.step = 5;
+    }
+  }
+
+  // Log step transition
+  if (state.step !== prevStep) {
+    console.log(`📊 [Step] ${from.slice(-4)}: ${prevStep}→${state.step} (${message.slice(0, 40)})`);
+  }
+  // ──────────────────────────────────────────────────────────────────
 
   state.lastUpdate = Date.now();
   orderStates.set(from, state);
@@ -339,12 +385,25 @@ function extractCustomerFields(state, message) {
   const lower = message.toLowerCase().trim();
   const words = message.trim().split(/\s+/);
 
+  // Guard: jangan extract kata-kata konfirmasi/generic
+  const skipWords = /^(ya|y|oke|ok|baik|siap|betul|benar|sama|boleh|mantap|gas|proses|lanjut|fix|setuju|iya|noted|ok\s*ku|iya\s*ka|oke\s*ka|baik\s*ka|siap\s*ka|oke\s*kak|siap\s*kak|ya\s*ka|ya\s*kak|noted\s*ka|betul\s*ka|benar\s*ka|proses\s*ka|lanjut\s*ka|fix\s*ka|mantap\s*ka|gas\s*ka|setuju\s*ka|boleh\s*ka|sama\s*ka)$/;
+  if (skipWords.test(lower)) return;
+
+  // ── RT/RW "gak ada" — detect SEBELUM address parsing ──
+  // BUG-03 fix: hanya trigger jika ada konteks RT/RW dalam pesan yang sama
+  if (!state.rtRw && /\b(gak|nggak|ga|tidak)\s*(ada)?\b/i.test(lower)
+      && /\b(rt|rw|rukun)\b/i.test(lower)) {
+    state.rtRw = '-';
+  }
+
   // ── NAMA: ≥ 2 kata → langsung catat sebagai nama verified ──
+  // BUG-01 fix: pesan yang mengandung koma (pemisah alamat) JANGAN dianggap nama
+  const hasComma = message.includes(',');
   if (!state.namaLengkap || !state.namaVerified) {
-    if (words.length >= 2 && !looksLikeAddress(lower) && !looksLikeQuestion(lower)) {
+    if (words.length >= 2 && !hasComma && !looksLikeAddress(lower) && !looksLikeQuestion(lower)) {
       state.namaLengkap = message.trim();
       state.namaVerified = true;
-    } else if (words.length === 1 && !looksLikeAddress(lower) && !looksLikeQuestion(lower)) {
+    } else if (words.length === 1 && !hasComma && !looksLikeAddress(lower) && !looksLikeQuestion(lower)) {
       // 1 kata → catat tapi belum verified (AI akan verifikasi)
       if (!state.namaLengkap) {
         state.namaLengkap = message.trim();
@@ -355,25 +414,32 @@ function extractCustomerFields(state, message) {
 
   // ── ALAMAT: Deteksi dusun, desa, kecamatan, kota dari pesan ──
   if (!state.desa || !state.kecamatan || !state.kota) {
-    // Pola: "Rukeman, Tamantirto, Kasihan, Bantul"
-    const parts = message.split(/[,\n]+/).map(p => p.trim()).filter(Boolean);
-    if (parts.length >= 2) {
-      // Jika ada 2-4 bagian, asumsikan: dusun, desa, kecamatan, kota
-      if (!state.dusun && parts[0] && !/^\d/.test(parts[0])) state.dusun = parts[0];
-      if (!state.desa && parts[1]) state.desa = parts[1];
-      if (!state.kecamatan && parts[2]) state.kecamatan = parts[2];
-      if (!state.kota && parts[3]) state.kota = parts[3];
-      // Jika hanya 2 bagian: desa, kecamatan (kota belum ada)
-      if (parts.length === 2) {
-        if (!state.desa) state.desa = parts[0];
-        if (!state.kecamatan) state.kecamatan = parts[1];
-      }
+    // Extract RT/RW dulu dari pesan, buang dari sisa sebelum parse alamat
+    const rtMatch = message.match(/rt\s*(\d{1,3})\s*\/?\s*rw\s*(\d{1,3})/i);
+    const addrRaw = rtMatch ? message.replace(/rt\s*\d+\s*\/\s*(?:rw\s*)?\d+/gi, '') : message;
+    const parts = addrRaw.split(/[,\n]+/).map(p => p.trim()).filter(Boolean);
+
+    if (parts.length === 2) {
+      // 2 items: desa, kecamatan
+      if (!state.desa) state.desa = parts[0];
+      if (!state.kecamatan) state.kecamatan = parts[1];
+    } else if (parts.length === 3) {
+      // 3 items: desa, kecamatan, kota
+      if (!state.desa) state.desa = parts[0];
+      if (!state.kecamatan) state.kecamatan = parts[1];
+      if (!state.kota) state.kota = parts[2];
+    } else if (parts.length >= 4) {
+      // 4+ items: dusun, desa, kecamatan, kota
+      if (!state.dusun && !/^\d/.test(parts[0])) state.dusun = parts[0];
+      if (!state.desa) state.desa = parts[1];
+      if (!state.kecamatan) state.kecamatan = parts[2];
+      if (!state.kota) state.kota = parts[3];
     }
   }
 
-  // ── RT/RW ──
+  // ── RT/RW — handle "RT 03/RW 05", "RT 03/05", "rt03/rw05" ──
   if (!state.rtRw) {
-    const rtMatch = message.match(/rt\s*(\d{1,3})\s*\/?\s*rw\s*(\d{1,3})/i);
+    const rtMatch = message.match(/rt\s*(\d{1,3})\s*\/\s*(?:rw\s*)?(\d{1,3})/i);
     if (rtMatch) {
       state.rtRw = `RT ${rtMatch[1]}/RW ${rtMatch[2]}`;
     }
@@ -398,7 +464,8 @@ function extractCustomerFields(state, message) {
 }
 
 function looksLikeAddress(text) {
-  return /jalan|jl|gang|rt|rw|desa|kecamatan|kota|kabupaten|dusun|rukeman|kampung/.test(text);
+  // BUG-09 fix: tambah keyword umum alamat Indonesia
+  return /jalan|jl\.|jl\s|gg\.|gang|rt\s|rw\s|\brt\b|\brw\b|desa|kelurahan|kel\.|kecamatan|kec\.|kota|kabupaten|kab\.|dusun|rukeman|kampung|perum|perumahan|blok|no\.|nomor|kompleks|komplek/.test(text);
 }
 
 function looksLikeQuestion(text) {
@@ -418,11 +485,15 @@ function getNextOrderField(state) {
 // Cleanup order state setelah 30 menit idle
 setInterval(() => {
   const now = Date.now();
+  let changed = false;
   for (const [from, state] of orderStates) {
     if (now - state.lastUpdate > 30 * 60 * 1000) {
       orderStates.delete(from);
+      changed = true;
     }
   }
+  // BUG-04 fix: persist ke file agar state tidak di-load ulang saat server restart
+  if (changed) persistOrderState();
 }, 5 * 60 * 1000);
 
 // ═══════════════════════════════════════════════════════════════════
@@ -516,10 +587,14 @@ function buildHistory(from, currentEntryId, maxEntries = 20) {
 function buildConversationSummary(oldEntries) {
   const products = new Set();
   const discussed = [];
-  for (const entry of oldEntries) {
+  // Hanya scan 5 entries terakhir (bukan semua histori) supaya produk lama tidak bocor ke ringkasan
+  const recentEntries = oldEntries.slice(-5);
+  for (const entry of recentEntries) {
     const userText = (entry.body || '').toLowerCase();
     if (userText.includes('baby walking')) products.add('Baby Walking Assistant');
     if (userText.includes('pasta dempul')) products.add('Pasta Dempul');
+    if (userText.includes('selang')) products.add('Selang Kran Fleksibel 360°');
+    if (userText.includes('mini sealer')) products.add('Mini Sealer Portable');
     if (userText.includes('harga') || userText.includes('berapa')) discussed.push('harga');
     if (userText.includes('warna') || userText.includes('biru') || userText.includes('pink')) discussed.push('warna');
     if (userText.includes('order') || userText.includes('mau')) discussed.push('order');
@@ -608,6 +683,7 @@ const DEF = {
   replyDelayMax: 15, // delay untuk balasan PANJANG (di atas REPLY_LENGTH_THRESHOLD karakter)
   productImages: {},
   courierPriority: DEFAULT_COURIER_PRIORITY, // F1-D: urutan kurir [J&T, iDexpress, JNE, ...]
+  stoppedChats: [], // nomor WA yang di-stop AI-nya (per-nomor, bukan global)
 };
 
 let settings = { ...DEF };
@@ -1170,24 +1246,28 @@ STEP 2 — FOLLOW-UP:
 `;
 
 const STEP3_RULES = `
-STEP 3 — KUMPULKAN DATA:
-- Customer sudah menunjukkan minat order (bilang "mau order", "pesan", pilih warna)
-- Tanya data SATU PER SATU dalam urutan:
-  1. Nama lengkap penerima
-  2. Alamat: dusun/kampung, desa/kelurahan, kecamatan, kota/kabupaten
-  3. Patokan rumah
-  4. RT/RW
-  5. Konfirmasi nomor HP (pakai nomor WA ini?)
-
-- VERIFIKASI NAMA: Kalau customer kasih 1 kata saja (misal "Khasin"),
-  WAJIB tanya: "Ini sudah nama lengkap Kak? Mohon nama lengkap ya."
-  JANGAN langsung catat sebagai nama lengkap.
+STEP 3 — KUMPULKAN DATA (IKUTI URUTAN INI PERSIS):
+- Customer sudah menunjukkan minat order
+- Urutan tanya yang WAJIB diikuti:
+  1. Nama lengkap penerima (kalau 1 kata → WAJIB verifikasi, JANGAN catat sebagai nama lengkap)
+  2. Alamat: desa/kelurahan + kecamatan + kota/kabupaten
+     - KECAMATAN dan KOTA/KABUPATEN itu WAJIB — tidak boleh skip atau diasumsikan
+     - Kalau customer cuma kasih nama desa/dusun: WAJIB tanya "Kecamatannya apa, Kak? Dan kota/kabupatennya?"
+     - Kalau customer kasih 1 baris "Desa A, Kec B, Kota C": langsung catat semua, lanjut ke RT/RW
+  3. RT/RW
+     - WAJIB tanya ke customer: "RT dan RW-nya berapa, Kak?"
+     - HANYA setelah customer jawab "gak ada" / "tidak ada" barulah catat "-"
+     - JANGAN asumsikan RT/RW kosong kalau belum ditanya
+  4. Patokan rumah (dekat masjid/warung/sekolah/jalan)
+  5. Konfirmasi nomor HP ("pakai nomor WhatsApp ini juga ya, Kak?")
+  6. REKAP semua data → minta konfirmasi → masuk Step 4
 
 - CEK FLAG: Sebelum tanya, cek field mana yang BELUM terisi.
-  JANGAN tanya field yang sudah ada.
+  JANGAN tanya field yang sudah ada. TAPI: kecamatan, kota, dan RT/RW harus SELALU ditanya kalau belum ada.
+
+- SELALU tanya SATU field per balasan. JANGAN gabung 2 field dalam 1 pesan.
 
 - Tanda akhir: tampilkan tag [STEP=3] di baris terakhir balasanmu.
-  Contoh: "Siap Kak Khasin Khafabi. Sekarang alamat lengkapnya ya [STEP=3]"
 `;
 
 const STEP4_RULES = `
@@ -1203,11 +1283,16 @@ STEP 4 — KONFIRMASI:
 
 const STEP5_RULES = `
 STEP 5 — ESKALASI KE ADMIN:
-- Pertanyaan yang TIDAK bisa dijawab dari KB (estimasi, stok, kebijakan, dll)
-- JANGAN jawab sendiri, JANGAN mengarang
-- Balas ke customer: "Sebentar ya Kak, saya tanyakan ke admin dulu."
-- Tanda akhir: tampilkan tag [STEP=5] di baris terakhir balasanmu
-  Contoh: "Sebentar ya Kak, saya tanyakan ke admin dulu. [STEP=5]"
+- Jika ada pertanyaan yang jawabannya TIDAK ada di KB: JANGAN jawab sendiri, JANGAN mengarang.
+- Info yang WAJIB di-escalate (JANGAN pernah jawab sendiri):
+  * Estimasi pengiriman / kapan dikirim / berapa hari sampai
+  * Stok / ketersediaan barang
+  * Kebijakan retur, garansi, klaim yang tidak disebutkan di KB
+  * Tracking / status pengiriman
+  * Info apapun yang TIDAK tertulis eksplisit di INFORMASI PRODUK & BISNIS
+- CARA MERESPONS: Balas customer dengan singkat dulu, lalu SISIPKAN tag [ESCALATE]:
+  Contoh: "Sebentar ya Kak, saya tanyakan ke admin dulu ya 😊 [ESCALATE:Pasta Dempul Instan Tembok]berapa hari estimasi pengiriman ke Bantul?[/ESCALATE]"
+- TIDAK BOLEH: membuat tanggal, waktu, estimasi hari, atau angka yang tidak ada di KB
 - JANGAN tanya data tambahan di step ini
 `;
 
@@ -1261,8 +1346,10 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
     if (orderState.patokan) parts.push(`Patokan: ${orderState.patokan}`);
     if (orderState.noHp) parts.push(`HP: ${orderState.noHp}`);
 
+    // BUG-06 fix: missing fields hanya ditampilkan di Step 3+ agar tidak
+    // membingungkan AI di Step 1/2 yang belum boleh tanya data order
     const missing = getMissingFields(orderState);
-    if (missing.length) {
+    if (missing.length && orderState.step >= 3) {
       parts.push(`→ Belum ada: ${missing.join(', ')}`);
       parts.push(`Tanyakan field yang masih kurang, satu per satu.`);
     }
@@ -1305,18 +1392,22 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
   parts.push('- Ikuti PROSEDUR MENJAWAB di atas sebagai aturan wajib, tapi jangan diulang kata-per-kata sebagai skrip di setiap balasan — sesuaikan redaksinya secara natural sesuai konteks pesan pelanggan saat itu');
   parts.push(isFirstMessage
     ? '- Ini kemungkinan pesan PERTAMA pelanggan di percakapan ini: boleh jelaskan 1-2 keunggulan utama produk secara singkat, maksimal 3-4 kalimat total. Boleh ada sapaan/basa-basi ramah singkat di awal sebelum masuk ke jawaban inti'
-    : '- Ini BUKAN pesan pertama (sudah ada riwayat chat): JANGAN ulangi penjelasan keunggulan produk yang sudah dijelaskan sebelumnya. Jawab sesuai konteks — panjang balasan menyesuaikan kompleksitas pertanyaan, boleh ada basa-basi ramah singkat sebelum/sesudah jawaban inti (misal "Siap Kak!", "Tentu bisa~", "Senang bisa bantu!")');
+    : '- Ini BUKAN pesan pertama (sudah ada riwayat chat): JANGAN ulangi penjelasan keunggulan produk yang sudah dijelaskan sebelumnya. Jawab sesuai konteks — boleh ada basa-basi ramah singkat sebelum/sesudah jawaban inti (misal "Siap Kak!", "Tentu bisa~", "Senang bisa bantu!")');
+  parts.push('- JANGAN sebut nama produk berulang kali. Kalau produk sudah disebut/ditetapkan di percakapan sebelumnya, cukup referensikan dengan "produknya", "pesanan", atau langsung ke inti tanpa menyebut nama produk lagi. Contoh SALAH: "Siap Kak, untuk Pasta Dempul Instan Tembok-nya, boleh minta alamat?" → Contoh BENAR: "Siap Kak, boleh minta alamat lengkapnya?"');
   parts.push('- Kalau pelanggan hanya minta harga ("cek harga", "berapa", dll), jawab harga + 1 kalimat penutup/CTA saja. JANGAN ulang jelaskan keunggulan produk lagi kalau sudah pernah dijelaskan di riwayat chat sebelumnya');
-  parts.push('- Panjang balasan: SEDANG — tidak perlu selalu sesingkat mungkin. Untuk pertanyaan sederhana boleh singkat; untuk yang butuh penjelasan boleh lebih panjang asal tidak bertele-tele. Natural dan tidak kaku');
   parts.push('');
-  parts.push('=== ATURAN DATA PEMESANAN (TANYA SATU-SATU, PENTING) ===');
-  parts.push('- JANGAN pernah minta beberapa data sekaligus dalam 1 balasan (misal "boleh minta nama, alamat, dan No HP" dalam 1 kalimat). Banyak pelanggan kurang nyaman ketik panjang/sekaligus — tanya SATU per SATU, tunggu jawabannya, baru lanjut ke data berikutnya');
-  parts.push('- Urutan yang harus diikuti:');
-  parts.push('  1) Kalau varian/warna belum jelas, konfirmasi dulu itu saja');
-  parts.push('  2) Tanya Alamat lengkap — minta dalam 1 pertanyaan: nama jalan/gang, nomor rumah, RT/RW, kelurahan/desa, kecamatan, kota/kabupaten. Contoh kalimat: "Boleh minta alamat lengkapnya Kak? Termasuk nama jalan, nomor rumah, RT/RW, kelurahan, kecamatan, dan kota/kabupatennya ya 😊"');
-  parts.push('  3) Kalau alamat yang diberikan BELUM ada nama jalan/nomor rumah yang jelas (misal cuma level desa/dusun/kampung): tanya patokan rumah saja dulu ("boleh kasih patokan rumahnya Kak, biar kurir gak nyasar? misal dekat masjid/sekolah/warung apa"). Kalau alamat sudah jelas (ada nama jalan & nomor rumah/kompleks), LEWATI langkah ini, jangan tanya patokan');
-  parts.push('  4) Tanya Nama lengkap penerima — 1 pertanyaan saja');
-  parts.push('  5) Untuk No HP: JANGAN langsung minta diketik. Tanya dulu: "Boleh pakai nomor WhatsApp ini juga untuk dihubungi kurir ya, Kak?" — kalau pelanggan setuju (misal "iya"/"boleh"/"sama"), JANGAN minta dia ketik nomornya, cukup catat dengan menulis nilai persis "SAMA_DENGAN_WA" di field hp pada [ORDER_DATA] nanti (sistem otomatis mengisi nomor sebenarnya). Kalau pelanggan mau kasih nomor lain, baru minta diketik dan tulis nomor tersebut di field hp');
+  parts.push('=== BATAS KALIMAT PER STEP (PENTING) ===');
+  parts.push('- Step 1 (produk): MAKSIMAL 2 kalimat — jawab pertanyaan produk + CTA');
+  parts.push('- Step 2 (follow-up): 1 kalimat — langsung jawab pertanyaan + CTA');
+  parts.push('- Step 3 (kumpul data): 1 kalimat — tanya SATU field spesifik. Boleh lebih kalau perlu verifikasi (misal: "Ini sudah nama lengkap Kak? Mohon nama lengkap ya.")');
+  parts.push('- Step 4 (konfirmasi): MAKSIMAL 2 kalimat — konfirmasi pesanan + penutup');
+  parts.push('- Step 5 (eskalasi): Sapa customer singkat (misal "Sebentar ya Kak") + sisipkan tag [ESCALATE]. Admin akan jawab dari Telegram');
+  parts.push('- Di luar aturan di atas, SINGKAT dan langsung ke inti. Jangan ada basa-basi berlebihan');
+  parts.push('');
+  parts.push('=== ATURAN DATA PEMESANAN (IKUTI STEP3 RULES, PENTING) ===');
+  parts.push('- Untuk pengumpulan data alamat dan data customer, IKUTI urutan di STEP3 RULES di atas (satu field per balasan).');
+  parts.push('- ATURAN INI tidak menggantikan STEP3 — STEP3 lebih detail dan harus diikuti.');
+  parts.push('- Untuk No HP: JANGAN langsung minta diketik. Tanya dulu: "Boleh pakai nomor WhatsApp ini juga untuk dihubungi kurir ya, Kak?" — kalau setuju → catat "SAMA_DENGAN_WA" di field hp pada [ORDER_DATA]; kalau mau kasih nomor lain → minta diketik');
   parts.push('- HATI-HATI KATA AMBIGU: Kata "No", "no", "nomer", "nomor" dalam chat bahasa Indonesia SERING berarti "Nomor" (misal: "No WA ini kak", "no hp ini aja"), BUKAN berarti "tidak/batal". JANGAN tafsirkan sebagai pembatalan kecuali ada konteks sangat jelas (misal "gak jadi", "batal", "tidak jadi beli"). Kalau ambigu, konfirmasi dulu: "Maksudnya pakai nomor WhatsApp ini ya, Kak?" — jangan langsung tutup percakapan.');
   parts.push('- Tetap patuhi ATURAN CTA (maksimal 1 pertanyaan per balasan) — jangan gabungkan 2 langkah di atas jadi 1 balasan');
   parts.push('- Begitu SEMUA data (Alamat+patokan bila perlu, Nama, konfirmasi No HP) sudah lengkap terkumpul: JANGAN langsung sisipkan [ORDER_DATA]. Balas dulu dengan MEREKAP pesanan (produk, varian, jumlah, total harga, nama, alamat lengkap+patokan, No HP) dan minta konfirmasi eksplisit, contoh: "Baik Kak, saya konfirmasi ya: ... sudah benar semua?"');
@@ -1343,6 +1434,18 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
   parts.push('- Kalau SELURUH balasanmu untuk pesan ini hanya berisi tag [ESCALATE], JANGAN tambahkan kalimat basa-basi apapun di luar tag itu (sistem akan menahan balasan ke pelanggan sampai admin menjawab)');
   parts.push('- Kalau sebagian pertanyaan pelanggan BISA dijawab dari info yang ada dan sebagian TIDAK, jawab dulu bagian yang bisa secara normal (termasuk CTA-nya), lalu tambahkan tag [ESCALATE] untuk bagian yang tidak diketahui itu');
   parts.push('- Kalau pelanggan bertanya soal produk/topik yang BENAR-BENAR di luar bisnis toko ini sama sekali (bukan variasi istilah dari produk yang ada, misal toko jual alat rumah tangga tapi ditanya soal jasa servis HP) — ini BUKAN kasus eskalasi, cukup jawab jujur dan ramah bahwa itu tidak tersedia, lalu tawarkan produk lain yang relevan jika ada');
+  parts.push('');
+  parts.push('=== ANTI-HALLUCINATION: INFO YANG BOLEH vs TIDAK BOLEH (SANGAT PENTING) ===');
+  parts.push('- INFO YANG BOLEH disebutkan (hanya kalau tertulis eksplisit di KB): nama produk, harga, varian/warna, manfaat/kegunaan, cara pakai, harga sudah termasuk ongkir atau belum');
+  parts.push('- INFO YANG TIDAK BOLEH dibuat/ditebak sendiri (JANGAN PERNAH, WALAU KEDENGERAN MASUK AKAL):');
+  parts.push('  * Tanggal atau hari pengiriman (misal "dikirim tanggal 18", "besok dikirim", "2-3 hari lagi sampai")');
+  parts.push('  * Estimasi waktu sampai ("3-5 hari", "seminggu lagi")');
+  parts.push('  * Status stok ("ready", "kosong", "sisa 5")');
+  parts.push('  * Nama kurir / jasa pengiriman');
+  parts.push('  * Lokasi toko / alamat pengirim');
+  parts.push('  * Info kebijakan yang tidak disebutkan (retur, garansi, klaim)');
+  parts.push('- Kalau customer tanya salah satu info di atas: JANGAN jawab dengan informasi buatan sendiri. Gunakan tag [ESCALATE] untuk meneruskan ke admin');
+  parts.push('- RISIKO: jawaban palsu soal tanggal/stok/estimasi bisa bikin customer kecewa dan komplain. Lebih baik diam dan tanya admin daripada mengarang');
   parts.push('');
   parts.push('=== ATURAN SPLIT BUBBLE (PENTING) ===');
   parts.push('- Ketika customer menyebut nama produk untuk PERTAMA KALI di percakapan ini (dan produk belum pernah dikonfirmasi sebelumnya di history), WAJIB pisahkan balasanmu menjadi 2 bagian menggunakan tag [SPLIT]:');
@@ -2398,24 +2501,42 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
            entry.aiReply = null;
            entry.cancelledEntry = true;
            save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
-           return; 
+           return;
         }
+
+        // ── B1 Hold Check #2: cek lagi SETELAH delay sebelum kirim ──────
+        // Pesan susulan bisa datang selama reply delay (10-15 detik).
+        // B1 Hold #1 sudah lewat, jadi cek ulang di sini.
+        const hasNewerMessageAfterDelay = messages.some(m =>
+          m.from === from && m.id > entry.id && !m.replied
+        );
+        if (pendingBuffers.has(from) || hasNewerMessageAfterDelay) {
+          console.log(`⏸️ Reply untuk ${senderName} ditahan (post-delay) — ada pesan susulan.`);
+          entry.replied = true;
+          entry.aiReply = null;
+          entry.cancelledEntry = true;
+          save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
+          return;
+        }
+        // ────────────────────────────────────────────────────────────────────
 
         // Hapus dari activeProcessing karena sudah mau dikirim
         activeProcessing.delete(from);
 
-        // Step tag detection: [STEP=X] → update orderState.step, strip dari reply
+        // Step tag detection: [STEP=X] → override step via AI tag (secondary mechanism)
         const stepTagMatch = cleanReply.match(/\[STEP=(\d)\]/i);
         if (stepTagMatch) {
           const newStep = parseInt(stepTagMatch[1]);
           const st = orderStates.get(from);
-          if (st && [1,2,3,4,5].includes(newStep)) {
+          if (st && [1,2,3,4,5].includes(newStep) && st.step !== newStep) {
+            console.log(`📊 [Step] ${from.slice(-4)}: ${st.step}→${newStep} (via AI tag [STEP=${newStep}])`);
             st.step = newStep;
             st.lastUpdate = Date.now();
             orderStates.set(from, st);
             persistOrderState();
           }
           cleanReply = cleanReply.replace(/\[STEP=\d\]/gi, '').trim();
+          entry.aiReply = cleanReply; // update DB supaya tag [STEP=X] tidak tersimpan
         }
 
         // E1: Wrap send — kalau gagal (Meta down/timeout), jangan tandai replied=true
@@ -2750,6 +2871,12 @@ app.post('/webhook', (req, res) => {
                 continue;
               }
               // Tidak ada pending sama sekali — biarkan lanjut diproses sebagai chat biasa
+            }
+
+            // ── Stop chat per nomor: skip AI jika nomor ini di-stop ──
+            if (settings.stoppedChats?.includes(from)) {
+              console.log(`⛔ Chat ${senderName} (${from.slice(-4)}) di-stop — AI tidak memproses.`);
+              continue;
             }
 
             // ── Buffer & cek susulan: seperti cara kerja manusia ──
@@ -3122,6 +3249,85 @@ app.delete('/api/orders/:id', async (req, res) => {
     res.json({ ok: true });
   } else {
     res.status(404).json({ error: 'Order tidak ditemukan' });
+  }
+});
+
+// ── Chat Management: Stop AI & Delete Chat per nomor ──
+
+// POST /api/chat/:waId/stop — toggle stop AI untuk 1 nomor
+app.post('/api/chat/:waId/stop', (req, res) => {
+  const waId = decodeURIComponent(req.params.waId);
+  const { stopped } = req.body;
+  if (!settings.stoppedChats) settings.stoppedChats = [];
+
+  if (stopped) {
+    if (!settings.stoppedChats.includes(waId)) settings.stoppedChats.push(waId);
+    console.log(`⛔ Chat ${waId.slice(-4)} di-STOP`);
+  } else {
+    settings.stoppedChats = settings.stoppedChats.filter(id => id !== waId);
+    console.log(`▶️ Chat ${waId.slice(-4)} di-UNSTOP`);
+  }
+
+  save(SET_FILE, settings); persistSettingsToDB(settings);
+  io.emit('settings_updated', settings);
+  res.json({ ok: true, stopped: !!stopped });
+});
+
+// DELETE /api/chat/:waId — hapus semua data chat untuk 1 nomor
+app.delete('/api/chat/:waId', async (req, res) => {
+  const waId = decodeURIComponent(req.params.waId);
+  console.log(`🗑️ Hapus semua chat untuk ${waId.slice(-4)}...`);
+
+  try {
+    // 1. Hapus dari in-memory messages
+    const before = messages.length;
+    messages = messages.filter(m => m.from !== waId);
+    console.log(`  📨 Messages: ${before} → ${messages.length} (${before - messages.length} dihapus)`);
+    save(MSG_FILE, messages);
+
+    // 2. Hapus order state
+    const phone = waId.replace(/@s\.whatsapp\.net|@c\.us/g, '');
+    orderStates.delete(waId);
+    orderStates.delete(phone);
+    persistOrderState();
+
+    // 3. Hapus sent product images
+    sentProductImages.delete(waId);
+
+    // 4. Hapus active claims
+    activeClaims.delete(waId);
+    await db.deleteActiveClaim(waId).catch(e => console.warn('[Delete] activeClaim error:', e.message));
+
+    // 5. Hapus pending buffer & processing
+    pendingBuffers.delete(waId);
+    if (activeProcessing.has(waId)) {
+      const task = activeProcessing.get(waId);
+      if (task.controller) task.controller.abort();
+      activeProcessing.delete(waId);
+    }
+    userLocks.delete(waId);
+
+    // 6. Hapus pending escalations untuk nomor ini
+    pendingEscalations = pendingEscalations.filter(e => e.from !== waId);
+
+    // 7. Hapus dari DB
+    await db.pool.query('DELETE FROM messages WHERE wa_id = $1', [waId]).catch(e => console.warn('[Delete] DB messages error:', e.message));
+    await db.pool.query('DELETE FROM orders WHERE wa_id = $1', [waId]).catch(e => console.warn('[Delete] DB orders error:', e.message));
+
+    // 8. Hapus dari stopped list jika ada
+    if (settings.stoppedChats?.includes(waId)) {
+      settings.stoppedChats = settings.stoppedChats.filter(id => id !== waId);
+      save(SET_FILE, settings); persistSettingsToDB(settings);
+    }
+
+    // 9. Update dashboard
+    io.emit('messages', messages);
+
+    console.log(`✅ Chat ${waId.slice(-4)} berhasil dihapus`);
+    res.json({ ok: true, deleted: before - messages.length });
+  } catch (err) {
+    console.error(`❌ Gagal hapus chat ${waId.slice(-4)}:`, err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
