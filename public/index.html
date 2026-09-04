@@ -2684,11 +2684,11 @@ if (typeof socket !== 'undefined') {
 .itest-table td { padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:top;
   word-break:break-word; line-height:1.5; }
 .itest-table tr:hover td { background:rgba(108,142,191,.05); }
-.itest-col-input  { width:18%; }
-.itest-col-output { width:20%; }
-.itest-col-req    { width:22%; }
-.itest-col-res    { width:22%; }
-.itest-col-val    { width:18%; }
+.itest-col-input  { width:12%; }
+.itest-col-output { width:16%; }
+.itest-col-req    { width:28%; }
+.itest-col-res    { width:28%; }
+.itest-col-val    { width:16%; }
 .itest-step { display:inline-block; font-size:.6rem; font-weight:700; padding:1px 6px;
   border-radius:8px; color:#fff; margin-right:4px; vertical-align:middle; }
 .itest-s1{background:#6c8ebf} .itest-s2{background:#d6ae27} .itest-s3{background:#e07a2f}
@@ -2772,45 +2772,85 @@ async function itReset() {
   await fetch('/api/test/internal/reset', { method:'POST', headers:{'Authorization':'Bearer '+TOKEN} });
 }
 
-function itToggleAccord(id) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+// Helper: box scrollable untuk teks panjang
+function itScrollBox(text, opts = {}) {
+  const maxH = opts.maxH || '220px';
+  const mono = opts.mono !== false;
+  const style = [
+    `max-height:${maxH}`,
+    'overflow-y:auto',
+    'padding:7px 9px',
+    'background:var(--s2)',
+    'border:1px solid var(--border)',
+    'border-radius:5px',
+    'white-space:pre-wrap',
+    'word-break:break-word',
+    'line-height:1.55',
+    'font-size:.72rem',
+    mono ? 'font-family:monospace' : '',
+  ].filter(Boolean).join(';');
+  return `<div style="${style}">${text}</div>`;
 }
 
 function itFormatReply(text) {
   if (!text) return '<span style="color:var(--muted)">...</span>';
-  // highlight ORDER_DATA
+  // Tampilkan teks asli apa adanya (full), dengan highlight tag khusus
   let h = x(text);
-  h = h.replace(/\[ORDER_DATA\][\s\S]*?\[\/ORDER_DATA\]/g, m =>
-    `<span class="itest-order-data">📦 ORDER_DATA tersimpan</span>`);
-  h = h.replace(/\[ESCALATE:[^\]]*\][\s\S]*?\[\/ESCALATE\]/g, m =>
-    `<span class="itest-escalate">📣 ESCALATE ke Admin</span>`);
-  return h;
+  // [SPLIT] → garis pemisah visual
+  h = h.replace(/\[SPLIT\]/g, '<hr style="margin:4px 0;border-color:#ccc">');
+  // ORDER_DATA → tampilkan isi JSON-nya
+  h = h.replace(/\[ORDER_DATA\]([\s\S]*?)\[\/ORDER_DATA\]/g, (_, inner) =>
+    `<div class="itest-order-data" style="margin:4px 0">📦 [ORDER_DATA]<br>${x(inner.trim())}</div>`);
+  // ESCALATE → highlight kontennya
+  h = h.replace(/\[ESCALATE:([^\]]*)\]([\s\S]*?)\[\/ESCALATE\]/g, (_, topic, body) =>
+    `<div class="itest-escalate" style="margin:4px 0">📣 [ESCALATE: ${x(topic)}]<br>${x(body.trim())}</div>`);
+  return itScrollBox(h, {mono: false, maxH: '250px'});
 }
 
-function itFormatRaw(text, id) {
+function itFormatRaw(text) {
+  // Teks mentah dari Gemini — tampilkan seluruhnya apa adanya
   if (!text) return '<span style="color:var(--muted)">Tidak tersedia</span>';
-  const short = x(text.slice(0, 120)) + (text.length > 120 ? '…' : '');
-  return `<div>${short}</div>
-    <div class="itest-accord" onclick="itToggleAccord('${id}')">▶ Lihat selengkapnya</div>
-    <div class="itest-accord-body" id="${id}" style="display:none">${x(text)}</div>`;
+  return itScrollBox(x(text), {maxH: '280px'});
 }
 
-function itFormatRequest(req, id) {
+function itFormatRequest(req) {
   if (!req) return '<span style="color:var(--muted)">Tidak tersedia</span>';
-  const sysLen = (req.systemPrompt || '').length;
+  const sysLen  = (req.systemPrompt || '').length;
   const histLen = (req.history || []).length;
-  const msgPreview = x((req.message || '').slice(0, 80));
-  const tokSys = req.tokenEstimate?.system || '?';
+  const tokSys  = req.tokenEstimate?.system  || '?';
   const tokHist = req.tokenEstimate?.history || '?';
-  return `<div style="font-size:.7rem">
-    📋 System: <b>${sysLen} chars</b> (~${tokSys} tok)<br>
-    📜 History: <b>${histLen} entri</b> (~${tokHist} tok)<br>
-    💬 Message: "${msgPreview}"
-  </div>
-  <div class="itest-accord" onclick="itToggleAccord('${id}')" >▶ Lihat System Prompt</div>
-  <div class="itest-accord-body" id="${id}" style="display:none">${x(req.systemPrompt || '')}</div>`;
+  const tokCur  = req.tokenEstimate?.current || '?';
+
+  // History: tampilkan tiap entri user+AI
+  let histHtml = '';
+  if (histLen > 0) {
+    histHtml = (req.history || []).map((h, i) => {
+      if (h._summary) return `<div style="color:#888"><b>[summary]</b> ${x(h.summary||'')}</div>`;
+      return `<div style="margin-bottom:6px">`+
+        `<div><b style="color:#1a6eb5">👤 [${i+1}] User:</b> ${x(h.body||''||'')}</div>`+
+        `<div><b style="color:#2a6c2a">🤖 AI:</b> ${x(h.aiReply||'')}</div>`+
+        `</div>`;
+    }).join('');
+  } else {
+    histHtml = '<em style="color:var(--muted)">Belum ada history</em>';
+  }
+
+  return `
+    <div style="margin-bottom:6px;font-size:.7rem;font-weight:700;color:var(--muted)">
+      💬 MESSAGE (ke Gemini) — ${tokCur} tokens
+    </div>
+    ${itScrollBox(x(req.message || ''), {mono:false, maxH:'80px'})}
+
+    <div style="margin:8px 0 4px;font-size:.7rem;font-weight:700;color:var(--muted)">
+      📜 HISTORY — ${histLen} entri (${tokHist} tokens)
+    </div>
+    ${itScrollBox(histHtml, {mono:false, maxH:'160px'})}
+
+    <div style="margin:8px 0 4px;font-size:.7rem;font-weight:700;color:var(--muted)">
+      📋 SYSTEM PROMPT — ${sysLen} chars (~${tokSys} tokens)
+    </div>
+    ${itScrollBox(x(req.systemPrompt || ''), {maxH:'220px'})}
+  `;
 }
 
 function itFormatValidation(validation) {
@@ -2843,22 +2883,21 @@ function itRender() {
     const isPending = turn.id === 'pending' || !turn.aiOutput;
     const stepBadge = turn.step ? `<span class="itest-step ${stepColors[turn.step]||''}">S${turn.step}</span>` : '';
     const ts = new Date(turn.timestamp).toLocaleTimeString('id-ID', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    const uid = `it_${i}_${turn.id}`;
     return `<tr class="${isPending ? 'itest-pending' : ''}">
       <td class="itest-col-input">
         ${stepBadge}<span class="itest-msg">${x(turn.input)}</span>
         <span class="itest-ts">${ts}</span>
       </td>
-      <td class="itest-col-output itest-reply">
+      <td class="itest-col-output">
         ${isPending
           ? `<span class="itest-spinner"></span> Menunggu AI...`
           : itFormatReply(turn.aiOutput)}
       </td>
       <td class="itest-col-req">
-        ${itFormatRequest(turn.geminiRequest, uid + '_req')}
+        ${itFormatRequest(turn.geminiRequest)}
       </td>
-      <td class="itest-col-res itest-raw">
-        ${itFormatRaw(turn.geminiResponse?.rawText, uid + '_res')}
+      <td class="itest-col-res">
+        ${itFormatRaw(turn.geminiResponse?.rawText)}
       </td>
       <td class="itest-col-val">
         ${itFormatValidation(turn.validation)}
