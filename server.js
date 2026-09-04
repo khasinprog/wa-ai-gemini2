@@ -553,7 +553,7 @@ function validateTestTurn({ step, prevStep, rawGeminiText, aiOutput }) {
 
   // V2: Step 2 — max 2 kalimat (tidak boleh terlalu panjang)
   if (step === 2) {
-    const sentences = (aiOutput || '').split(/[.!?]+/).filter(s => s.trim().length > 3);
+    const sentences = (aiOutput || '').split(/[.!?]+\s+/).filter(s => s.trim().length > 3);
     add('V2', 'Step 2 — max 2 kalimat', sentences.length <= 2, `${sentences.length} kalimat terdeteksi`);
   }
 
@@ -1371,6 +1371,8 @@ STEP 3 — KUMPULKAN DATA (IKUTI URUTAN INI PERSIS):
 - Customer sudah menunjukkan minat order
 - Urutan tanya yang WAJIB diikuti:
   1. Nama lengkap penerima (kalau 1 kata → WAJIB verifikasi, JANGAN catat sebagai nama lengkap)
+     - Jika nama baru 1 kata, JANGAN lanjut ke alamat. WAJIB tanya: "Nama lengkapnya apa Kak?"
+     - HANYA lanjut ke alamat SETELAH nama 2 kata atau lebih dikonfirmasi customer
   2. Alamat: desa/kelurahan + kecamatan + kota/kabupaten
      - KECAMATAN dan KOTA/KABUPATEN itu WAJIB — tidak boleh skip atau diasumsikan
      - Kalau customer cuma kasih nama desa/dusun: WAJIB tanya "Kecamatannya apa, Kak? Dan kota/kabupatennya?"
@@ -2007,6 +2009,8 @@ function extractEscalations(replyText, fromJid, senderName) {
     return '';
   });
   cleanReply = cleanReply.trim();
+  // BUG-16 fix: Bersihkan tag [ESCALATE] yang tidak ditutup (AI lupa [/ESCALATE])
+  cleanReply = cleanReply.replace(/\[ESCALATE:[^\]]*\][\s\S]*/gi, '').trim();
   if (found.length) {
     saveEscalations();
     io.emit('escalations_updated', pendingEscalations);
@@ -2697,7 +2701,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
         // dedup 5 menit, jadi tidak akan double-save order saat retry.
         // P1-A: Split reply jadi beberapa bubble kalau ada tag [SPLIT]
         try {
-          const bubbles = cleanReply.split('[SPLIT]').map(b => b.trim()).filter(Boolean);
+          const bubbles = cleanReply.split(/\[SPLIT\]/i).map(b => b.trim().replace(/\[SPLIT\]/gi, '')).filter(Boolean);
           for (let bi = 0; bi < bubbles.length; bi++) {
             if (bi > 0) await sleep(config.BUBBLE_DELAY_MS); // jeda natural antar bubble
             await sendWhatsAppText(from, bubbles[bi], bi === 0 ? lastWamid : undefined);
