@@ -205,7 +205,9 @@ const ORDER_STATE_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 2 minggu
 const orderStates = new Map();
 
 // ── Persist: simpan ke file saat state berubah ──
-function persistOrderState() {
+// IMP-2A: Debounce 2s — jika ada banyak update berturut-turut, tulis sekali saja
+let _persistTimer = null;
+function _doPersistOrderState() {
   const obj = {};
   for (const [phone, state] of orderStates) obj[phone] = state;
   try {
@@ -213,6 +215,11 @@ function persistOrderState() {
   } catch (e) {
     console.error('⚠️  [OrderState] Gagal persist:', e.message);
   }
+}
+function persistOrderState(urgent = false) {
+  if (urgent) { _doPersistOrderState(); return; }
+  if (_persistTimer) clearTimeout(_persistTimer);
+  _persistTimer = setTimeout(_doPersistOrderState, 2000);
 }
 
 // ── Load: muat dari file saat server start, auto-cleanup >14 hari ──
@@ -249,6 +256,7 @@ function createOrderState(product) {
     kota: null,
     rtRw: null,
     patokan: null,
+    patokanSkipped: false,  // IMP-3B: customer bilang tidak ada patokan
     alamatLengkap: null,
     noHp: null,
     orderConfirmed: false,
@@ -262,7 +270,8 @@ function detectProductFocus(message) {
   const lowerMsg = message.toLowerCase();
   for (const b of blocks) {
     if (!b.name) continue;
-    const words = b.name.toLowerCase().split(/\s+/).filter(w => w.length >= 3);
+    // IMP-2C: naikkan threshold 3→4 agar kata pendek (cat, abu, dll) tidak false match
+    const words = b.name.toLowerCase().split(/\s+/).filter(w => w.length >= 4);
     if (words.some(w => lowerMsg.includes(w))) return b.name;
   }
   return null;
@@ -341,7 +350,9 @@ function updateOrderState(from, message) {
   }
 
   // Step 2→3: Customer tunjukkan intent order
-  const orderIntent = /\b(iya|mau|order|pesan|proses|ambil|fix|oke\s*(bayar|proses|lanjut)|setuju)\b/i;
+  // IMP-1A: Hilangkan "iya" dan "mau" tunggal — terlalu ambigu, bisa trigger step 3 saat customer
+  // hanya ack pertanyaan biasa. Gunakan pola yang lebih eksplisit menyebut order/beli/proses.
+  const orderIntent = /\b(mau\s+(order|pesan|beli|ambil)|saya\s+(order|pesan|beli)|lanjut\s+order|proses\s+aja|oke\s*(bayar|proses|lanjut)|setuju\s+order)\b|\border\b|\bpesan\b/i;
   if (state.step === 2 && orderIntent.test(lower)) {
     state.step = 3;
   }
@@ -399,6 +410,20 @@ function extractCustomerFields(state, message) {
     state.rtRw = '-';
   }
 
+  // IMP-3B: Patokan optional — jika customer bilang tidak ada patokan
+  if (!state.patokan && !state.patokanSkipped
+      && /\b(gak ada|ga ada|tidak ada|gak punya|ga punya|gapunya)\b/i.test(lower)
+      && /\b(patokan|panduan|penanda|acuan|landmark)\b/i.test(lower)) {
+    state.patokanSkipped = true;
+  }
+
+  // IMP-3A: noHp SAMA_DENGAN_WA — detect "pakai nomor ini aja", "boleh nomor WA ini"
+  if (!state.noHp
+      && /\b(sama|boleh|pakai|pake|aja|nomor\s*ini|wa\s*ini|whatsapp\s*ini|nomor\s*wa)\b/i.test(lower)
+      && !/\b08\d{8}/.test(message)) {
+    state.noHp = 'SAMA_DENGAN_WA';
+  }
+
   // ── NAMA: ≥ 2 kata → langsung catat sebagai nama verified ──
   // BUG-01 fix: pesan yang mengandung koma (pemisah alamat) JANGAN dianggap nama
   const hasComma = message.includes(',');
@@ -449,7 +474,7 @@ function extractCustomerFields(state, message) {
   }
 
   // ── PATOKAN: baris yang bukan nama/bukan alamat/bukan HP ──
-  if (!state.patokan) {
+  if (!state.patokan && !state.patokanSkipped) {
     const lowerClean = lower.replace(/rt\s*\d+\s*\/?\s*rw\s*\d+/gi, '').trim();
     if (
       lowerClean.length > 3 &&
@@ -485,18 +510,28 @@ function getNextOrderField(state) {
   return null;
 }
 
-// Cleanup order state setelah 30 menit idle
+// IMP-2B: POST_ORDER_TTL — reset state 3 hari setelah order confirmed agar customer bisa order lagi
+const POST_ORDER_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+
+// Cleanup order state: hapus idle >30 menit, reset post-order >3 hari
 setInterval(() => {
   const now = Date.now();
   let changed = false;
   for (const [from, state] of orderStates) {
-    if (now - state.lastUpdate > 30 * 60 * 1000) {
+    // Hapus state yang sudah idle > 30 menit (belum order)
+    if (!state.orderConfirmed && now - state.lastUpdate > 30 * 60 * 1000) {
       orderStates.delete(from);
+      changed = true;
+      continue;
+    }
+    // IMP-2B: Reset state 3 hari setelah order confirmed → customer bisa order lagi dari step 1
+    if (state.orderConfirmed && now - state.lastUpdate > POST_ORDER_TTL_MS) {
+      orderStates.set(from, createOrderState(state.product)); // reset ke step 1, produk tetap
       changed = true;
     }
   }
   // BUG-04 fix: persist ke file agar state tidak di-load ulang saat server restart
-  if (changed) persistOrderState();
+  if (changed) persistOrderState(true); // urgent=true agar tidak di-debounce
 }, 5 * 60 * 1000);
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1300,13 +1335,14 @@ STEP 5 — ESKALASI KE ADMIN:
 `;
 
 // Helper: field mana yang belum terisi
+// IMP-3B: patokan opsional jika patokanSkipped=true
 function getMissingFields(state) {
   const missing = [];
   if (!state.namaLengkap || !state.namaVerified) missing.push('nama lengkap');
   if (!state.desa)               missing.push('dusun/desa');
   if (!state.kecamatan)          missing.push('kecamatan');
   if (!state.kota)               missing.push('kota');
-  if (!state.patokan)            missing.push('patokan');
+  if (!state.patokan && !state.patokanSkipped) missing.push('patokan');  // opsional
   if (!state.rtRw)               missing.push('RT/RW');
   if (!state.noHp)               missing.push('nomor HP');
   return missing;
@@ -1325,6 +1361,11 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
   if (relevantKB?.trim()) {
     parts.push('=== INFORMASI PRODUK & BISNIS ===');
     parts.push(relevantKB.trim());
+    parts.push('');
+  } else if (isFirstMessage && focus) {
+    // IMP-3C: Produk terdeteksi tapi tidak ada KB → beri tahu AI agar tidak mengarang
+    parts.push(`// CATATAN SISTEM: Produk "${focus}" tidak memiliki informasi di Knowledge Base.`);
+    parts.push('// Balas dengan sopan bahwa informasi produk ini belum tersedia, dan tawarkan untuk menghubungi admin.');
     parts.push('');
   }
   // Product focus + Step State: kunci AI ke produk & step order
@@ -2293,9 +2334,14 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
   };
 
   // 1. Munculkan langsung di dashboard dan history
+  // IMP-4A: Tambah orderStep ke entry agar dashboard bisa tampilkan step badge
+  entry.orderStep = orderStates.get(from)?.step || null;
   messages.unshift(entry);
   if (messages.length > config.MESSAGE_LIMIT) messages = messages.slice(0, config.MESSAGE_LIMIT);
   save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
+  // IMP-4B: Log ringkas satu baris untuk monitoring production
+  const _st = orderStates.get(from);
+  console.log(`📨 [${from.slice(-4)}] step=${_st?.step ?? '-'} | "${message.slice(0, 45)}${message.length > 45 ? '…' : ''}" → AI`);
   io.emit('new_message', entry);
 
   // P2-A (deferred): Update in-memory message dengan media_url
@@ -3029,6 +3075,8 @@ async function flushMacrodroidBuffer(from) {
   messages.unshift(entry);
   if (messages.length > config.MESSAGE_LIMIT) messages = messages.slice(0, config.MESSAGE_LIMIT);
   save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
+  // IMP-4A: orderStep untuk dashboard badge (MacroDroid channel)
+  entry.orderStep = orderStates.get(from)?.step || null;
   io.emit('new_message', entry);
 
   // Antre per-pengirim (userLocks dipakai bersama dengan channel Cloud API supaya
@@ -3996,6 +4044,12 @@ app.get('/api/ai-test/result', (req, res) => {
 // TEST ENDPOINT: Simulasi pesan customer untuk testing flow
 // ═══════════════════════════════════════════════════════════════════
 app.post('/test/simulate', async (req, res) => {
+  // IMP-1B: Auth check — wajib X-Test-Token header di production
+  const testToken = req.headers['x-test-token'];
+  const expectedToken = process.env.TEST_TOKEN || '';
+  if (expectedToken && testToken !== expectedToken) {
+    return res.status(401).json({ error: 'Unauthorized: X-Test-Token tidak cocok' });
+  }
   try {
     const { sender, message, senderName } = req.body || {};
     if (!sender || !message) {
@@ -4019,7 +4073,8 @@ app.post('/test/simulate', async (req, res) => {
       aiReply: null,
       type: 'text',
     };
-    messages.push(entry);
+    // IMP-1C: unshift (bukan push) agar urutan array konsisten dengan processCustomerMessage
+    messages.unshift(entry);
     save(MSG_FILE, messages);
 
     // Emit ke dashboard

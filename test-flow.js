@@ -23,22 +23,22 @@
 
 const SERVER = process.env.SERVER || '202.155.157.244';
 const PHONE  = process.env.PHONE  || '6281233350792'; // nomor test
-const DELAY  = parseInt(process.env.DELAY || '30000', 10); // 30 detik
-const DELAY_SHORT = 5000; // 5 detik untuk cek response
+const POLL_INTERVAL = 3000; // cek response tiap 3 detik
+const MAX_WAIT = 180000; // IMP-4C: naikkan dari 120s ke 180s (Gemini bisa lambat)
 
 const TEST_FLOW = [
-  { turn: 1,  msg: 'Halo kak ada pasta dempul?',        expect: 'Step 1 — produk dijelaskan' },
-  { turn: 2,  msg: 'Harganya berapa?',                  expect: 'Step 1 — harga disebutkan' },
-  { turn: 3,  msg: 'Ini 1 botol brpa gram',             expect: 'Step 2 — jawaban singkat (250 gram)' },
-  { turn: 4,  msg: 'Iya ka',                            expect: 'Step 3 — tanya nama' },
-  { turn: 5,  msg: 'Khasin',                            expect: 'Step 3 — verifikasi nama (1 kata)' },
-  { turn: 6,  msg: 'Khasin Khafabi',                    expect: 'Step 3 — nama verified, tanya alamat' },
-  { turn: 7,  msg: 'Tamantirto, Kasihan, Bantul',       expect: 'Step 3 — catat desa/kec/kota, tanya detail' },
-  { turn: 8,  msg: 'Perum Dalem Tamantirto C3, RT 03/05', expect: 'Step 3 — catat RT/RW, tanya patokan' },
-  { turn: 9,  msg: 'Deket masjid',                      expect: 'Step 3 — catat patokan, tanya HP' },
-  { turn: 10, msg: 'Boleh pakai nomor ini aja',         expect: 'Step 3 → Step 4 — rekap semua data' },
-  { turn: 11, msg: 'Iya',                               expect: 'Step 4 — [ORDER_DATA] terkirim' },
-  { turn: 12, msg: 'Ini dikirim kapn',                  expect: 'Step 5 — eskalasi ke Telegram' },
+  { turn: 1,  msg: 'Halo kak ada pasta dempul?',           expect: 'Step 1 — produk dijelaskan',              validate: r => /89|dempul|produk/i.test(r) },
+  { turn: 2,  msg: 'Harganya berapa?',                     expect: 'Step 1 — harga disebutkan',               validate: r => /89|harga|rb|ribu/i.test(r) },
+  { turn: 3,  msg: 'Ini 1 botol brpa gram',                expect: 'Step 2 — jawaban singkat (250 gram)',      validate: r => /250|gram/i.test(r) },
+  { turn: 4,  msg: 'order dong kak',                      expect: 'Step 2→3 — tanya nama',                   validate: r => /nama|penerima/i.test(r) },
+  { turn: 5,  msg: 'Khasin',                              expect: 'Step 3 — verifikasi nama (1 kata)',         validate: r => /nama\s+lengkap|lengkap|lengkapnya/i.test(r) },
+  { turn: 6,  msg: 'Khasin Khafabi',                      expect: 'Step 3 — nama verified, tanya alamat',    validate: r => /alamat|desa|kecamatan/i.test(r) },
+  { turn: 7,  msg: 'Tamantirto, Kasihan, Bantul',          expect: 'Step 3 — catat desa/kec/kota, tanya RT/RW', validate: r => /rt|rw/i.test(r) },
+  { turn: 8,  msg: 'Perum Dalem Tamantirto C3, RT 03/05',  expect: 'Step 3 — catat RT/RW, tanya patokan',    validate: r => /patokan|dekat|landmark|warung|masjid/i.test(r) },
+  { turn: 9,  msg: 'Deket masjid',                        expect: 'Step 3 — catat patokan, tanya HP',        validate: r => /hp|nomor|whatsapp|wa/i.test(r) },
+  { turn: 10, msg: 'Boleh pakai nomor ini aja',           expect: 'Step 3 → Step 4 — rekap semua data',       validate: r => /konfirmasi|rekap|benar|khasin/i.test(r) },
+  { turn: 11, msg: 'Iya',                                 expect: 'Step 4 — [ORDER_DATA] terkirim',           validate: r => /proses|siap|terima kasih/i.test(r) },
+  { turn: 12, msg: 'Ini dikirim kapn',                    expect: 'Step 5 — eskalasi ke Telegram',            validate: r => /admin|tanyakan|sebentar/i.test(r) },
 ];
 
 async function sendMessage(msg) {
@@ -73,7 +73,7 @@ async function getResponse() {
   }
 }
 
-function printTurn(turn, msg, response, expected) {
+function printTurn(turn, msg, response, expected, validateFn) {
   const lastEntry = response?.last5?.[response.last5.length - 1];
   const aiReply = lastEntry?.aiReply || '(belum ada response)';
   const stepMatch = aiReply.match(/\[STEP=(\d)\]/);
@@ -92,11 +92,29 @@ function printTurn(turn, msg, response, expected) {
     console.log(`⚠️  BELUM ADA RESPONSE — AI belum selesai proses`);
   } else {
     console.log(`✅ Response diterima`);
+    // IMP-4C: validasi konten jika ada validate function
+    if (validateFn) {
+      const valid = validateFn(aiReply);
+      console.log(`${valid ? '✅' : '⚠️ '} Konten: ${valid ? 'VALID (sesuai ekspektasi)' : 'TIDAK SESUAI — cek manual'}`);
+    }
   }
 }
 
 async function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
+}
+
+async function waitForResponse(maxWaitMs = MAX_WAIT) {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    const response = await getResponse();
+    const lastEntry = response?.last5?.[response.last5.length - 1];
+    if (lastEntry?.aiReply && lastEntry.aiReply !== null) {
+      return response;
+    }
+    await sleep(POLL_INTERVAL);
+  }
+  return null;
 }
 
 async function runTest() {
@@ -105,7 +123,7 @@ async function runTest() {
   console.log('═'.repeat(60));
   console.log(`Server: ${SERVER}`);
   console.log(`Phone:  ${PHONE}`);
-  console.log(`Delay:  ${DELAY / 1000} detik antar turn`);
+  console.log(`Poll:   tiap ${POLL_INTERVAL / 1000} detik, max ${MAX_WAIT / 1000} detik per turn`);
   console.log(`Turns:  ${TEST_FLOW.length}`);
   console.log('═'.repeat(60));
 
@@ -137,21 +155,30 @@ async function runTest() {
     }
     console.log(`✅ Pesan terkirim (${sendResult.entryId})`);
 
-    // Wait for AI to process
-    console.log(`⏳ Menunggu ${DELAY / 1000} detik...`);
-    await sleep(DELAY);
+    // Poll for response (no fixed delay)
+    console.log(`⏳ Menunggu response AI...`);
+    const response = await waitForResponse();
 
-    // Check response
-    const response = await getResponse();
-    printTurn(turn.turn, turn.msg, response, turn.expect);
-
-    const lastEntry = response?.last5?.[response.last5.length - 1];
-    const hasReply = lastEntry?.aiReply && lastEntry.aiReply !== null;
-    results.push({
-      turn: turn.turn,
-      status: hasReply ? 'OK' : 'NO_REPLY',
-      reply: lastEntry?.aiReply?.slice(0, 100),
-    });
+    if (response) {
+      printTurn(turn.turn, turn.msg, response, turn.expect, turn.validate);
+      const lastEntry = response?.last5?.[response.last5.length - 1];
+      const aiReply = lastEntry?.aiReply || '';
+      const contentValid = turn.validate ? turn.validate(aiReply) : true;
+      results.push({
+        turn: turn.turn,
+        status: contentValid ? 'OK' : 'CONTENT_MISMATCH',
+        reply: lastEntry?.aiReply?.slice(0, 100),
+      });
+    } else {
+      console.log(`\n${'─'.repeat(60)}`);
+      console.log(`TURN ${turn.turn}`);
+      console.log(`${'─'.repeat(60)}`);
+      console.log(`📤 Customer: "${turn.msg}"`);
+      console.log(`🤖 AI Reply: "(timeout — no response after ${MAX_WAIT / 1000}s)"`);
+      console.log(`📝 Expected: ${turn.expect}`);
+      console.log(`❌ TIMEOUT`);
+      results.push({ turn: turn.turn, status: 'TIMEOUT' });
+    }
   }
 
   // Summary

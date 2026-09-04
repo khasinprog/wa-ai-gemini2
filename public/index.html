@@ -186,6 +186,13 @@ input:checked+.slider:before{transform:translateX(18px)}
 .contact-name{font-size:.85rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .contact-preview{font-size:.75rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
 .contact-time{font-size:.65rem;color:var(--muted)}
+.contact-actions{display:flex;gap:4px;flex-shrink:0}
+.contact-actions button{width:26px;height:26px;border-radius:50%;border:none;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;transition:all .15s;opacity:.7}
+.contact-actions button:hover{opacity:1;transform:scale(1.1)}
+.btn-stop{background:#e5e7eb;color:#6b7280}
+.btn-stop.active{background:#ef4444;color:#fff}
+.btn-delete{background:#e5e7eb;color:#6b7280}
+.btn-delete:hover{background:#ef4444;color:#fff}
 .chat-header{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0;background:var(--s1)}
 .chat-avatar{width:36px;height:36px;border-radius:50%;background:var(--s3);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:var(--muted)}
 .chat-name{font-size:.95rem;font-weight:600}.chat-sub{font-size:.7rem;color:var(--muted)}
@@ -1150,6 +1157,7 @@ async function doLogin() {
 
 let socket,allMessages=[],orders=[],contacts={},activeContact=null;
 let lastRead = JSON.parse(localStorage.getItem("lastRead") || "{}");
+let settings = {}; // global settings from server
 
 
 function showToast(name, body, jid) {
@@ -1195,6 +1203,11 @@ async function initApp() {
     const jid = msg.from || msg.wa_id || '';
     msg.from = jid;
     allMessages.unshift(msg);
+    // IMP-4A: update orderStep di contacts tracker
+    if (jid && msg.orderStep != null) {
+      if (!contacts[jid]) contacts[jid] = { name: msg.senderName || msg.sender_name || jid, messages: [], lastActive: null };
+      contacts[jid].orderStep = msg.orderStep;
+    }
     processContacts();
     if(activeContact===jid) renderChat(jid);
     else showToast(msg.senderName||msg.sender_name||jid, msg.body||'[pesan baru]', jid);
@@ -1220,7 +1233,11 @@ async function initApp() {
     processContacts();
     if (activeContact === msg.from) renderChat(msg.from);
   });
-  socket.on('settings_updated',s=>{document.getElementById('arToggle').checked=s.autoReply??true;});
+  socket.on('settings_updated',s=>{
+    document.getElementById('arToggle').checked=s.autoReply??true;
+    settings = s; // update global settings
+    renderContacts(); // re-render to update stop buttons
+  });
   socket.on('new_order',o=>{orders.unshift(o);renderOrders();});
   socket.on('order_updated',o=>{
     const idx=orders.findIndex(x=>x.id===o.id);
@@ -1259,6 +1276,7 @@ if (!localStorage.getItem('authToken')) {
 
 function applySettings(s){
   if(!s)return;
+  settings = s; // store globally for use in renderContacts
   document.getElementById('channelSelect').value=s.channel||'cloudapi';
   document.getElementById('webhookUrlCloud').textContent=location.origin+'/webhook';
   document.getElementById('webhookUrlMacro').textContent=location.origin+'/webhook/wa-incoming';
@@ -1302,8 +1320,10 @@ function processContacts(){
     const jid = msg.from || msg.wa_id || '';
     if(!jid) continue;
     msg.from = jid; // pastikan selalu ada msg.from
-    if(!contacts[jid])contacts[jid]={name:msg.senderName||msg.sender_name||jid,messages:[],lastActive:null};
+    if (!contacts[jid]) contacts[jid] = {name: msg.senderName||msg.sender_name||jid, messages:[], lastActive:null};
     contacts[jid].messages.push(msg);
+    // IMP-4A: track orderStep dari pesan terbaru
+    if (msg.orderStep != null) contacts[jid].orderStep = msg.orderStep;
     // FIX #10: simpan lastActive dari timestamp pesan terbaru (messages sudah sorted DESC dari server)
     if (!contacts[jid].lastActive || new Date(msg.timestamp) > new Date(contacts[jid].lastActive)) {
       contacts[jid].lastActive = msg.timestamp;
@@ -1325,14 +1345,22 @@ function renderContacts(){
     const lr = lastRead[jid] || "0";
     const unreadCount = jid === activeContact ? 0 : c.messages.filter(m => !m.manual && new Date(m.timestamp) > new Date(lr)).length;
     const isUnread = unreadCount > 0;
+    // IMP-4A: Step badge — warna berbeda per step
+    const stepNum = c.orderStep;
+    const stepColors = { 1:'#6c8ebf', 2:'#d6ae27', 3:'#e07a2f', 4:'#3a9e6a', 5:'#c0392b' };
+    const stepLabels = { 1:'S1', 2:'S2', 3:'S3', 4:'S4', 5:'S5' };
+    const stepBadge = stepNum ? `<span style="background:${stepColors[stepNum]||'#888'};color:#fff;font-size:.55rem;font-weight:700;padding:1px 5px;border-radius:8px;margin-right:4px;vertical-align:middle">${stepLabels[stepNum]||stepNum}</span>` : '';
     return`<div class="contact-item ${activeContact===jid?'active':''} ${isUnread?'new-chat':''}" onclick="selectContact('${jid}')">
       <div class="contact-avatar">${(c.name||'?')[0].toUpperCase()}</div>
       <div class="contact-info">
-        <div class="contact-name" style="${isUnread ? 'font-weight:700;color:#000;' : ''}">${x(c.name)}</div>
+        <div class="contact-name" style="${isUnread ? 'font-weight:700;color:#000;' : ''}">${stepBadge}${x(c.name)}</div>
         <div class="contact-preview" style="${isUnread ? 'font-weight:600;color:#111;' : ''}">${x(last?.body||'')}</div>
       </div>
+      <div class="contact-actions">
+        <button class="btn-stop ${settings?.stoppedChats?.includes(jid)?'active':''}" onclick="event.stopPropagation();toggleStopChat('${jid}')" title="${settings?.stoppedChats?.includes(jid)?'Unstop AI':'Stop AI'}">⏸</button>
+        <button class="btn-delete" onclick="event.stopPropagation();deleteChat('${jid}','${x(c.name)}')" title="Hapus chat">🗑</button>
+      </div>
       <div class="contact-time">
-        <!-- FIX #10: fallback ke lastActive jika last?.timestamp kosong -->
         <div>${ft(last?.timestamp || c.lastActive)}</div>
         ${isUnread ? `<div class="unread-badge">${unreadCount}</div>` : ''}
       </div>
@@ -1357,6 +1385,43 @@ function selectContact(jid){
   if (window.innerWidth <= 768) {
     const chatPanel = document.querySelector('.chat-panel-col');
     if (chatPanel) chatPanel.classList.add('chat-open');
+  }
+}
+
+// ── Chat Management: Stop AI & Delete Chat ──
+async function toggleStopChat(jid) {
+  const isStopped = settings?.stoppedChats?.includes(jid);
+  try {
+    await fetch(`/api/chat/${encodeURIComponent(jid)}/stop`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ stopped: !isStopped })
+    });
+    // UI update via settings_updated event (Socket.IO)
+  } catch (e) {
+    console.error('Gagal toggle stop:', e);
+    alert('Gagal mengubah status stop');
+  }
+}
+
+async function deleteChat(jid, name) {
+  if (!confirm(`Yakin hapus semua chat ${name}?\nData tidak bisa dikembalikan.`)) return;
+  try {
+    const resp = await fetch(`/api/chat/${encodeURIComponent(jid)}`, { method: 'DELETE' });
+    const data = await resp.json();
+    if (data.ok) {
+      // Hapus dari client-side state
+      delete contacts[jid];
+      allMessages = allMessages.filter(m => m.from !== jid);
+      if (activeContact === jid) {
+        activeContact = null;
+        document.querySelector('.chat-messages').innerHTML = '<div class="empty-chat"><div class="ei">💬</div><p>Pilih chat</p></div>';
+      }
+      renderContacts();
+    }
+  } catch (e) {
+    console.error('Gagal hapus chat:', e);
+    alert('Gagal menghapus chat');
   }
 }
 
