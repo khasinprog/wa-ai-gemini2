@@ -535,6 +535,76 @@ setInterval(() => {
 }, 5 * 60 * 1000);
 
 // ═══════════════════════════════════════════════════════════════════
+// INTERNAL TEST MODE: Intercept WABA I/O + Gemini payload
+// ═══════════════════════════════════════════════════════════════════
+const TEST_PHONE = 'test_internal_0000'; // nomor virtual, tidak menyentuh WABA nyata
+const testTurns = [];                    // { id, input, aiOutput, geminiRequest, geminiResponse, step, validation, timestamp }
+let _capturedGeminiRequest = null;       // capture sementara Gemini request per turn
+let _capturedGeminiResponse = null;      // capture sementara Gemini response per turn
+let _prevTestStep = null;                // step sebelumnya untuk validasi V8
+
+// Validation engine — cek apakah AI reply sesuai ekspektasi
+function validateTestTurn({ step, prevStep, rawGeminiText, aiOutput }) {
+  const results = [];
+  const add = (id, label, pass, note = '') => results.push({ id, label, pass, note });
+
+  // V1: Output tidak kosong
+  add('V1', 'Output tidak kosong', (aiOutput || '').length > 0);
+
+  // V2: Step 2 — max 2 kalimat (tidak boleh terlalu panjang)
+  if (step === 2) {
+    const sentences = (aiOutput || '').split(/[.!?]+/).filter(s => s.trim().length > 3);
+    add('V2', 'Step 2 — max 2 kalimat', sentences.length <= 2, `${sentences.length} kalimat terdeteksi`);
+  }
+
+  // V3 & V4: [ORDER_DATA] valid dan lengkap
+  const orderMatch = (rawGeminiText || '').match(/\[ORDER_DATA\]([\s\S]*?)\[\/ORDER_DATA\]/);
+  if (orderMatch) {
+    try {
+      const od = JSON.parse(orderMatch[1].trim());
+      add('V3', '[ORDER_DATA] JSON valid', true);
+      const requiredFields = ['nama', 'hp', 'produk', 'alamat', 'pembayaran'];
+      const missingFields = requiredFields.filter(f => !od[f]);
+      add('V4', '[ORDER_DATA] field lengkap', missingFields.length === 0,
+        missingFields.length ? `Kurang: ${missingFields.join(', ')}` : '');
+    } catch(e) {
+      add('V3', '[ORDER_DATA] JSON valid', false, e.message);
+      add('V4', '[ORDER_DATA] field lengkap', false, 'JSON tidak valid');
+    }
+  }
+
+  // V5: Tidak ada tanggal karangan di output
+  const datePattern = /\b\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}\b/;
+  add('V5', 'Tidak ada tanggal karangan', !datePattern.test(aiOutput || ''));
+
+  // V6: [ESCALATE] format benar (tag buka = tag tutup)
+  const escOpen = (rawGeminiText || '').match(/\[ESCALATE:/g);
+  const escClose = (rawGeminiText || '').match(/\[\/ESCALATE\]/g);
+  if (escOpen) {
+    add('V6', '[ESCALATE] format benar', escOpen.length === (escClose || []).length,
+      `Buka: ${escOpen.length}, Tutup: ${(escClose || []).length}`);
+  }
+
+  // V7: Tidak sebut nama persona (AI tidak boleh bilang namanya sendiri)
+  const personaMatch = (settings?.persona || '').match(/(?:namaku|nama saya|saya adalah|bernama)\s+([A-Za-z]+)/i);
+  if (personaMatch?.[1]) {
+    add('V7', 'Tidak sebut nama persona', !(aiOutput || '').includes(personaMatch[1]),
+      `Nama: "${personaMatch[1]}"`);
+  }
+
+  // V8: Step tidak loncat lebih dari 1 (kecuali 3→5 eskalasi)
+  if (prevStep != null && step != null) {
+    const isValidEsc = (prevStep === 3 && step === 5);
+    const isValidReset = (step === 1); // reset produk baru ok
+    add('V8', `Step tidak loncat (${prevStep}→${step})`,
+      Math.abs(step - prevStep) <= 1 || isValidEsc || isValidReset,
+      `${prevStep}→${step}`);
+  }
+
+  return results;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // TESTING LOG: Log semua data yang dikirim ke Gemini
 // ═══════════════════════════════════════════════════════════════════
 function logGeminiRequest(direction, data) {
@@ -581,10 +651,14 @@ function logGeminiRequest(direction, data) {
     // ── TOKEN ESTIMATE ──
     console.log(`\n📊 Tokens → System: ${tokenEstimate?.system || '?'} | History: ${tokenEstimate?.history || '?'} | Current: ${tokenEstimate?.current || '?'}`);
     console.log(SEP);
+    // Capture request untuk test mode
+    if (phone === TEST_PHONE) {
+      _capturedGeminiRequest = { systemPrompt, history, message, tokenEstimate };
+    }
   }
 
   if (direction === 'response') {
-    const { ok, text, error, duration, outputTokens } = data;
+    const { ok, text, error, duration, outputTokens, phone } = data;
     const ts = new Date().toLocaleTimeString('id-ID');
     console.log(`\n┌─── GEMINI RESPONSE [${ts}] (${duration}ms) ───`);
     if (ok) {
@@ -595,6 +669,10 @@ function logGeminiRequest(direction, data) {
       console.log(`│ ❌ ERROR: ${error}`);
     }
     console.log(`└─── END RESPONSE ───\n`);
+    // Capture response untuk test mode
+    if (phone === TEST_PHONE && ok) {
+      _capturedGeminiResponse = { rawText: text, outputTokens, duration };
+    }
   }
 }
 
@@ -958,6 +1036,11 @@ async function graphFetch(pathSuffix, options = {}) {
 // Kirim pesan teks. quotedWamid opsional — kalau diisi, pesan akan tampil
 // sebagai "reply" ke pesan customer tersebut (setara fitur `quoted` di Baileys).
 async function sendWhatsAppText(to, text, quotedWamid) {
+  // Intercept untuk nomor test internal — tidak dikirim ke WABA nyata
+  if (to === TEST_PHONE) {
+    console.log(`[TEST] 📨 Dicegat (tidak dikirim ke WABA): "${text?.slice(0, 80)}"`); 
+    return { intercepted: true, text };
+  }
   if (!waConfigured) { console.error('❌ WhatsApp Cloud API belum dikonfigurasi (WHATSAPP_TOKEN/PHONE_NUMBER_ID kosong)'); return null; }
   const body = {
     messaging_product: 'whatsapp',
@@ -1784,6 +1867,7 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal, fr
     text: cleanText,
     duration,
     outputTokens: usage?.candidatesTokenCount || 0,
+    phone: from,  // dibutuhkan untuk capture test mode
   });
 
   return { ok: true, text: cleanText };
@@ -2659,6 +2743,34 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
         save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
         io.emit('message_updated', entry);
         console.log(`🤖 AI (delay ${Math.round(delayMs/1000)}s): ${cleanReply}`);
+
+        // TEST MODE: Emit test_turn dengan semua data tercapture
+        if (from === TEST_PHONE) {
+          const currentStep = orderStates.get(from)?.step ?? null;
+          const validation = validateTestTurn({
+            step: currentStep,
+            prevStep: _prevTestStep,
+            rawGeminiText: _capturedGeminiResponse?.rawText,
+            aiOutput: cleanReply,
+          });
+          const turn = {
+            id: Date.now(),
+            input: message,
+            aiOutput: cleanReply,
+            geminiRequest: _capturedGeminiRequest,
+            geminiResponse: _capturedGeminiResponse,
+            step: currentStep,
+            validation,
+            timestamp: new Date().toISOString(),
+          };
+          testTurns.unshift(turn);
+          if (testTurns.length > 100) testTurns.length = 100; // batas 100 turn
+          io.emit('test_turn', turn);
+          _prevTestStep = currentStep;
+          _capturedGeminiRequest = null;
+          _capturedGeminiResponse = null;
+          console.log(`[TEST] ✅ Turn dikirim ke dashboard | Validasi: ${validation.filter(v=>v.pass).length}/${validation.length} pass`);
+        }
         
         // Picu retry untuk pesan tertunda lainnya secara background
         setTimeout(retryFailedMessages, 5000);
@@ -4038,6 +4150,74 @@ app.post('/api/ai-test/stop', (req, res) => {
 // Endpoint: ambil hasil session terakhir
 app.get('/api/ai-test/result', (req, res) => {
   res.json(activeTestSession || { status: 'idle' });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// INTERNAL TEST ENDPOINTS
+// ═══════════════════════════════════════════════════════════════════
+
+// POST /test/internal/send — kirim pesan test (intercept I/O)
+app.post('/test/internal/send', authMiddleware, async (req, res) => {
+  const { message, senderName } = req.body || {};
+  if (!message) return res.status(400).json({ error: 'Isi message' });
+
+  const name = senderName || 'Tester Internal';
+  const wamid = 'test_int_' + Date.now();
+
+  // Reset capture untuk turn ini
+  _capturedGeminiRequest = null;
+  _capturedGeminiResponse = null;
+
+  console.log(`\n🧪 [INTERNAL TEST] Pesan: "${message}"`);
+
+  // Simpan ke messages array seperti pesan biasa (tapi dari TEST_PHONE)
+  const entry = {
+    id: Date.now(),
+    from: TEST_PHONE,
+    senderName: name,
+    body: message,
+    wamid,
+    timestamp: new Date().toISOString(),
+    replied: false,
+    aiReply: null,
+    type: 'text',
+    isTestInternal: true,
+  };
+  messages.unshift(entry);
+  save(MSG_FILE, messages);
+
+  // Proses AI secara async
+  processCustomerMessage(TEST_PHONE, name, message, wamid, null, null, null, null, null)
+    .catch(e => console.error('🧪 [TEST] Error:', e.message));
+
+  res.json({ ok: true, wamid, message: 'Sedang diproses...' });
+});
+
+// POST /test/internal/reset — hapus history test dan reset order state
+app.post('/test/internal/reset', authMiddleware, (req, res) => {
+  // Hapus semua pesan dari TEST_PHONE
+  const before = messages.length;
+  messages = messages.filter(m => m.from !== TEST_PHONE);
+  save(MSG_FILE, messages);
+
+  // Reset order state
+  orderStates.delete(TEST_PHONE);
+  persistOrderState(true);
+
+  // Reset turn history + capture
+  testTurns.length = 0;
+  _capturedGeminiRequest = null;
+  _capturedGeminiResponse = null;
+  _prevTestStep = null;
+
+  console.log(`🧪 [INTERNAL TEST] Reset: hapus ${before - messages.length} pesan test, state direset`);
+  io.emit('test_reset');
+  res.json({ ok: true, message: 'Test session direset' });
+});
+
+// GET /test/internal/turns — ambil semua turn (untuk load awal dashboard)
+app.get('/test/internal/turns', authMiddleware, (req, res) => {
+  res.json({ ok: true, turns: testTurns });
 });
 
 // ═══════════════════════════════════════════════════════════════════
