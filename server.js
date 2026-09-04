@@ -2695,14 +2695,17 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
         // E1: Wrap send — kalau gagal (Meta down/timeout), jangan tandai replied=true
         // supaya retry logic (retryFailedMessages) bisa handle. extractOrder sudah punya
         // dedup 5 menit, jadi tidak akan double-save order saat retry.
-        // P1-A: Split reply jadi beberapa bubble kalau ada tag [SPLIT]
-        try {
-          const bubbles = cleanReply.split('[SPLIT]').map(b => b.trim()).filter(Boolean);
+          // P1-A: Split reply jadi beberapa bubble kalau ada tag [SPLIT] (case-insensitive & flexible whitespace)
+          const bubbles = cleanReply.split(/\[\s*SPLIT\s*\]/gi)
+            .map(b => b.replace(/\[\s*SPLIT\s*\]/gi, '').trim())
+            .filter(Boolean);
           for (let bi = 0; bi < bubbles.length; bi++) {
             if (bi > 0) await sleep(config.BUBBLE_DELAY_MS); // jeda natural antar bubble
-            await sendWhatsAppText(from, bubbles[bi], bi === 0 ? lastWamid : undefined);
-          }
-        } catch (sendErr) {
+            const cleanBubble = bubbles[bi].replace(/\[\s*SPLIT\s*\]/gi, '').trim();
+            if (cleanBubble) {
+              await sendWhatsAppText(from, cleanBubble, bi === 0 ? lastWamid : undefined);
+            }
+          } catch (sendErr) {
           console.error(`❌ Gagal kirim reply ke ${senderName}:`, sendErr.message);
           save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
           return;
