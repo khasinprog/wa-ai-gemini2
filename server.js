@@ -2425,7 +2425,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
   save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
   // IMP-4B: Log ringkas satu baris untuk monitoring production
   const _st = orderStates.get(from);
-  console.log(`📨 [${from.slice(-4)}] step=${_st?.step ?? '-'} | "${message.slice(0, 45)}${message.length > 45 ? '…' : ''}" → AI`);
+  console.log(`📨 [${from.slice(-4)}] step=${_st?.step ?? '-'} | "${combinedBody.slice(0, 45)}${combinedBody.length > 45 ? '…' : ''}" → AI`);
   io.emit('new_message', entry);
 
   // P2-A (deferred): Update in-memory message dengan media_url
@@ -2755,7 +2755,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
           });
           const turn = {
             id: Date.now(),
-            input: message,
+            input: combinedBody,   // fix: parameter bernama combinedBody, bukan message
             aiOutput: cleanReply,
             geminiRequest: _capturedGeminiRequest,
             geminiResponse: _capturedGeminiResponse,
