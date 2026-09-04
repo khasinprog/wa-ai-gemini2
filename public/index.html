@@ -2730,7 +2730,7 @@ switchTab = function(name) {
 
 async function itLoadTurns() {
   try {
-    const r = await fetch('/test/internal/turns', { headers: { 'Authorization': 'Bearer ' + TOKEN } });
+    const r = await fetch('/api/test/internal/turns', { headers: { 'Authorization': 'Bearer ' + TOKEN } });
     const d = await r.json();
     if (d.ok) { itTestTurns = d.turns || []; itRender(); }
   } catch(e) { console.warn('[IntTest] Load turns error:', e.message); }
@@ -2756,7 +2756,7 @@ async function itSend() {
   itTestTurns.unshift({ id: 'pending', input: msg, aiOutput: null, step: null, timestamp: new Date().toISOString() });
   itRender();
   try {
-    await fetch('/test/internal/send', {
+    await fetch('/api/test/internal/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN },
       body: JSON.stringify({ message: msg }),
@@ -2769,7 +2769,7 @@ async function itSend() {
 
 async function itReset() {
   if (!confirm('Reset semua history test internal?')) return;
-  await fetch('/test/internal/reset', { method:'POST', headers:{'Authorization':'Bearer '+TOKEN} });
+  await fetch('/api/test/internal/reset', { method:'POST', headers:{'Authorization':'Bearer '+TOKEN} });
 }
 
 function itToggleAccord(id) {

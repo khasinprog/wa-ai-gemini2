@@ -4156,8 +4156,9 @@ app.get('/api/ai-test/result', (req, res) => {
 // INTERNAL TEST ENDPOINTS
 // ═══════════════════════════════════════════════════════════════════
 
-// POST /test/internal/send — kirim pesan test (intercept I/O)
-app.post('/test/internal/send', authMiddleware, async (req, res) => {
+// POST /api/test/internal/send — kirim pesan test (intercept I/O)
+// Pakai prefix /api/ agar tercakup auth middleware app.use('/api', ...)
+app.post('/api/test/internal/send', async (req, res) => {
   const { message, senderName } = req.body || {};
   if (!message) return res.status(400).json({ error: 'Isi message' });
 
@@ -4193,8 +4194,8 @@ app.post('/test/internal/send', authMiddleware, async (req, res) => {
   res.json({ ok: true, wamid, message: 'Sedang diproses...' });
 });
 
-// POST /test/internal/reset — hapus history test dan reset order state
-app.post('/test/internal/reset', authMiddleware, (req, res) => {
+// POST /api/test/internal/reset — hapus history test dan reset order state
+app.post('/api/test/internal/reset', (req, res) => {
   // Hapus semua pesan dari TEST_PHONE
   const before = messages.length;
   messages = messages.filter(m => m.from !== TEST_PHONE);
@@ -4215,8 +4216,8 @@ app.post('/test/internal/reset', authMiddleware, (req, res) => {
   res.json({ ok: true, message: 'Test session direset' });
 });
 
-// GET /test/internal/turns — ambil semua turn (untuk load awal dashboard)
-app.get('/test/internal/turns', authMiddleware, (req, res) => {
+// GET /api/test/internal/turns — ambil semua turn (untuk load awal dashboard)
+app.get('/api/test/internal/turns', (req, res) => {
   res.json({ ok: true, turns: testTurns });
 });
 
