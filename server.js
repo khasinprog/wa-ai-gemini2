@@ -551,10 +551,9 @@ function validateTestTurn({ step, prevStep, rawGeminiText, aiOutput }) {
   // V1: Output tidak kosong
   add('V1', 'Output tidak kosong', (aiOutput || '').length > 0);
 
-  // V2: Step 2 — max 2 kalimat (abaikan titik pemisah ribuan pada harga seperti Rp89.000)
+  // V2: Step 2 — max 2 kalimat (tidak boleh terlalu panjang)
   if (step === 2) {
-    const cleanOutput = (aiOutput || '').replace(/(\d+)\.(\d+)/g, '$1$2');
-    const sentences = cleanOutput.split(/[.!?]+/).filter(s => s.trim().length > 3);
+    const sentences = (aiOutput || '').split(/[.!?]+/).filter(s => s.trim().length > 3);
     add('V2', 'Step 2 — max 2 kalimat', sentences.length <= 2, `${sentences.length} kalimat terdeteksi`);
   }
 
@@ -1371,7 +1370,7 @@ const STEP3_RULES = `
 STEP 3 — KUMPULKAN DATA (IKUTI URUTAN INI PERSIS):
 - Customer sudah menunjukkan minat order
 - Urutan tanya yang WAJIB diikuti:
-  1. Nama lengkap penerima (kalau 1 kata [misal "Khasin"], WAJIB tanya: "Ini sudah nama lengkap Kak? Mohon diinfokan nama lengkapnya ya (minimal 2 kata)." — DILARANG KERAS lanjut menanyakan alamat/RT/RW/HP jika nama belum 2 kata!)
+  1. Nama lengkap penerima (kalau 1 kata → WAJIB verifikasi, JANGAN catat sebagai nama lengkap)
   2. Alamat: desa/kelurahan + kecamatan + kota/kabupaten
      - KECAMATAN dan KOTA/KABUPATEN itu WAJIB — tidak boleh skip atau diasumsikan
      - Kalau customer cuma kasih nama desa/dusun: WAJIB tanya "Kecamatannya apa, Kak? Dan kota/kabupatennya?"
@@ -1992,10 +1991,6 @@ function buildOrderSummary(from) {
 // buat entri pending baru untuk masing-masing, dan bersihkan tag itu dari
 // teks yang akan dikirim ke customer.
 function extractEscalations(replyText, fromJid, senderName) {
-  // Auto-close tag [ESCALATE:...] jika Gemini lupa menyertakan [/ESCALATE]
-  if (/\[ESCALATE:[^\]]+\]/i.test(replyText) && !/\[\/ESCALATE\]/i.test(replyText)) {
-    replyText = replyText + '[/ESCALATE]';
-  }
   const regex = /\[ESCALATE:(.*?)\]([\s\S]*?)\[\/ESCALATE\]/gi;
   const found = [];
   let cleanReply = replyText.replace(regex, (match, tag, question) => {
