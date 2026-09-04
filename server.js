@@ -3463,57 +3463,67 @@ app.post('/api/chat/:waId/stop', (req, res) => {
 // DELETE /api/chat/:waId — hapus semua data chat untuk 1 nomor
 app.delete('/api/chat/:waId', async (req, res) => {
   const waId = decodeURIComponent(req.params.waId);
-  console.log(`🗑️ Hapus semua chat untuk ${waId.slice(-4)}...`);
+  const phone = waId.replace(/@s\.whatsapp\.net|@c\.us/g, '');
+  console.log(`🗑️ Hapus semua chat untuk ${waId}...`);
 
   try {
     // 1. Hapus dari in-memory messages
     const before = messages.length;
-    messages = messages.filter(m => m.from !== waId);
+    messages = messages.filter(m => {
+      const mFrom = m.from || '';
+      const mPhone = mFrom.replace(/@s\.whatsapp\.net|@c\.us/g, '');
+      return mFrom !== waId && mPhone !== phone;
+    });
     console.log(`  📨 Messages: ${before} → ${messages.length} (${before - messages.length} dihapus)`);
     save(MSG_FILE, messages);
 
     // 2. Hapus order state
-    const phone = waId.replace(/@s\.whatsapp\.net|@c\.us/g, '');
     orderStates.delete(waId);
     orderStates.delete(phone);
     persistOrderState();
 
     // 3. Hapus sent product images
     sentProductImages.delete(waId);
+    sentProductImages.delete(phone);
 
     // 4. Hapus active claims
     activeClaims.delete(waId);
+    activeClaims.delete(phone);
     await db.deleteActiveClaim(waId).catch(e => console.warn('[Delete] activeClaim error:', e.message));
 
     // 5. Hapus pending buffer & processing
     pendingBuffers.delete(waId);
+    pendingBuffers.delete(phone);
     if (activeProcessing.has(waId)) {
       const task = activeProcessing.get(waId);
       if (task.controller) task.controller.abort();
       activeProcessing.delete(waId);
     }
     userLocks.delete(waId);
+    userLocks.delete(phone);
 
     // 6. Hapus pending escalations untuk nomor ini
-    pendingEscalations = pendingEscalations.filter(e => e.from !== waId);
+    pendingEscalations = pendingEscalations.filter(e => e.from !== waId && (e.from || '').replace(/@s\.whatsapp\.net|@c\.us/g, '') !== phone);
 
-    // 7. Hapus dari DB
-    await db.pool.query('DELETE FROM messages WHERE wa_id = $1', [waId]).catch(e => console.warn('[Delete] DB messages error:', e.message));
-    await db.pool.query('DELETE FROM orders WHERE wa_id = $1', [waId]).catch(e => console.warn('[Delete] DB orders error:', e.message));
+    // 7. Hapus dari DB (Guard jika db.pool null)
+    if (db && db.pool) {
+      await db.pool.query('DELETE FROM messages WHERE wa_id = $1 OR wa_id = $2', [waId, phone]).catch(e => console.warn('[Delete] DB messages error:', e.message));
+      await db.pool.query('DELETE FROM orders WHERE wa_id = $1 OR wa_id = $2', [waId, phone]).catch(e => console.warn('[Delete] DB orders error:', e.message));
+    }
 
     // 8. Hapus dari stopped list jika ada
-    if (settings.stoppedChats?.includes(waId)) {
-      settings.stoppedChats = settings.stoppedChats.filter(id => id !== waId);
+    if (settings.stoppedChats?.includes(waId) || settings.stoppedChats?.includes(phone)) {
+      settings.stoppedChats = settings.stoppedChats.filter(id => id !== waId && id !== phone);
       save(SET_FILE, settings); persistSettingsToDB(settings);
     }
 
     // 9. Update dashboard
     io.emit('messages', messages);
 
-    console.log(`✅ Chat ${waId.slice(-4)} berhasil dihapus`);
+    console.log(`✅ Chat ${waId} berhasil dihapus`);
     res.json({ ok: true, deleted: before - messages.length });
   } catch (err) {
-    console.error(`❌ Gagal hapus chat ${waId.slice(-4)}:`, err.message);
+    console.error(`❌ Gagal hapus chat ${waId}:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });

@@ -1412,17 +1412,21 @@ async function deleteChat(jid, name) {
     const data = await resp.json();
     if (data.ok) {
       // Hapus dari client-side state
+      const phone = jid.replace(/@s\.whatsapp\.net|@c\.us/g, '');
       delete contacts[jid];
-      allMessages = allMessages.filter(m => m.from !== jid);
-      if (activeContact === jid) {
+      delete contacts[phone];
+      allMessages = allMessages.filter(m => m.from !== jid && m.from?.replace(/@s\.whatsapp\.net|@c\.us/g, '') !== phone);
+      if (activeContact === jid || activeContact === phone) {
         activeContact = null;
         document.querySelector('.chat-messages').innerHTML = '<div class="empty-chat"><div class="ei">💬</div><p>Pilih chat</p></div>';
       }
       renderContacts();
+    } else {
+      alert('Gagal menghapus chat: ' + (data.error || 'Server error'));
     }
   } catch (e) {
     console.error('Gagal hapus chat:', e);
-    alert('Gagal menghapus chat');
+    alert('Gagal menghapus chat: ' + e.message);
   }
 }
 
