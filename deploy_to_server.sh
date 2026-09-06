@@ -70,6 +70,8 @@ echo "📦 [2/4] Membuat deploy.zip..."
 cd "$SCRIPT_DIR"
 zip -r "$LOCAL_ZIP" \
   server.js \
+  ongkir-helper.js \
+  routes/ \
   package.json \
   package-lock.json \
   public/ \
