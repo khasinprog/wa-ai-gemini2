@@ -12,7 +12,6 @@
 require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 const MENGANTAR_BASE        = 'https://app.mengantar.com';
-const MENGANTAR_API_KEY     = process.env.MENGANTAR_API_KEY    || '';
 const MENGANTAR_ITEM_WEIGHT = parseFloat(process.env.MENGANTAR_ITEM_WEIGHT || '1');
 
 // Origin ID toko (Serua, Ciputat, Tangerang Selatan)
@@ -73,13 +72,11 @@ async function searchLocationId(keyword) {
   }
 }
 
-// ── 3. Estimate ongkir via Mengantar private API ──────────────────
-// Return: { price, specialPrice, etd } atau null
-async function estimateOngkir({ originMongoId, destMongoId, weight, itemValue }) {
-  if (!MENGANTAR_API_KEY) {
-    console.warn('[Ongkir] MENGANTAR_API_KEY belum diisi di .env');
-    return null;
-  }
+// ── 3. Estimate multi-kurir via Mengantar public API ─────────────
+// Endpoint: /api/order/allEstimatePublic (tanpa API key, multi-kurir)
+// Return: { courier, price, specialPrice, etd, codFee, allCouriers } atau null
+// defaultCourier: 'JT' = J&T
+async function estimateOngkir({ originMongoId, destMongoId, weight, itemValue, defaultCourier = 'JT' }) {
   try {
     const params = new URLSearchParams({
       origin_id:      originMongoId,
@@ -87,20 +84,34 @@ async function estimateOngkir({ originMongoId, destMongoId, weight, itemValue })
       weight:         String(weight || MENGANTAR_ITEM_WEIGHT),
       item_value:     String(itemValue || 100000),
     });
-    const url = `${MENGANTAR_BASE}/api/public/${encodeURIComponent(MENGANTAR_API_KEY)}/order/estimate?${params}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    const url = `${MENGANTAR_BASE}/api/order/allEstimatePublic?${params}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
 
     if (!data.success || !data.data) return null;
-    const d = data.data;
+    const allCouriers = data.data;
+
+    // Build daftar kurir yang tersedia (non-cargo, non-unsupported)
+    const available = Object.entries(allCouriers)
+      .filter(([name, info]) => !info.unsupported && !name.toLowerCase().includes('cargo'))
+      .map(([name, info]) => ({
+        courier: name,
+        price: info.estimatedSpecialPrice || info.estimatedPrice || info.price || 0,
+        originalPrice: info.estimatedPrice || info.price || 0,
+        discount: info.discount || 0,
+        etd: info.estimatedDate || info.estimate_delivery || null,
+        codFee: info.codFee || 0,
+      }));
+
+    if (!available.length) return null;
+
+    // Pilih kurir default (J&T)
+    const primary = available.find(c => c.courier === defaultCourier) || available[0];
 
     return {
-      price:        d.estimatedSpecialPrice || d.estimatedPrice || d.price || 0,
-      originalPrice: d.estimatedPrice || d.price || 0,
-      discount:     d.discount || 0,
-      etd:          d.estimatedDate || null,
-      codFee:       d.codFee || 0,
+      ...primary,
+      allCouriers: available,
     };
   } catch (e) {
     console.warn('[Ongkir] estimateOngkir error:', e.message);
@@ -109,33 +120,56 @@ async function estimateOngkir({ originMongoId, destMongoId, weight, itemValue })
 }
 
 // ── 4. Format hasil ongkir menjadi teks siap kirim ke customer ────
-// courierPriority: array nama kurir urutan prioritas (dari ENV atau settings)
-function formatOngkirForCustomer(result, destName, courierPriority) {
+// Tampilkan J&T sebagai kurir utama + info kurir lain jika ada
+
+// Mapping nama kurir API → nama tampil customer
+const COURIER_DISPLAY_NAMES = {
+  'JT': 'J&T',
+  'iDexpress': 'ID Express',
+  'iDlite': 'ID Express Lite',
+  'JNE': 'JNE',
+  'SiCepat': 'SiCepat',
+  'SAP': 'SAP',
+  'SAPLite': 'SAP Lite',
+  'anteraja': 'Anteraja',
+  'lion': 'Lion',
+  'Ninja': 'Ninja',
+  'pos': 'POS',
+};
+
+function formatOngkirForCustomer(result, destName) {
   if (!result || !result.price) {
     return `Maaf Kak, tarif ke ${destName || 'lokasi tersebut'} belum bisa dicek otomatis saat ini. Hubungi admin ya untuk info ongkir 🙏`;
   }
 
-  // Jika ada services array (multi-kurir), sort berdasarkan prioritas
-  if (result.services && result.services.length > 1 && courierPriority?.length) {
-    result.services.sort((a, b) => {
-      const ai = courierPriority.findIndex(p => a.courier?.toLowerCase().includes(p.toLowerCase()));
-      const bi = courierPriority.findIndex(p => b.courier?.toLowerCase().includes(p.toLowerCase()));
-      const ra = ai === -1 ? 999 : ai;
-      const rb = bi === -1 ? 999 : bi;
-      return ra - rb || a.price - b.price;
-    });
-  }
-
+  const courierName = COURIER_DISPLAY_NAMES[result.courier] || result.courier;
   const harga = `Rp ${Number(result.price).toLocaleString('id-ID')}`;
   const etd = result.etd ? ` (${result.etd})` : '';
   const discount = result.discount > 0
     ? ` *(sudah diskon Rp ${Number(result.discount).toLocaleString('id-ID')})*` : '';
 
-  return `Ongkir ke ${destName || 'lokasi kamu'} 📦\n• Tarif: ${harga}${etd}${discount}`;
+  let msg = `Ongkir ke ${destName || 'lokasi kamu'} 📦\n`;
+  msg += `• ${courierName}: ${harga}${etd}${discount}`;
+
+  // Tampilkan kurir lain (max 2 tambahan) sebagai alternatif
+  if (result.allCouriers?.length > 1) {
+    const others = result.allCouriers
+      .filter(c => c.courier !== result.courier)
+      .slice(0, 2);
+    if (others.length) {
+      msg += '\nAlternatif:';
+      others.forEach(c => {
+        const cName = COURIER_DISPLAY_NAMES[c.courier] || c.courier;
+        msg += `\n• ${cName}: Rp ${Number(c.price).toLocaleString('id-ID')}`;
+      });
+    }
+  }
+
+  return msg;
 }
 
 // ── 5. Flow utama: dari tag content "kecamatan,kabupaten" ─────────
-async function processCekOngkirTag(tagContent, itemValue, courierPriority) {
+async function processCekOngkirTag(tagContent, itemValue) {
   const dest = parseShippingDestination(tagContent);
   if (!dest) {
     console.warn('[Ongkir] Tidak bisa parse tujuan dari:', tagContent);
@@ -160,7 +194,7 @@ async function processCekOngkirTag(tagContent, itemValue, courierPriority) {
   });
 
   return {
-    formatted: formatOngkirForCustomer(result, destLoc.name, courierPriority),
+    formatted: formatOngkirForCustomer(result, destLoc.name),
     destName:  destLoc.name,
     result,
   };

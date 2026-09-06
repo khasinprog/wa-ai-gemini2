@@ -93,6 +93,7 @@ const MSG_FILE = path.join(DATA_DIR, 'messages.json');
 const SET_FILE = path.join(DATA_DIR, 'settings.json');
 const ORDER_FILE = path.join(DATA_DIR, 'orders.json');
 const ESC_FILE = path.join(DATA_DIR, 'escalations.json'); // pertanyaan yang di-escalate ke admin (belum terjawab)
+const RAW_CAP_FILE = path.join(DATA_DIR, 'test-raw-captures.json');
 const IMAGES_DIR = path.join(DATA_DIR, 'images');
 const AUDIO_DIR = path.join(DATA_DIR, 'audio');
 
@@ -250,6 +251,7 @@ function createOrderState(product) {
     color: null,
     namaLengkap: null,
     namaVerified: false,
+    jalan: null,
     dusun: null,
     desa: null,
     kecamatan: null,
@@ -333,10 +335,11 @@ function updateOrderState(from, message) {
     state.noHp = data.phone;
   }
 
-  // Step 3+: extract fields dari pesan customer (name, address, RT/RW, patokan)
-  if (state.step >= 3) {
-    extractCustomerFields(state, message);
-  }
+  // Selalu extract fields (nama, alamat, RT/RW, patokan) dari pesan customer.
+  // Tidak dibatasi step >= 3 karena saat rapid messages (preemption), step mungkin
+  // belum naik tapi data sudah dikirim customer. extractCustomerFields cukup selektif
+  // (hanya match pola spesifik) jadi aman dijalankan di semua step.
+  extractCustomerFields(state, message);
   // ──────────────────────────────────────────────────────────────────
 
   // ── AUTO-DETECT STEP TRANSITION ──────────────────────────────────
@@ -350,9 +353,9 @@ function updateOrderState(from, message) {
   }
 
   // Step 2→3: Customer tunjukkan intent order
-  // IMP-1A: Hilangkan "iya" dan "mau" tunggal — terlalu ambigu, bisa trigger step 3 saat customer
-  // hanya ack pertanyaan biasa. Gunakan pola yang lebih eksplisit menyebut order/beli/proses.
-  const orderIntent = /\b(mau\s+(order|pesan|beli|ambil)|saya\s+(order|pesan|beli)|lanjut\s+order|proses\s+aja|oke\s*(bayar|proses|lanjut)|setuju\s+order)\b|\border\b|\bpesan\b/i;
+  // IMP-1A: Hilangkan "iya" dan "mau" tunggal — terlalu ambigu
+  // RC-2 fix: tambah pola casual Indonesia ("satu ya", "aja", "dong", "ambil")
+  const orderIntent = /\b(mau\s+(order|pesan|beli|ambil)|saya\s+(order|pesan|beli)|lanjut\s+order|proses\s+aja|oke\s*(bayar|proses|lanjut)|setuju\s+order)\b|\border\b|\bpesan\b|\bbeli\b|\bambil\b|\bproses\b|\bsatu\s+(ya|dong|kak|please)\b|\b\w+\s+aja\b|\b\w+\s+dong\b|\b(tak|aku|aq)\s+ambil\b/i;
   if (state.step === 2 && orderIntent.test(lower)) {
     state.step = 3;
   }
@@ -426,50 +429,114 @@ function extractCustomerFields(state, message) {
 
   // ── NAMA: ≥ 2 kata → langsung catat sebagai nama verified ──
   // BUG-01 fix: pesan yang mengandung koma (pemisah alamat) JANGAN dianggap nama
+  // BUG-RC1 fix: filter greeting, inquiry produk, dan nama produk dari KB/hardcode
   const hasComma = message.includes(',');
+  const isGreeting = /^(halo|hai|hello|hey|permisi|selamat|assalam|pagi|siang|sore|malam)/i.test(lower);
+  const isProductInquiry = /\b(tanya|nanya|cek|harga|produk|stok|ready|berapa|ada|mau)\b/i.test(lower);
+  // Detect nama produk + warna + patokan: KB-based + hardcoded fallback
+  const KB_KEYWORDS = ['baby walking', 'pasta dempul', 'selang', 'mini sealer'];
+  const COLOR_KEYWORDS = ['navy', 'red', 'biru muda', 'pink muda', 'biru', 'pink', 'merah', 'abu-abu', 'abu'];
+  const isPatokan = /\b(dekat|sebelah|samping|belakang|depan|masjid|mushola|masjid|warung|sekolah|tokо)\b/i.test(lower);
+  const isProductName = !!detectProductFocus(message)
+    || KB_KEYWORDS.some(kw => lower.includes(kw))
+    || COLOR_KEYWORDS.some(kw => lower === kw || (lower.includes(kw) && lower.split(/\s+/).length <= 5))
+    || isPatokan;
+  const isNotName = isGreeting || isProductInquiry || isProductName;
   if (!state.namaLengkap || !state.namaVerified) {
-    if (words.length >= 2 && !hasComma && !looksLikeAddress(lower) && !looksLikeQuestion(lower)) {
+    if (words.length >= 2 && !hasComma && !looksLikeAddress(lower) && !looksLikeQuestion(lower) && !isNotName) {
       state.namaLengkap = message.trim();
       state.namaVerified = true;
-    } else if (words.length === 1 && !hasComma && !looksLikeAddress(lower) && !looksLikeQuestion(lower)) {
+    } else if (words.length === 1 && !hasComma && !looksLikeAddress(lower) && !looksLikeQuestion(lower) && !isNotName) {
       // 1 kata → catat tapi belum verified (AI akan verifikasi)
-      if (!state.namaLengkap) {
+      // Skip jika sudah ada field alamat terisi (bukan nama, tapi kecamatan/kota/etc)
+      const addressStarted = state.jalan || state.rtRw || state.desa;
+      if (!state.namaLengkap && !addressStarted) {
         state.namaLengkap = message.trim();
         state.namaVerified = false;
       }
     }
   }
 
+  // ── RT/RW — extract DULU supaya tidak salah parse sebagai alamat ──
+  // Fix: support "RT 03 RW 05" (tanpa slash) dan "RT 03/RW 05" (dengan slash)
+  if (!state.rtRw) {
+    const rtMatch = message.match(/rt\s*(\d{1,3})\s*[\/\s]\s*(?:rw\s*)?(\d{1,3})/i);
+    if (rtMatch) {
+      state.rtRw = `RT ${rtMatch[1]}/RW ${rtMatch[2]}`;
+    }
+  }
+
+  // ── JALAN: Deteksi nama jalan dan nomor rumah ──
+  if (!state.jalan) {
+    const jalanMatch = message.match(/(?:jalan|jl\.?|jl)\s+(.+)/i);
+    if (jalanMatch) {
+      state.jalan = jalanMatch[1].replace(/[,\n].*$/, '').trim();
+    } else {
+      // Deteksi nomor rumah: "nomor 12", "no 12", "nomor: 12"
+      const noMatch = message.match(/(?:nomor|no\.?)\s*[:\s]*(\d+[a-zA-Z]?)/i);
+      if (noMatch && words.length <= 5) {
+        state.jalan = `No. ${noMatch[1]}`;
+      }
+    }
+  }
+
   // ── ALAMAT: Deteksi dusun, desa, kecamatan, kota dari pesan ──
+  // Handle single component: "Dusun Krajan" / "Desa Tamantirto"
+  if (!state.desa) {
+    const dusunMatch = message.match(/\b(dusun|desa|kelurahan|kel\.|kampung)\s+([\w\s]+?)$/i);
+    if (dusunMatch && words.length <= 4) {
+      state.desa = dusunMatch[2].trim();
+    }
+  }
+  // Handle "Kecamatan Kasihan" / "Kabupaten Bantul" (dengan prefix)
+  if (!state.kecamatan) {
+    const kecMatch = message.match(/\b(kecamatan|kec\.?)\s+([\w\s]+?)$/i);
+    if (kecMatch && words.length <= 4) {
+      state.kecamatan = kecMatch[2].trim();
+    }
+  }
+  if (!state.kota) {
+    const kotaMatch = message.match(/\b(kabupaten|kota|kab\.?)\s+([\w\s]+?)$/i);
+    if (kotaMatch && words.length <= 4) {
+      state.kota = kotaMatch[2].trim();
+    }
+  }
+  // Handle single-word kecamatan/kota (tanpa prefix) — hanya jika alamat sudah mulai diisi
+  // Indikator: jalan atau RT/RW sudah terisi → customer sedang isi alamat
+  const addressStarted = state.jalan || state.rtRw || state.desa;
+  if (!state.kecamatan && addressStarted && words.length === 1 && !isNotName) {
+    state.kecamatan = message.trim();
+  } else if (!state.kota && state.kecamatan && words.length === 1 && !isNotName) {
+    state.kota = message.trim();
+  }
   if (!state.desa || !state.kecamatan || !state.kota) {
-    // Extract RT/RW dulu dari pesan, buang dari sisa sebelum parse alamat
-    const rtMatch = message.match(/rt\s*(\d{1,3})\s*\/?\s*rw\s*(\d{1,3})/i);
-    const addrRaw = rtMatch ? message.replace(/rt\s*\d+\s*\/\s*(?:rw\s*)?\d+/gi, '') : message;
+    // Buang RT/RW dari pesan sebelum parse alamat
+    const addrRaw = message.replace(/rt\s*\d+\s*\/\s*(?:rw\s*)?\d+/gi, '').trim();
     const parts = addrRaw.split(/[,\n]+/).map(p => p.trim()).filter(Boolean);
 
     if (parts.length === 2) {
-      // 2 items: desa, kecamatan
-      if (!state.desa) state.desa = parts[0];
-      if (!state.kecamatan) state.kecamatan = parts[1];
+      if (!state.desa && !state.kecamatan) {
+        state.desa = parts[0];
+        state.kecamatan = parts[1];
+      } else if (state.desa && state.kecamatan && !state.kota) {
+        state.kecamatan = parts[0];
+        state.kota = parts[1];
+      } else if (!state.desa) {
+        state.desa = parts[0];
+        if (!state.kecamatan) state.kecamatan = parts[1];
+      } else if (!state.kecamatan) {
+        state.kecamatan = parts[0];
+        if (!state.kota) state.kota = parts[1];
+      }
     } else if (parts.length === 3) {
-      // 3 items: desa, kecamatan, kota
       if (!state.desa) state.desa = parts[0];
       if (!state.kecamatan) state.kecamatan = parts[1];
       if (!state.kota) state.kota = parts[2];
     } else if (parts.length >= 4) {
-      // 4+ items: dusun, desa, kecamatan, kota
       if (!state.dusun && !/^\d/.test(parts[0])) state.dusun = parts[0];
       if (!state.desa) state.desa = parts[1];
       if (!state.kecamatan) state.kecamatan = parts[2];
       if (!state.kota) state.kota = parts[3];
-    }
-  }
-
-  // ── RT/RW — handle "RT 03/RW 05", "RT 03/05", "rt03/rw05" ──
-  if (!state.rtRw) {
-    const rtMatch = message.match(/rt\s*(\d{1,3})\s*\/\s*(?:rw\s*)?(\d{1,3})/i);
-    if (rtMatch) {
-      state.rtRw = `RT ${rtMatch[1]}/RW ${rtMatch[2]}`;
     }
   }
 
@@ -479,7 +546,7 @@ function extractCustomerFields(state, message) {
     if (
       lowerClean.length > 3 &&
       !/^\d{8,13}$/.test(lowerClean.replace(/\s/g, '')) &&
-      !looksLikeAddress(lower) &&
+      !looksLikeAddress(lowerClean) &&
       words.length >= 2
     ) {
       // Patokan biasanya kalimat pendek: "deket masjid", "sebelah warung"
@@ -542,6 +609,10 @@ const testTurns = [];                    // { id, input, aiOutput, geminiRequest
 let _capturedGeminiRequest = null;       // capture sementara Gemini request per turn
 let _capturedGeminiResponse = null;      // capture sementara Gemini response per turn
 let _prevTestStep = null;                // step sebelumnya untuk validasi V8
+
+// ═══ Persistent raw capture — tidak di-clear oleh preemption/B1 hold ═══
+const testRawCaptures = [];              // { id, input, systemPrompt, history, message, rawGemini, aiOutput, step, timestamp }
+let _rawCaptureId = 0;                   // auto-increment id
 
 // Validation engine — cek apakah AI reply sesuai ekspektasi
 function validateTestTurn({ step, prevStep, rawGeminiText, aiOutput }) {
@@ -655,6 +726,18 @@ function logGeminiRequest(direction, data) {
     if (phone === TEST_PHONE) {
       _capturedGeminiRequest = { systemPrompt, history, message, tokenEstimate };
     }
+    // Persistent capture — semua phone, tidak di-clear oleh preemption
+    testRawCaptures.push({
+      id: ++_rawCaptureId,
+      phone,
+      systemPrompt,
+      history,
+      message,
+      tokenEstimate,
+      timestamp: new Date().toISOString(),
+    });
+    if (testRawCaptures.length > 200) testRawCaptures.splice(0, testRawCaptures.length - 200);
+    save(RAW_CAP_FILE, testRawCaptures);
   }
 
   if (direction === 'response') {
@@ -673,6 +756,15 @@ function logGeminiRequest(direction, data) {
     if (phone === TEST_PHONE && ok) {
       _capturedGeminiResponse = { rawText: text, outputTokens, duration };
     }
+    // Persistent capture — update entry terakhir dengan response (semua phone)
+    if (ok) {
+      const lastCapture = testRawCaptures[testRawCaptures.length - 1];
+      if (lastCapture && lastCapture.phone === phone) {
+        lastCapture.rawGemini = text;
+        lastCapture.outputTokens = outputTokens;
+        lastCapture.duration = duration;
+      }
+    }
   }
 }
 
@@ -684,6 +776,94 @@ function estimateTokens(text) {
 // ═══════════════════════════════════════════════════════════════════
 // HISTORY BUILDING: Dynamic length + summary untuk percakapan panjang
 // ═══════════════════════════════════════════════════════════════════
+// Bersihkan riwayat AI replies: hapus pertanyaan field yang sudah terjawab
+// agar Gemini tidak terpengaruh mengulang pertanyaan yang sama
+function cleanFieldQuestions(aiReply, orderState) {
+  if (!orderState || orderState.step < 3 || !aiReply) return aiReply;
+
+  const fieldPatterns = [
+    { pattern: /(?:rt|rw|rt\s*\/?\s*rw)\b/i, collected: () => orderState.rtRw },
+    { pattern: /(?:dusun|desa|kelurahan|kel\.|kampung)\b/i, collected: () => orderState.desa },
+    { pattern: /(?:kecamatan|kec\.?)\b/i, collected: () => orderState.kecamatan },
+    { pattern: /(?:kabupaten|kota|kab\.?)\b/i, collected: () => orderState.kota },
+    { pattern: /(?:patokan|dekat|sebelah|samping)\b/i, collected: () => orderState.patokan },
+    { pattern: /(?:nama\s+lengkap|nama\s+yang\s+lengkap|siapa\s+nama)\b/i, collected: () => orderState.namaLengkap && orderState.namaVerified },
+    { pattern: /(?:nomor\s*(?:hp|wa|whatsapp)|no\.?\s*(?:hp|wa))\b/i, collected: () => orderState.noHp },
+  ];
+
+  // Check if this aiReply is a field question for an already-collected field
+  for (const { pattern, collected } of fieldPatterns) {
+    if (pattern.test(aiReply) && collected()) {
+      return '[data sudah dicatat]';
+    }
+  }
+  return aiReply;
+}
+
+// ── RC-5: Validasi post-response — cek apakah AI menanyakan field yang sudah terisi ──
+// Jika ya, ganti reply dengan redirect ke field pertama yang masih kosong
+const FIELD_ORDER = [
+  { key: 'jalan',      pattern: /(?:jalan|jl\.?|no\.?\s*\d|alamat|rumah|gang|gg\.?|komplek|perumahan)\b/i, get: s => s.jalan },
+  { key: 'desa',       pattern: /(?:dusun|desa|kelurahan|kel\.|kampung)\b/i, get: s => s.desa },
+  { key: 'rtRw',       pattern: /(?:rt|rw|rt\s*\/?\s*rw)\b/i, get: s => s.rtRw },
+  { key: 'kecamatan',  pattern: /(?:kecamatan|kec\.?)\b/i, get: s => s.kecamatan },
+  { key: 'kota',       pattern: /(?:kabupaten|kota|kab\.?)\b/i, get: s => s.kota },
+  { key: 'patokan',    pattern: /(?:patokan|dekat|sebelah|samping)\b/i, get: s => s.patokan },
+  { key: 'namaLengkap', pattern: /(?:nama\s+lengkap|nama\s+yang\s+lengkap|siapa\s+nama|nama\s+anda)\b/i, get: s => s.namaLengkap && s.namaVerified },
+  { key: 'noHp',       pattern: /(?:nomor\s*(?:hp|wa|whatsapp)|no\.?\s*(?:hp|wa)|nomor\s+hp)\b/i, get: s => s.noHp },
+];
+
+// Label human-readable untuk redirect message
+const FIELD_LABELS = {
+  jalan: 'nama jalan dan nomor rumah',
+  desa: 'dusun atau desa',
+  rtRw: 'RT dan RW',
+  kecamatan: 'kecamatan',
+  kota: 'kabupaten atau kota',
+  patokan: 'patokan atau landmark terdekat',
+  namaLengkap: 'nama lengkap',
+  noHp: 'nomor HP yang aktif',
+};
+
+// Template redirect — sama natural dengan respons AI asli
+const REDIRECT_TEMPLATES = [
+  'Baik Kak, untuk {label}-nya apa ya?',
+  'Kalau {label}-nya gimana, Kak?',
+  'Boleh diinfokan {label}-nya, Kak?',
+  'Untuk {label}-nya apa ya, Kak?',
+];
+
+function validateFieldOrder(aiReply, orderState) {
+  if (!orderState || orderState.step < 3 || !aiReply) return aiReply;
+
+  // 1. Cek apakah AI menanyakan field yang SUDAH terisi
+  let asksAlreadyCollected = false;
+  let matchedField = null;
+  for (const { pattern, get, key } of FIELD_ORDER) {
+    if (pattern.test(aiReply) && get(orderState)) {
+      asksAlreadyCollected = true;
+      matchedField = key;
+      break;
+    }
+  }
+  if (!asksAlreadyCollected) {
+    console.log(`🔍 [VALIDATE] OK — reply tidak tanya field terisi: "${aiReply.slice(0, 60)}"`);
+    return aiReply;
+  }
+
+  // 2. Cari field pertama yang MASIH kosong
+  const missingField = FIELD_ORDER.find(f => !f.get(orderState));
+  if (!missingField) return aiReply; // semua sudah terisi
+
+  // 3. Generate redirect natural
+  const label = FIELD_LABELS[missingField.key] || missingField.key;
+  const tpl = REDIRECT_TEMPLATES[Math.floor(Math.random() * REDIRECT_TEMPLATES.length)];
+  const redirect = tpl.replace('{label}', label);
+
+  console.log(`🔧 [FieldOrder] AI tanya field sudah terisi → redirect ke "${missingField.key}": ${redirect}`);
+  return redirect;
+}
+
 function buildHistory(from, currentEntryId, maxEntries = 20) {
   const relevantMessages = messages
     .filter(m => m.from === from && m.id !== currentEntryId && !m.cancelledEntry && m.aiReply)
@@ -825,7 +1005,8 @@ try {
   }
 } catch(e) {}
 
-
+// Load persistent raw captures
+try { if (fs.existsSync(RAW_CAP_FILE)) { const loaded = JSON.parse(fs.readFileSync(RAW_CAP_FILE, 'utf8')); testRawCaptures.push(...loaded); _rawCaptureId = testRawCaptures.length ? testRawCaptures[testRawCaptures.length-1].id : 0; } } catch(e) {}
 // --- DB Sync Helpers ---
 async function persistMessageToDB(msg) {
   if(!msg) return;
@@ -1350,11 +1531,13 @@ function getRelevantKnowledge(message, history = []) {
 // ═══════════════════════════════════════════════════════════════════
 
 const STEP1_RULES = `
-STEP 1 — JAWAB PRODUK:
+STEP 1 — JAWAB PRODUK (MAKSIMAL 3 KALIMAT):
 - Customer bertanya tentang produk (nama, harga, manfaat, varian, stok)
-- Jawab LENGKAP dari informasi produk di atas
-- Sebutkan: harga, varian, manfaat utama (1-2 poin), CTA
+- MAKSIMAL 3 kalimat. Susun: (1) harga + ongkir, (2) sebutkan SEMUA varian/warna yang tersedia dari KB, (3) CTA tanya pilihan
+- Jika produk punya varian/warna: WAJIB sebut semua pilihan supaya customer bisa pilih. Contoh: "Pilih yang mana, Kak?"
+- Contoh: "Harganya Rp95.000 sudah termasuk ongkir Kak. Pilihan warna: Navy, Red, Pink Muda, Biru Muda. Mau pilih yang mana?"
 - JANGAN tanya data order di step ini
+- JANGAN lebih dari 3 kalimat
 `;
 
 const STEP2_RULES = `
@@ -1370,23 +1553,36 @@ const STEP3_RULES = `
 STEP 3 — KUMPULKAN DATA (IKUTI URUTAN INI PERSIS):
 - Customer sudah menunjukkan minat order
 - Urutan tanya yang WAJIB diikuti:
-  1. Nama lengkap penerima (kalau 1 kata → WAJIB verifikasi, JANGAN catat sebagai nama lengkap)
-     - Jika nama baru 1 kata, JANGAN lanjut ke alamat. WAJIB tanya: "Nama lengkapnya apa Kak?"
-     - HANYA lanjut ke alamat SETELAH nama 2 kata atau lebih dikonfirmasi customer
-  2. Alamat: desa/kelurahan + kecamatan + kota/kabupaten
-     - KECAMATAN dan KOTA/KABUPATEN itu WAJIB — tidak boleh skip atau diasumsikan
-     - Kalau customer cuma kasih nama desa/dusun: WAJIB tanya "Kecamatannya apa, Kak? Dan kota/kabupatennya?"
-     - Kalau customer kasih 1 baris "Desa A, Kec B, Kota C": langsung catat semua, lanjut ke RT/RW
+  1. Nama jalan dan nomor jalan/rumah
+     - Contoh: "Nama jalan dan nomor rumahnya apa, Kak?"
+     - Kalau tidak ada nama jalan: tanya "Di kampung/dusun mana, Kak?" → catat sebagai dusun
+  2. Dusun/Desa/Kelurahan
+     - Kalau customer sudah sebut di jawaban sebelumnya, JANGAN tanya ulang
   3. RT/RW
-     - WAJIB tanya ke customer: "RT dan RW-nya berapa, Kak?"
+     - WAJIB tanya: "RT dan RW-nya berapa, Kak?"
      - HANYA setelah customer jawab "gak ada" / "tidak ada" barulah catat "-"
      - JANGAN asumsikan RT/RW kosong kalau belum ditanya
-  4. Patokan rumah (dekat masjid/warung/sekolah/jalan)
-  5. Konfirmasi nomor HP ("pakai nomor WhatsApp ini juga ya, Kak?")
-  6. REKAP semua data → minta konfirmasi → masuk Step 4
+  4. Kecamatan
+     - WAJIB tanya: "Kecamatannya apa, Kak?"
+  5. Kabupaten/Kota
+     - WAJIB tanya: "Kabupaten/Kotanya apa, Kak?"
+  6. Patokan rumah (dekat masjid/warung/sekolah/jalan)
+     - **WAJIB tanya patokan. JANGAN skip atau anggap tidak perlu.**
+     - JIKA patokan berupa masjid/mushola: WAJIB sebut NAMA masjidnya. Contoh: "dekat masjid Al-Ikhlas", BUKAN cuma "dekat masjid"
+     - JIKA customer tidak kasih nama spesifik: WAJIB tanya "Masjid/mushola namanya apa, Kak?"
+     - **JANGAN lanjut ke nama sebelum patokan sudah terisi atau customer jawab "tidak ada"**
+  7. Nama lengkap penerima
+     - WAJIB tanya: "Nama lengkap penerimanya siapa, Kak?"
+     - Kalau 1 kata → WAJIB verifikasi: "Ini sudah nama lengkap Kak?"
+  8. Nomor HP
+     - WAJIB tanya EKSPLISIT: "Nomor HP-nya berapa, Kak?"
+     - JANGAN tanya "pakai nomor WhatsApp ini?" — langsung minta nomor HP-nya
+     - Catat nomor yang dikasih customer
 
 - CEK FLAG: Sebelum tanya, cek field mana yang BELUM terisi.
-  JANGAN tanya field yang sudah ada. TAPI: kecamatan, kota, dan RT/RW harus SELALU ditanya kalau belum ada.
+  JANGAN tanya field yang sudah ada. TAPI: kecamatan, kabupaten, RT/RW, dan patokan harus SELALU ditanya kalau belum ada.
+
+- **STEP 3 TIDAK BOLEH SELESAI tanpa menanyakan RT/RW dan patokan. Ini syarat wajib sebelum masuk Step 4.**
 
 - SELALU tanya SATU field per balasan. JANGAN gabung 2 field dalam 1 pesan.
 
@@ -1400,7 +1596,11 @@ STEP 4 — KONFIRMASI:
 - Tanya: "Apakah data sudah benar semua Kak?"
 - JANGAN tanya data tambahan di step ini
 - Setelah customer konfirmasi "ya/benar/oke":
-  - Sisipkan [ORDER_DATA]...[/ORDER_DATA]
+  1. Tawarkan metode pembayaran dengan nudge diskon transfer, contoh: "Mau COD atau Transfer Kak? Kalau Transfer ada diskon 10% lho 😊"
+  2. Kalau Transfer → sebut diskon + info rekening
+  3. Kalau COD → edukasi ketentuan kurir (lihat ATURAN PEMBAYARAN)
+  4. Setelah customer PILIH metode → Sisipkan [ORDER_DATA]...[/ORDER_DATA]
+  - WAJIB akhiri dengan CTA: "Ada lagi yang bisa saya bantu Kak?" atau sejenisnya
   - Tanda akhir: tampilkan tag [STEP=4] di baris terakhir balasanmu
 `;
 
@@ -1423,13 +1623,15 @@ STEP 5 — ESKALASI KE ADMIN:
 // IMP-3B: patokan opsional jika patokanSkipped=true
 function getMissingFields(state) {
   const missing = [];
+  // Urutan sesuai STEP3_RULES: jalan → dusun/desa → RT/RW → kecamatan → kabupaten → patokan → nama → HP
+  if (!state.jalan)               missing.push('nama jalan dan nomor jalan');
+  if (!state.desa)                missing.push('dusun/desa');
+  if (!state.rtRw)                missing.push('RT/RW');
+  if (!state.kecamatan)           missing.push('kecamatan');
+  if (!state.kota)                missing.push('kabupaten');
+  if (!state.patokan && !state.patokanSkipped) missing.push('patokan');
   if (!state.namaLengkap || !state.namaVerified) missing.push('nama lengkap');
-  if (!state.desa)               missing.push('dusun/desa');
-  if (!state.kecamatan)          missing.push('kecamatan');
-  if (!state.kota)               missing.push('kota');
-  if (!state.patokan && !state.patokanSkipped) missing.push('patokan');  // opsional
-  if (!state.rtRw)               missing.push('RT/RW');
-  if (!state.noHp)               missing.push('nomor HP');
+  if (!state.noHp)                missing.push('nomor HP');
   return missing;
 }
 
@@ -1467,6 +1669,7 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
     parts.push('=== STATUS SAAT INI ===');
     parts.push(`Step: ${orderState.step}`);
     if (orderState.color) parts.push(`Warna: ${orderState.color}`);
+    if (orderState.jalan) parts.push(`Jalan: ${orderState.jalan}`);
     if (orderState.namaLengkap) parts.push(`Nama: ${orderState.namaLengkap} (verified: ${orderState.namaVerified})`);
     if (orderState.desa) parts.push(`Desa: ${orderState.desa}`);
     if (orderState.kecamatan) parts.push(`Kecamatan: ${orderState.kecamatan}`);
@@ -1480,7 +1683,7 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
     const missing = getMissingFields(orderState);
     if (missing.length && orderState.step >= 3) {
       parts.push(`→ Belum ada: ${missing.join(', ')}`);
-      parts.push(`Tanyakan field yang masih kurang, satu per satu.`);
+      parts.push(`TUGAS WAJIB: tanya HANYA field pertama "${missing[0]}" dalam balasan ini. JANGAN tanya lebih dari 1 field.`);
     }
     parts.push('');
   }
@@ -1499,6 +1702,7 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
   parts.push('- FOKUS pada produk yang sedang ditanyakan customer SAAT INI. Jangan campur informasi produk lain dari riwayat chat sebelumnya. Contoh: kalau customer tanya "pasta dempul", jawab HANYA tentang pasta dempul — jangan membahas baby walking assistant');
   parts.push('- Balas secara natural seperti manusia, bukan robot');
   parts.push('- Gunakan bahasa percakapan sehari-hari yang hangat, gaya tetap profesional (bukan lebay/berlebihan)');
+  parts.push('- JANGAN tanya ulang field yang sudah tercatat di STATUS SAAT INI. Contoh: jika RT/RW sudah ada di status, JANGAN tanya RT/RW lagi — tanya field berikutnya yang masih kosong di "→ Belum ada"');
   parts.push('- JANGAN gunakan tanda petik di awal atau akhir pesan');
   parts.push('- Jika menerima pesan suara (audio), DENGARKAN isi audionya dan balas berdasarkan konten suara pelanggan. Jangan mengabaikan audio');
   parts.push('- Kamu mengaku sebagai "admin"/"kami" toko — JANGAN pakai nama persona apapun, dan JANGAN sebut bahwa kamu AI kecuali ditanya langsung');
@@ -1526,7 +1730,7 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
   parts.push('- Kalau pelanggan hanya minta harga ("cek harga", "berapa", dll), jawab harga + 1 kalimat penutup/CTA saja. JANGAN ulang jelaskan keunggulan produk lagi kalau sudah pernah dijelaskan di riwayat chat sebelumnya');
   parts.push('');
   parts.push('=== BATAS KALIMAT PER STEP (PENTING) ===');
-  parts.push('- Step 1 (produk): MAKSIMAL 2 kalimat — jawab pertanyaan produk + CTA');
+  parts.push('- Step 1 (produk): MAKSIMAL 3 kalimat — harga + varian/warna + CTA');
   parts.push('- Step 2 (follow-up): 1 kalimat — langsung jawab pertanyaan + CTA');
   parts.push('- Step 3 (kumpul data): 1 kalimat — tanya SATU field spesifik. Boleh lebih kalau perlu verifikasi (misal: "Ini sudah nama lengkap Kak? Mohon nama lengkap ya.")');
   parts.push('- Step 4 (konfirmasi): MAKSIMAL 2 kalimat — konfirmasi pesanan + penutup');
@@ -1650,12 +1854,13 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
     parts.push('');
     parts.push('**COD (bayar di tempat):**');
     parts.push('- Sebelum konfirmasi COD, WAJIB edukasi customer dengan kalimat seperti:');
-    parts.push('  "Untuk COD, paket kami dikemas rapat/disegel — kurir tidak bisa melayani buka paket sebelum pembayaran. Apakah Kakak setuju dengan ketentuan ini?"');
+    parts.push('  "Kak, untuk COD, paket tidak bisa dibuka sebelum bayar ya Kak — itu ketentuan kurirnya. Kalau ternyata tidak sesuai, tenang aja, Kakak bisa minta kirim ulang atau pengembalian uang kok 😊 Apakah setuju dengan ketentuan ini?"');
     parts.push('- Jika customer tidak setuju → tawarkan Transfer + sebut diskon ' + PAYMENT.discountPercent + '% sebagai alternatif');
     parts.push('- Jika customer setuju → lanjut konfirmasi order');
     parts.push('');
     parts.push('**PENTING:**');
-    parts.push('- Selalu sebutkan diskon transfer LEBIH DULU sebagai "nudge" sebelum menyebut COD');
+    parts.push('- Saat menawarkan metode pembayaran, WAJIB sebut diskon transfer lebih dulu sebagai nudge, contoh: "Mau COD atau Transfer Kak? Kalau Transfer ada diskon ' + PAYMENT.discountPercent + '% lho 😊" — tujuannya mengarahkan customer ke Transfer');
+    parts.push('- Hitung dan sebutkan harga setelah diskon secara eksplisit agar customer merasa hemat');
     parts.push('- JANGAN sebutkan info rekening/transfer sampai customer memilih metode Transfer');
     parts.push('- Setelah customer pilih metode, simpan pilihannya dengan menambahkan field "pembayaran" ke [ORDER_DATA]');
   }
@@ -1715,9 +1920,12 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal, fr
       // Summary entries: append ke system prompt, bukan ke contents
       if (h._summary) continue;
       contents.push({ role: 'user', parts: [{ text: h.body }] });
-      // B4: Jangan inject model reply dari entry yang di-cancel (cancelledEntry)
+      // B4: Jangan inject model reply dari entry yang di-cancel atau di-hold
       // supaya string internal tidak bocor ke konteks Gemini
-      if (h.aiReply && !h.cancelledEntry) contents.push({ role: 'model', parts: [{ text: h.aiReply }] });
+      if (h.aiReply && !h.cancelledEntry && !h.heldReply) {
+        const cleanedReply = cleanFieldQuestions(h.aiReply, orderStates.get(from));
+        contents.push({ role: 'model', parts: [{ text: cleanedReply }] });
+      }
     }
   }
 
@@ -2299,7 +2507,16 @@ async function retryFailedMessages() {
       entry.retryCount = (entry.retryCount || 0) + 1;
 
       let reply = await aiReply(entry.body, entry.senderName, history, null, entry.from);
-      
+
+      // ── RC-5: Validasi field order di retry path ──
+      if (reply) {
+        const retryState = orderStates.get(entry.from);
+        console.log(`🔍 [DEBUG-RC5-RETRY] step=${retryState?.step}, reply="${reply.slice(0, 80)}"`);
+        if (retryState && retryState.step >= 3) {
+          reply = validateFieldOrder(reply, retryState);
+        }
+      }
+
       if (reply) {
          reply = extractOrder(reply, entry.from);
 
@@ -2482,6 +2699,14 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
       }
       let reply = await aiReply(combinedBody, senderName, history, controller.signal, from, imagePath, audioPathForAI);
 
+      // ── RC-5: Validasi field order — cegah AI menanyakan field yang sudah terisi ──
+      if (reply) {
+        const currentState = orderStates.get(from);
+        console.log(`🔍 [DEBUG-RC5] step=${currentState?.step}, reply="${reply.slice(0, 80)}"`);
+        if (currentState && currentState.step >= 3) {
+          reply = validateFieldOrder(reply, currentState);
+        }
+      }
 
       if (reply) {
         // ── B1: Hold check — cek ada pesan susulan sebelum lanjut ──────────
@@ -2494,11 +2719,20 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
         if (pendingBuffers.has(from) || hasNewerMessage) {
           console.log(`⏸️ Reply untuk ${senderName} ditahan — ada pesan susulan.`);
           activeProcessing.delete(from);
-          // B3: null + flag, bukan string status supaya tidak bocor ke Gemini
+          // B3: Simpan aiReply untuk context percakapan berikutnya,
+          // tapi tandai heldReply supaya TIDAK dikirim ke WA dan
+          // TIDAK di-inject sebagai model reply ke Gemini (mencegah
+          // bocor konteks ke customer yang belum melihat balasan ini).
           entry.replied = true;
-          entry.aiReply = null;
-          entry.cancelledEntry = true;
+          entry.aiReply = reply;
+          entry.heldReply = true;
           save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
+          // TEST MODE: log held reply sebagai testTurn supaya intermediate steps terlihat
+          if (from === TEST_PHONE) {
+            testTurns.unshift({ id: Date.now(), input: combinedBody, aiOutput: reply, step: orderStates.get(from)?.step ?? null, heldReply: true, timestamp: new Date().toISOString() });
+            if (testTurns.length > 100) testTurns.length = 100;
+            _capturedGeminiRequest = null; _capturedGeminiResponse = null;
+          }
           return;
         }
         // ────────────────────────────────────────────────────────────────────
@@ -2535,9 +2769,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
           cleanReply = cleanReply.replace(/\[CEK_ONGKIR:[^\]]+\]/gi, '').trim();
           const tagContent = ongkirMatch[1].trim();
           try {
-            // Ambil harga produk dari history/entry untuk itemValue (pakai 100000 default)
-            const courierPri = settings.courierPriority || DEFAULT_COURIER_PRIORITY;
-            const ongkirResult = await ongkirHelper.processCekOngkirTag(tagContent, 100000, courierPri);
+            const ongkirResult = await ongkirHelper.processCekOngkirTag(tagContent, 100000);
             if (ongkirResult?.formatted) {
               cleanReply = cleanReply + '\n\n' + ongkirResult.formatted;
               console.log(`[P2-C] Ongkir berhasil dicek untuk: ${tagContent}`);
@@ -2639,7 +2871,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
           }
         }
 
-        const delayMs = getReplyDelayMs(cleanReply);
+        const delayMs = from === TEST_PHONE ? 0 : getReplyDelayMs(cleanReply);
         
         // Simpan timeoutId dan resolve agar bisa di-clear/dibatalkan jika ada pesan baru
         await new Promise(resolve => {
@@ -2654,10 +2886,15 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
         if (controller.signal.aborted) {
            console.log(`⚠️ Pesan untuk ${senderName} batal dikirim karena di-preempt saat delay.`);
            entry.replied = true;
-           // B3: null + flag, bukan string status
-           entry.aiReply = null;
-           entry.cancelledEntry = true;
+           // Simpan reply untuk context percakapan berikutnya
+           entry.aiReply = reply;
+           entry.heldReply = true;
            save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
+           if (from === TEST_PHONE) {
+             testTurns.unshift({ id: Date.now(), input: combinedBody, aiOutput: reply, step: orderStates.get(from)?.step ?? null, heldReply: true, timestamp: new Date().toISOString() });
+             if (testTurns.length > 100) testTurns.length = 100;
+             _capturedGeminiRequest = null; _capturedGeminiResponse = null;
+           }
            return;
         }
 
@@ -2670,9 +2907,14 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
         if (pendingBuffers.has(from) || hasNewerMessageAfterDelay) {
           console.log(`⏸️ Reply untuk ${senderName} ditahan (post-delay) — ada pesan susulan.`);
           entry.replied = true;
-          entry.aiReply = null;
-          entry.cancelledEntry = true;
+          entry.aiReply = reply;
+          entry.heldReply = true;
           save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
+          if (from === TEST_PHONE) {
+            testTurns.unshift({ id: Date.now(), input: combinedBody, aiOutput: reply, step: orderStates.get(from)?.step ?? null, heldReply: true, timestamp: new Date().toISOString() });
+            if (testTurns.length > 100) testTurns.length = 100;
+            _capturedGeminiRequest = null; _capturedGeminiResponse = null;
+          }
           return;
         }
         // ────────────────────────────────────────────────────────────────────
@@ -3203,6 +3445,14 @@ async function flushMacrodroidBuffer(from) {
 
     const history = buildHistory(from, entry.id);
     let reply = await aiReply(combinedBody, senderName, history, null, from);
+
+    // ── RC-5: Validasi field order di MacroDroid path ──
+    if (reply) {
+      const macroState = orderStates.get(from);
+      if (macroState && macroState.step >= 3) {
+        reply = validateFieldOrder(reply, macroState);
+      }
+    }
 
     if (!reply) {
       save(MSG_FILE, messages); if (typeof entry !== 'undefined') persistMessageToDB(entry); else if (typeof msgObj !== 'undefined') persistMessageToDB(msgObj);
@@ -4185,23 +4435,9 @@ app.post('/api/test/internal/send', async (req, res) => {
 
   console.log(`\n🧪 [INTERNAL TEST] Pesan: "${message}"`);
 
-  // Simpan ke messages array seperti pesan biasa (tapi dari TEST_PHONE)
-  const entry = {
-    id: Date.now(),
-    from: TEST_PHONE,
-    senderName: name,
-    body: message,
-    wamid,
-    timestamp: new Date().toISOString(),
-    replied: false,
-    aiReply: null,
-    type: 'text',
-    isTestInternal: true,
-  };
-  messages.unshift(entry);
-  save(MSG_FILE, messages);
-
-  // Proses AI secara async
+  // Proses AI secara async — processCustomerMessage akan membuat entry sendiri
+  // di messages array, jadi TIDAK perlu membuat entry di sini (mencegah duplikat
+  // yang memicu retryFailedMessages memproses ulang)
   processCustomerMessage(TEST_PHONE, name, message, wamid, null, null, null, null, null)
     .catch(e => console.error('🧪 [TEST] Error:', e.message));
 
@@ -4221,6 +4457,9 @@ app.post('/api/test/internal/reset', (req, res) => {
 
   // Reset turn history + capture
   testTurns.length = 0;
+  testRawCaptures.length = 0;
+  _rawCaptureId = 0;
+  save(RAW_CAP_FILE, []);
   _capturedGeminiRequest = null;
   _capturedGeminiResponse = null;
   _prevTestStep = null;
@@ -4233,6 +4472,11 @@ app.post('/api/test/internal/reset', (req, res) => {
 // GET /api/test/internal/turns — ambil semua turn (untuk load awal dashboard)
 app.get('/api/test/internal/turns', (req, res) => {
   res.json({ ok: true, turns: testTurns });
+});
+
+// GET /api/test/internal/raw-captures — data mentah Gemini per request (persistent, anti-preemption)
+app.get('/api/test/internal/raw-captures', (req, res) => {
+  res.json({ ok: true, captures: testRawCaptures });
 });
 
 // ═══════════════════════════════════════════════════════════════════
