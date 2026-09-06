@@ -1832,9 +1832,10 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from) {
   parts.push('- JANGAN abaikan gambar — selalu respons bahwa gambar sudah diterima dan jelaskan apa yang kamu lihat');
   parts.push('');
   parts.push('=== ATURAN CEK ONGKIR OTOMATIS ===');
-  parts.push('- Ketika customer sudah menyebutkan KECAMATAN dan KOTA/KABUPATEN tujuan pengiriman, sisipkan tag berikut di AKHIR balasanmu: [CEK_ONGKIR:NamaKecamatan,NamaKota]');
-  parts.push('  Contoh: [CEK_ONGKIR:Cibinong,Bogor] atau [CEK_ONGKIR:Lowokwaru,Malang]');
+  parts.push('- **WAJIB**: Setiap kali pesan customer mengandung nama KECAMATAN DAN KOTA/KABUPATEN tujuan pengiriman (baik tersendiri maupun gabungan dengan alamat lain), WAJIB sisipkan tag berikut di AKHIR balasanmu: [CEK_ONGKIR:NamaKecamatan,NamaKota]');
+  parts.push('  Contoh customer bilang "Kasihan, Bantul" atau "RT 03 RW 05 Tamantirto, Kasihan, Bantul" → kamu HARUS tambahkan [CEK_ONGKIR:Kasihan,Bantul] di akhir balasan');
   parts.push('- Sistem akan otomatis mengecek tarif kurir dan menambahkan hasilnya ke balasanmu — kamu TIDAK perlu sebut angka ongkir sendiri.');
+  parts.push('- JANGAN LUPA tag ini! Ini sangat penting untuk informasi ongkir ke customer.');
   parts.push('- JANGAN gunakan tag ini kalau kecamatan/kota tujuan BELUM jelas disebut. Tanya dulu.');
   parts.push('- JANGAN sebut angka ongkir manual tanpa tag ini — biarkan sistem yang cek agar akurat.');
 
