@@ -2700,6 +2700,28 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
       }
       let reply = await aiReply(combinedBody, senderName, history, controller.signal, from, imagePath, audioPathForAI);
 
+      // ── P2-C: Proses tag [CEK_ONGKIR] SEBELUM validasi field order ──
+      // (validateFieldOrder bisa mengganti seluruh reply, jadi extract tag dulu)
+      let ongkirFormatted = null;
+      if (reply) {
+        const ongkirMatch = reply.match(/\[CEK_ONGKIR:([^\]]+)\]/i);
+        if (ongkirMatch) {
+          reply = reply.replace(/\[CEK_ONGKIR:[^\]]+\]/gi, '').trim();
+          const tagContent = ongkirMatch[1].trim();
+          try {
+            const ongkirResult = await ongkirHelper.processCekOngkirTag(tagContent, 100000);
+            if (ongkirResult?.formatted) {
+              ongkirFormatted = ongkirResult.formatted;
+              console.log(`[P2-C] Ongkir berhasil dicek untuk: ${tagContent}`);
+            } else {
+              console.warn(`[P2-C] Ongkir tidak bisa dicek untuk: ${tagContent}`);
+            }
+          } catch (ongkirErr) {
+            console.warn('[P2-C] Error cek ongkir:', ongkirErr.message);
+          }
+        }
+      }
+
       // ── RC-5: Validasi field order — cegah AI menanyakan field yang sudah terisi ──
       if (reply) {
         const currentState = orderStates.get(from);
@@ -2764,22 +2786,9 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
         // (tag gambar bukan bagian dari isi balasan yang dibaca customer).
         let cleanReply = reply;
 
-        // P2-C: Proses tag [CEK_ONGKIR:kecamatan,kabupaten] — cek ongkir otomatis
-        const ongkirMatch = cleanReply.match(/\[CEK_ONGKIR:([^\]]+)\]/i);
-        if (ongkirMatch) {
-          cleanReply = cleanReply.replace(/\[CEK_ONGKIR:[^\]]+\]/gi, '').trim();
-          const tagContent = ongkirMatch[1].trim();
-          try {
-            const ongkirResult = await ongkirHelper.processCekOngkirTag(tagContent, 100000);
-            if (ongkirResult?.formatted) {
-              cleanReply = cleanReply + '\n\n' + ongkirResult.formatted;
-              console.log(`[P2-C] Ongkir berhasil dicek untuk: ${tagContent}`);
-            } else {
-              console.warn(`[P2-C] Ongkir tidak bisa dicek untuk: ${tagContent}`);
-            }
-          } catch (ongkirErr) {
-            console.warn('[P2-C] Error cek ongkir:', ongkirErr.message);
-          }
+        // P2-C: Append hasil ongkir (sudah di-extract sebelum validateFieldOrder)
+        if (ongkirFormatted) {
+          cleanReply = cleanReply + '\n\n' + ongkirFormatted;
         }
         // ────────────────────────────────────────────────────────────────
 
