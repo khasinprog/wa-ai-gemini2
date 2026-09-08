@@ -34,4 +34,11 @@ module.exports = {
     'apa saja', 'apa aja', 'semua produk', 'produk apa',
     'jual apa', 'ada apa', 'ada apa saja', 'produk lain', 'ada produk'
   ],
+
+  // ── Utilities ──────────────────────────────────────────────────
+  normalizeIdNumber(num) {
+    let n = (num || '').replace(/\D/g, '');
+    if (n.startsWith('0')) n = '62' + n.slice(1);
+    return n;
+  },
 };
