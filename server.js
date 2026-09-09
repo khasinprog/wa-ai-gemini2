@@ -148,6 +148,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/images', express.static(store.PATHS.IMAGES_DIR));
 app.use('/audio',  express.static(store.PATHS.AUDIO_DIR));
 
+// ── PWA Push: VAPID key (no auth — frontend needs before login) ────
+app.get('/api/push/vapid-key', (_, res) => res.json({ publicKey: VAPID_PUBLIC_KEY }));
+
+// ── Ongkir router (no auth — internal proxy) ────────────────────────
+app.use('/api/ongkir', require('./routes/ongkir'));
+
 // ═══════════════════════════════════════════════════════════════════
 // LOGIN ENDPOINT (with rate limiting — NO auth required)
 // ═══════════════════════════════════════════════════════════════════
@@ -217,9 +223,7 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-// ── PWA Push Notification endpoints ────────────────────────────────
-app.get('/api/push/vapid-key', (_, res) => res.json({ publicKey: VAPID_PUBLIC_KEY }));
-
+// ── PWA Push subscribe/unsubscribe (auth required) ──────────────────
 app.post('/api/push/subscribe', (req, res) => {
   const subscription = req.body;
   if (!subscription?.endpoint) return res.status(400).json({ error: 'Invalid subscription' });
