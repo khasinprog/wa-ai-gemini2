@@ -366,7 +366,7 @@ function logGeminiRequest(direction, data) {
 // ═══════════════════════════════════════════════════════════════════
 // BUILD SYSTEM PROMPT (inline for now)
 // ═══════════════════════════════════════════════════════════════════
-function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesForFrom) {
+function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesForFrom, thinkerData) {
   const settings = store.settings;
   const orderStates = store.orderStates;
 
@@ -419,6 +419,19 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
     if (missing.length && orderState.step >= 3) {
       parts.push(`→ Belum ada: ${missing.join(', ')}`);
       parts.push(`TUGAS WAJIB: tanya HANYA field pertama "${missing[0]}" dalam balasan ini. JANGAN tanya lebih dari 1 field.`);
+    }
+
+    // Thinker extracted data — acknowledge before asking next field
+    if (thinkerData?.extractedData && Object.keys(thinkerData.extractedData).length > 0) {
+      const fields = Object.entries(thinkerData.extractedData)
+        .filter(([, v]) => v)
+        .map(([k, v]) => `${k}: "${v}"`);
+      if (fields.length) {
+        parts.push('');
+        parts.push('=== DATA BARU DARI CUSTOMER (pesan ini) ===');
+        parts.push(fields.join('\n'));
+        parts.push('→ WAJIB: acknowledge data di atas SEBELUM tanya field berikutnya. Contoh: "Perumahan dalem tamantirto C3 sudah dicatat ya Kak."');
+      }
     }
     parts.push('');
   }
@@ -539,7 +552,7 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
 // ═══════════════════════════════════════════════════════════════════
 // 11. callGeminiDirect — full Gemini API call with multimodal support
 // ═══════════════════════════════════════════════════════════════════
-async function callGeminiDirect(key, keySlot, message, name, history, signal, from, imagePath, audioPath) {
+async function callGeminiDirect(key, keySlot, message, name, history, signal, from, imagePath, audioPath, thinkerData) {
   const startTime = Date.now();
   const settings = store.settings;
   const orderStates = store.orderStates;
@@ -596,7 +609,7 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal, fr
   const relevantKB = getRelevantKnowledge(message, history);
   const isFirstMessage = !history?.length;
   const sentImagesForFrom = store.sentProductImages.get(from) || null;
-  let systemPromptText = buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesForFrom);
+  let systemPromptText = buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesForFrom, thinkerData);
 
   // Append summary from old conversations to system prompt
   const summaryEntry = history?.find(h => h._summary);
@@ -765,7 +778,7 @@ async function callGeminiRaw(systemPrompt, userText) {
 // ═══════════════════════════════════════════════════════════════════
 // 13. aiReply — retry loop with key rotation
 // ═══════════════════════════════════════════════════════════════════
-async function aiReply(message, name, history, signal, from, imagePath, audioPath) {
+async function aiReply(message, name, history, signal, from, imagePath, audioPath, thinkerData) {
   if (getValidKeys().length === 0) {
     console.error('Tidak ada API key yang valid di .env');
     return null;
@@ -790,7 +803,7 @@ async function aiReply(message, name, history, signal, from, imagePath, audioPat
     emitKeyStatuses();
     console.log(`Mencoba Key ${picked.slot + 1}...`);
 
-    const result = await callGeminiDirect(picked.key, picked.slot, message, name, history, signal, from, imagePath, audioPath);
+    const result = await callGeminiDirect(picked.key, picked.slot, message, name, history, signal, from, imagePath, audioPath, thinkerData);
 
     if (result.ok) {
       emitKeyStatuses();
