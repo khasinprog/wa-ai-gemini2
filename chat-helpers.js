@@ -5,6 +5,7 @@
 'use strict';
 
 const store = require('./state-store');
+const { parseProductBlocks } = require('./knowledge-base');
 
 const REPLY_LENGTH_THRESHOLD = 80;
 
@@ -24,13 +25,20 @@ function buildHistory(from, currentEntryId, maxEntries = 20) {
 function buildConversationSummary(oldEntries) {
   const products = new Set();
   const discussed = [];
+
+  // Dynamic: detect products from Knowledge Base
+  const blocks = parseProductBlocks(store.settings.knowledgeBase);
   const recentEntries = oldEntries.slice(-5);
   for (const entry of recentEntries) {
     const userText = (entry.body || '').toLowerCase();
-    if (userText.includes('baby walking')) products.add('Baby Walking Assistant');
-    if (userText.includes('pasta dempul')) products.add('Pasta Dempul');
-    if (userText.includes('selang')) products.add('Selang Kran Fleksibel 360°');
-    if (userText.includes('mini sealer')) products.add('Mini Sealer Portable');
+
+    // Match any product from KB
+    for (const block of blocks) {
+      if (!block.name) continue;
+      const words = block.name.toLowerCase().split(/\s+/).filter(w => w.length >= 3);
+      if (words.some(w => userText.includes(w))) products.add(block.name);
+    }
+
     if (userText.includes('harga') || userText.includes('berapa')) discussed.push('harga');
     if (userText.includes('warna') || userText.includes('biru') || userText.includes('pink')) discussed.push('warna');
     if (userText.includes('order') || userText.includes('mau')) discussed.push('order');

@@ -222,6 +222,23 @@ input:checked+.slider:before{transform:translateX(18px)}
 .bubble.outgoing .link-preview{background:rgba(255,255,255,.2);border-left-color:rgba(255,255,255,.6)}
 .bubble.outgoing .lp-title{color:#fff}
 .bubble.outgoing .lp-domain{color:rgba(255,255,255,.75)}
+/* Draft bubble */
+.draft-bubble{background:#FEF3C7;border:2px solid #F59E0B;color:#92400E;border-radius:12px;padding:10px 14px;max-width:80%}
+.draft-badge{font-size:.65rem;font-weight:700;color:#D97706;margin-bottom:6px;letter-spacing:.5px}
+.draft-text{font-size:.85rem;line-height:1.5;color:#78350F;white-space:pre-wrap}
+.draft-actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.draft-edit-btn,.draft-send-btn,.draft-cancel-btn{padding:4px 10px;border-radius:6px;border:1px solid #D97706;background:#FEF3C7;color:#92400E;font-size:.72rem;font-weight:600;cursor:pointer;transition:all .2s}
+.draft-edit-btn:hover{background:#FDE68A}
+.draft-send-btn{background:#10B981;color:#fff;border-color:#10B981}
+.draft-send-btn:hover{background:#059669}
+.draft-cancel-btn{background:transparent;border-color:#EF4444;color:#EF4444}
+.draft-cancel-btn:hover{background:#FEE2E2}
+/* Mobile draft */
+@media (max-width:768px){
+  .draft-bubble{max-width:90%}
+  .draft-actions{gap:4px}
+  .draft-edit-btn,.draft-send-btn,.draft-cancel-btn{padding:5px 12px;font-size:.75rem}
+}
 #toast-container{position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
 .toast{background:#25D366;color:#fff;padding:10px 16px;border-radius:10px;font-size:.82rem;font-weight:600;box-shadow:0 4px 12px rgba(0,0,0,.2);display:flex;align-items:center;gap:8px;pointer-events:all;cursor:pointer;animation:slideInRight .3s ease;max-width:280px}
 @keyframes slideInRight{from{transform:translateX(120%);opacity:0}to{transform:translateX(0);opacity:1}}
@@ -1148,12 +1165,102 @@ async function doLogin() {
       localStorage.setItem('authToken', data.token);
       document.getElementById('loginOverlay').style.display = 'none';
       initApp();
+      subscribePush(); // Subscribe push notification setelah login
     } else {
       err.textContent = '❌ ' + (data.error || 'Password salah');
     }
   } catch (e) {
     err.textContent = '❌ Koneksi gagal';
   }
+}
+
+// ── PWA Push Notification Subscribe ────────────────────────────────
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
+}
+
+async function subscribePush() {
+  try {
+    if (!('Notification' in window) || !navigator.serviceWorker) return;
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') return;
+    const reg = await navigator.serviceWorker.ready;
+    const vapidRes = await fetch('/api/push/vapid-key');
+    const { publicKey } = await vapidRes.json();
+    if (!publicKey) return;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    });
+    await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('authToken')}` },
+      body: JSON.stringify(sub),
+    });
+    console.log('🔔 Push notification subscribed');
+  } catch (e) {
+    console.warn('Push subscribe failed:', e.message);
+  }
+}
+
+// ── Draft functions ────────────────────────────────────────────────
+let activeDraftEntryId = null;
+
+function editDraft(entryId, text) {
+  activeDraftEntryId = entryId;
+  const input = document.getElementById('chatInput') || document.getElementById('mobChatInput') || document.getElementById('deskChatInput');
+  if (input) {
+    input.value = text;
+    input.style.borderColor = '#F59E0B';
+    input.placeholder = 'Edit draft...';
+  }
+  // Tampilkan tombol send draft
+  document.querySelectorAll('.draft-send-btn').forEach(b => b.style.display = 'inline-flex');
+  document.querySelectorAll('.draft-cancel-btn').forEach(b => b.style.display = 'inline-flex');
+}
+
+async function sendDraft() {
+  if (!activeDraftEntryId) return;
+  const input = document.getElementById('chatInput') || document.getElementById('mobChatInput') || document.getElementById('deskChatInput');
+  const text = input?.value?.trim();
+  if (!text) return alert('Draft kosong');
+  try {
+    const res = await fetch('/api/draft/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('authToken')}` },
+      body: JSON.stringify({ entryId: activeDraftEntryId, text }),
+    });
+    if (res.ok) {
+      activeDraftEntryId = null;
+      if (input) { input.value = ''; input.style.borderColor = ''; input.placeholder = 'Tulis pesan...'; }
+      document.querySelectorAll('.draft-send-btn').forEach(b => b.style.display = 'none');
+      document.querySelectorAll('.draft-cancel-btn').forEach(b => b.style.display = 'none');
+      renderChat(activeContact);
+    } else {
+      const err = await res.json();
+      alert('Gagal: ' + (err.error || 'Unknown error'));
+    }
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function cancelDraft(entryId) {
+  if (!confirm('Batalkan draft ini?')) return;
+  try {
+    await fetch('/api/draft/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('authToken')}` },
+      body: JSON.stringify({ entryId }),
+    });
+    activeDraftEntryId = null;
+    const input = document.getElementById('chatInput') || document.getElementById('mobChatInput') || document.getElementById('deskChatInput');
+    if (input) { input.value = ''; input.style.borderColor = ''; input.placeholder = 'Tulis pesan...'; }
+    document.querySelectorAll('.draft-send-btn').forEach(b => b.style.display = 'none');
+    document.querySelectorAll('.draft-cancel-btn').forEach(b => b.style.display = 'none');
+    renderChat(activeContact);
+  } catch (e) { alert('Error: ' + e.message); }
 }
 
 let socket,allMessages=[],orders=[],contacts={},activeContact=null;
@@ -1489,6 +1596,19 @@ function renderChat(jid, appendMode = false){
     <div class="bubble-wrap outgoing">
       <div class="bubble outgoing">${x(m.aiReply)}</div>
       <div class="bubble-ai-label">${m.manual ? '👤 Anda' : '✨ AI'} · ${ft(m.timestamp)}</div>
+    </div>`
+    : m.draftStatus === 'pending' && m.aiReplyDraft ?`
+    <div class="bubble-wrap outgoing">
+      <div class="bubble draft-bubble">
+        <div class="draft-badge">📝 DRAFT</div>
+        <div class="draft-text">${x(m.aiReplyDraft)}</div>
+        <div class="draft-actions">
+          <button class="draft-edit-btn" onclick="editDraft(${m.id}, ${JSON.stringify(m.aiReplyDraft).replace(/"/g, '&quot;')})">✏️ Edit</button>
+          <button class="draft-send-btn" onclick="sendDraft()" style="display:none">✅ Kirim</button>
+          <button class="draft-cancel-btn" onclick="cancelDraft(${m.id})" style="display:none;color:#EF4444">✕ Batal</button>
+        </div>
+      </div>
+      <div class="bubble-ai-label">📝 Draft · ${ft(m.timestamp)}</div>
     </div>`
     : m.cancelledEntry ? ''
     :`<div class="no-reply-note">⚠️ Tidak dibalas (cek pengaturan/quota)</div>`}

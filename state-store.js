@@ -36,7 +36,7 @@ const DEF = {
   followUp: '',
   modelName: 'gemini-3.1-flash-lite',
   temperature: 0.7,
-  adminNumber: '085210127796',
+  adminNumber: process.env.ADMIN_WHATSAPP_NUMBER || '',
   debounceSeconds: 10,
   replyDelayMin: 10,
   replyDelayMax: 15,
@@ -107,13 +107,18 @@ async function persistOrderToDB(order) {
   try { await db.saveOrder(order); } catch(e) { console.error('DB Order Error:', e.message); }
 }
 
-// ── File save helper ──
+// ── File save helper (non-blocking) ──
 const save = (file, data) => {
   try {
-    fs.writeFileSync(file, JSON.stringify(data, null, 2));
+    const json = JSON.stringify(data, null, 2);
+    fs.writeFile(file, json, (err) => {
+      if (err) {
+        console.error(`Gagal menyimpan file ${path.basename(file)}:`, err.message);
+        try { io?.emit('save_error', { file: path.basename(file), error: err.message }); } catch(e2) {}
+      }
+    });
   } catch(e) {
     console.error(`Gagal menyimpan file ${path.basename(file)}:`, e.message);
-    try { io?.emit('save_error', { file: path.basename(file), error: e.message }); } catch(e2) {}
   }
 };
 const saveEscalations = () => save(ESC_FILE, { counter: escalationCounter, items: pendingEscalations });

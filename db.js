@@ -113,6 +113,10 @@ async function initDB() {
     await client.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(30) DEFAULT NULL`);
     // F3-D: Migration — tambah kolom cold_lead jika belum ada
     await client.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS cold_lead BOOLEAN DEFAULT FALSE`);
+    // Draft mode: tambah kolom ai_reply_draft & draft_status jika belum ada
+    await client.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS ai_reply_draft TEXT`);
+    await client.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS draft_status VARCHAR(20) DEFAULT NULL`);
+    console.log('✅ [DB] Migration draft columns applied');
 
     // Cleanup old processed_wamids (older than 7 days) — non-fatal
     try {
@@ -130,15 +134,18 @@ async function initDB() {
 async function saveMessage(msg) {
   if (!DB_ENABLED) return null;
   const q = `
-    INSERT INTO messages 
+    INSERT INTO messages
       (waba_message_id, wa_id, sender_name, direction, sender_type, message_type,
-       body, ai_reply, replied, manual, cancelled_entry, retry_count,
+       body, ai_reply, ai_reply_draft, draft_status,
+       replied, manual, cancelled_entry, retry_count,
        media_url, media_mime_type, media_filename,
        link_url, link_title, link_description, link_thumbnail, link_domain,
        source, ad_id, raw_payload, timestamp)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
     ON CONFLICT (waba_message_id) DO UPDATE SET
       ai_reply = EXCLUDED.ai_reply,
+      ai_reply_draft = EXCLUDED.ai_reply_draft,
+      draft_status = EXCLUDED.draft_status,
       replied = EXCLUDED.replied,
       manual = EXCLUDED.manual,
       cancelled_entry = EXCLUDED.cancelled_entry,
@@ -154,6 +161,8 @@ async function saveMessage(msg) {
     msg.message_type || msg.messageType || 'text',
     msg.body || null,
     msg.ai_reply || msg.aiReply || null,
+    msg.ai_reply_draft || msg.aiReplyDraft || null,
+    msg.draft_status || msg.draftStatus || null,
     msg.replied || false,
     msg.manual || false,
     msg.cancelled_entry || msg.cancelledEntry || false,
@@ -177,7 +186,7 @@ async function saveMessage(msg) {
 
 async function updateMessage(id, fields) {
   if (!DB_ENABLED) return;
-  const allowed = ['ai_reply','replied','manual','cancelled_entry','retry_count','media_url','link_url','link_title','link_thumbnail','link_domain'];
+  const allowed = ['ai_reply','ai_reply_draft','draft_status','replied','manual','cancelled_entry','retry_count','media_url','link_url','link_title','link_thumbnail','link_domain'];
   const sets = [], vals = [];
   let i = 1;
   for (const [k, v] of Object.entries(fields)) {
@@ -232,6 +241,10 @@ function dbRowToMsg(row) {
     body: row.body,
     aiReply: row.ai_reply,
     ai_reply: row.ai_reply,
+    aiReplyDraft: row.ai_reply_draft,
+    ai_reply_draft: row.ai_reply_draft,
+    draftStatus: row.draft_status,
+    draft_status: row.draft_status,
     replied: row.replied,
     manual: row.manual,
     cancelledEntry: row.cancelled_entry,

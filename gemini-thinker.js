@@ -166,12 +166,12 @@ async function callThinkerGemini(userText) {
     if (!picked) return null;
 
     const model = store.settings.modelName || 'gemini-3.1-flash-lite';
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(picked.key)}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': picked.key },
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: userText }] }],
           systemInstruction: { parts: [{ text: THINKER_SYSTEM_PROMPT }] },

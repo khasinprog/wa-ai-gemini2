@@ -20,8 +20,12 @@ let _persistTimer = null;
 function _doPersistOrderState() {
   const obj = {};
   for (const [phone, state] of store.orderStates) obj[phone] = state;
-  try { fs.writeFileSync(store.PATHS.ORDER_STATE_FILE, JSON.stringify(obj, null, 2)); }
-  catch (e) { console.error('[OrderState] Gagal persist:', e.message); }
+  try {
+    const json = JSON.stringify(obj, null, 2);
+    fs.writeFile(store.PATHS.ORDER_STATE_FILE, json, (err) => {
+      if (err) console.error('[OrderState] Gagal persist:', err.message);
+    });
+  } catch (e) { console.error('[OrderState] Gagal persist:', e.message); }
 }
 function persistOrderState(urgent = false) {
   if (urgent) { _doPersistOrderState(); return; }

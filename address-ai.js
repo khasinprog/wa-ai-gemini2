@@ -12,14 +12,16 @@
 const store             = require('./state-store');
 const { getAvailableKey } = require('./gemini-service');
 
-// ── Komerce API defaults ──
-// Nilai hardcoded di bawah hanya sebagai fallback awal — setelah disimpan via
-// dashboard, nilai dari settings.json yang akan dipakai.
-const KOMERCE_API_KEY_DEFAULT = 'Yzx2NjTb1c484631212a74562TQwiwSB';
-const ORIGIN_ID_DEFAULT       = '73528'; // Serua Ciputat
-
-function getKomerceKey() { return (store.settings.komerceApiKey || '').trim() || KOMERCE_API_KEY_DEFAULT; }
-function getOriginId()   { return (store.settings.originId    || '').trim() || ORIGIN_ID_DEFAULT; }
+// ── Komerce API config ──
+// Priority: settings.json (dashboard) > env var > warning
+function getKomerceKey() {
+  const key = (store.settings.komerceApiKey || process.env.KOMERCE_API_KEY || '').trim();
+  if (!key) console.warn('⚠️  [Komerce] API Key belum diisi — cek settings atau env KOMERCE_API_KEY');
+  return key;
+}
+function getOriginId() {
+  return (store.settings.originId || process.env.KOMERCE_ORIGIN_ID || '73528').trim();
+}
 
 // ── Provinsi yang dicover ID Express COD (berdasarkan jangkauan resmi ID Express) ──
 // Sumber: https://idexpress.com/coverage
@@ -60,7 +62,7 @@ async function processOrderAddressAI(orderId) {
 
   try {
     const model = settings.modelName || 'gemini-3.1-flash-lite';
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
     const systemPrompt = `Kamu adalah asisten ekstraksi alamat pengiriman Indonesia. Dari teks alamat berikut, ekstrak informasi dan kembalikan HANYA JSON murni (tanpa markdown backticks, tanpa komentar) dengan struktur PERSIS ini:\n{"desa": "nama desa atau kelurahan saja (tanpa kata Desa/Kel)", "kecamatan": "nama kecamatan saja (tanpa kata Kec)", "kabupaten": "nama kabupaten atau kota (tanpa kata Kab/Kota)", "provinsi": "nama provinsi", "patokan": "nama jalan, nomor rumah, atau patokan lokasi jika ada — kosongkan jika tidak ada", "kodepos": "kode pos 5 digit jika ada — kosongkan jika tidak diketahui", "alamat_baku": "alamat lengkap rapi format: [patokan jika ada], Desa [desa], Kec [kecamatan], [kabupaten], [provinsi] [kodepos]"}\nJika ada informasi yang tidak tersedia dalam teks, isi dengan string kosong. Jangan mengarang informasi yang tidak ada.`;
 
@@ -70,7 +72,7 @@ async function processOrderAddressAI(orderId) {
       generationConfig: { temperature: 0.1 },
     };
 
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body) });
     if (!r.ok) return;
 
     const data = await r.json();

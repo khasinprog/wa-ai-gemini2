@@ -300,7 +300,7 @@ function registerApiRoutes(app, io) {
     if (!key) return res.status(400).json({ error: 'Belum ada API key yang diisi' });
 
     const model = store.settings.modelName || config.DEFAULT_MODEL;
-    const url   = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+    const url   = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
     const systemPrompt = `Kamu adalah asisten pembuat database produk. Tugas HANYAMU adalah mengonversi teks mentah yang diberikan user ke dalam format khusus.
 Aturan Wajib:
@@ -321,7 +321,7 @@ Aturan Wajib:
     try {
       const r = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
         body: JSON.stringify(body),
       });
       if (!r.ok) {
@@ -391,7 +391,7 @@ Aturan Wajib:
 
     try {
       const model = store.settings.modelName || config.DEFAULT_MODEL;
-      const url   = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(picked.key)}`;
+      const url   = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
       const systemPrompt = `Kamu adalah asisten ekstraksi alamat pengiriman Indonesia. Dari teks alamat berikut, ekstrak informasi dan kembalikan HANYA JSON murni (tanpa markdown backticks, tanpa komentar) dengan struktur PERSIS ini:
 {"desa": "nama desa atau kelurahan saja (tanpa kata Desa/Kel)", "kecamatan": "nama kecamatan saja (tanpa kata Kec)", "kabupaten": "nama kabupaten atau kota (tanpa kata Kab/Kota)", "provinsi": "nama provinsi", "patokan": "nama jalan, nomor rumah, atau patokan lokasi jika ada — kosongkan jika tidak ada", "kodepos": "kode pos 5 digit jika ada — kosongkan jika tidak diketahui", "alamat_baku": "alamat lengkap rapi format: [patokan jika ada], Desa [desa], Kec [kecamatan], [kabupaten], [provinsi] [kodepos]"}
@@ -403,7 +403,7 @@ Jika ada informasi yang tidak tersedia dalam teks, isi dengan string kosong. Jan
         generationConfig: { temperature: 0.1 },
       };
 
-      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': picked.key }, body: JSON.stringify(body) });
       if (!r.ok) {
         const errData = await r.json().catch(() => ({}));
         throw new Error(errData?.error?.message || `Gagal menghubungi AI (HTTP ${r.status})`);
@@ -710,10 +710,10 @@ Jika ada informasi yang tidak tersedia dalam teks, isi dengan string kosong. Jan
     if (!key) return res.json({ ok: false, error: `Key ${slot} belum diisi` });
     try {
       const model = store.settings.modelName || config.DEFAULT_MODEL;
-      const url   = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+      const url   = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
       const r     = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
         body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Halo, balas dengan kata OK saja.' }] }] }),
       });
       const data = await r.json();

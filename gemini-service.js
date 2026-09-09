@@ -544,7 +544,7 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal, fr
   const settings = store.settings;
   const orderStates = store.orderStates;
   const model = settings.modelName || config.DEFAULT_MODEL;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
   // Build contents from history
   const contents = [];
@@ -642,7 +642,7 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal, fr
   try {
     res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify(body),
       signal
     });
@@ -727,10 +727,10 @@ async function callGeminiRaw(systemPrompt, userText) {
   if (!picked) return null;
   const model = store.settings.modelName || config.DEFAULT_MODEL;
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(picked.key)}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': picked.key },
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: userText }] }],
         systemInstruction: { parts: [{ text: systemPrompt }] },

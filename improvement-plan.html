@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Improvement Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f6f5f2;
+  --bg-card: #ffffff;
+  --bg-code: #f0efec;
+  --text: #1a1a2e;
+  --text-secondary: #5a5a72;
+  --text-muted: #8a8a9e;
+  --border: #e2e1dc;
+  --accent: #3d5a99;
+  --accent-light: #e8edf6;
+  --urgent: #c0392b;
+  --urgent-bg: #fdf2f1;
+  --urgent-border: #f1c4bf;
+  --high: #d4790e;
+  --high-bg: #fef8f0;
+  --high-border: #f5e3c8;
+  --medium: #1a7a4c;
+  --medium-bg: #f0faf5;
+  --medium-border: #c4e8d6;
+  --low: #6b7280;
+  --low-bg: #f5f5f6;
+  --low-border: #dedede;
+  --impact-bad: #c0392b;
+  --impact-good: #1a7a4c;
+  --shadow-sm: 0 1px 3px rgba(26,26,46,0.06);
+  --shadow-md: 0 2px 8px rgba(26,26,46,0.08);
+  --radius: 6px;
+  --font-body: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111118;
+    --bg-card: #1a1a24;
+    --bg-code: #22222e;
+    --text: #e4e4ec;
+    --text-secondary: #a0a0b4;
+    --text-muted: #6a6a80;
+    --border: #2a2a3a;
+    --accent: #7da2e0;
+    --accent-light: #1e2640;
+    --urgent: #e74c3c;
+    --urgent-bg: #2a1615;
+    --urgent-border: #4a2522;
+    --high: #f0a040;
+    --high-bg: #2a2210;
+    --high-border: #4a3a18;
+    --medium: #45c98a;
+    --medium-bg: #122a1e;
+    --medium-border: #1e4a30;
+    --low: #9ca3af;
+    --low-bg: #1e1e28;
+    --low-border: #333340;
+    --impact-bad: #e74c3c;
+    --impact-good: #45c98a;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.2);
+    --shadow-md: 0 2px 8px rgba(0,0,0,0.3);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #111118;
+  --bg-card: #1a1a24;
+  --bg-code: #22222e;
+  --text: #e4e4ec;
+  --text-secondary: #a0a0b4;
+  --text-muted: #6a6a80;
+  --border: #2a2a3a;
+  --accent: #7da2e0;
+  --accent-light: #1e2640;
+  --urgent: #e74c3c;
+  --urgent-bg: #2a1615;
+  --urgent-border: #4a2522;
+  --high: #f0a040;
+  --high-bg: #2a2210;
+  --high-border: #4a3a18;
+  --medium: #45c98a;
+  --medium-bg: #122a1e;
+  --medium-border: #1e4a30;
+  --low: #9ca3af;
+  --low-bg: #1e1e28;
+  --low-border: #333340;
+  --impact-bad: #e74c3c;
+  --impact-good: #45c98a;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.2);
+  --shadow-md: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+.container {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 4rem;
+}
+
+/* Header */
+.header {
+  margin-bottom: 3rem;
+  padding-bottom: 2rem;
+  border-bottom: 2px solid var(--border);
+}
+.header-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 0.5rem;
+}
+.header h1 {
+  font-size: 1.85rem;
+  font-weight: 700;
+  line-height: 1.25;
+  text-wrap: balance;
+  margin-bottom: 0.5rem;
+}
+.header-meta {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+/* Summary strip */
+.summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 3rem;
+}
+.summary-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+  text-align: center;
+  box-shadow: var(--shadow-sm);
+}
+.summary-item .count {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.summary-item .label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-top: 0.2rem;
+}
+.count-urgent { color: var(--urgent); }
+.count-high { color: var(--high); }
+.count-medium { color: var(--medium); }
+.count-low { color: var(--low); }
+
+/* Section */
+.section {
+  margin-bottom: 2.5rem;
+}
+.section-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 1.25rem;
+  color: var(--text);
+}
+
+/* Card */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 1.25rem;
+  overflow: hidden;
+}
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+.card-header:hover {
+  background: var(--bg-code);
+}
+.card-header:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.card-num {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.card-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  flex: 1;
+}
+.card-toggle {
+  font-size: 1.1rem;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+.card.open .card-toggle {
+  transform: rotate(90deg);
+}
+
+.badge {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 3px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.badge-urgent { background: var(--urgent-bg); color: var(--urgent); border: 1px solid var(--urgent-border); }
+.badge-high { background: var(--high-bg); color: var(--high); border: 1px solid var(--high-border); }
+.badge-medium { background: var(--medium-bg); color: var(--medium); border: 1px solid var(--medium-border); }
+.badge-low { background: var(--low-bg); color: var(--low); border: 1px solid var(--low-border); }
+
+/* Card body */
+.card-body {
+  display: none;
+  padding: 0 1.25rem 1.25rem;
+  border-top: 1px solid var(--border);
+}
+.card.open .card-body {
+  display: block;
+}
+
+/* Impact table */
+.impact-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+.impact-box {
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+.impact-bad {
+  background: var(--urgent-bg);
+  border: 1px solid var(--urgent-border);
+}
+.impact-good {
+  background: var(--medium-bg);
+  border: 1px solid var(--medium-border);
+}
+.impact-label {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 0.4rem;
+}
+.impact-bad .impact-label { color: var(--impact-bad); }
+.impact-good .impact-label { color: var(--impact-good); }
+.impact-box ul {
+  list-style: none;
+  padding: 0;
+}
+.impact-box li {
+  padding: 0.15rem 0;
+  padding-left: 1.2rem;
+  position: relative;
+}
+.impact-bad li::before { content: "—"; position: absolute; left: 0; color: var(--impact-bad); font-weight: 600; }
+.impact-good li::before { content: "✓"; position: absolute; left: 0; color: var(--impact-good); font-weight: 600; }
+
+/* Steps */
+.steps-heading {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+.step {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  align-items: flex-start;
+}
+.step-num {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-light);
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+.step-content {
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+.step-content strong {
+  font-weight: 600;
+}
+
+/* Code */
+code {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  background: var(--bg-code);
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  color: var(--accent);
+}
+pre {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+  color: var(--text-secondary);
+}
+pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+}
+
+/* Timeline */
+.timeline {
+  margin-top: 3rem;
+  padding-top: 2rem;
+  border-top: 2px solid var(--border);
+}
+.timeline h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 1.25rem;
+}
+.timeline-grid {
+  display: grid;
+  gap: 0;
+}
+.timeline-row {
+  display: grid;
+  grid-template-columns: 48px 1fr 80px 120px;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+.timeline-row:last-child { border-bottom: none; }
+.timeline-id {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.timeline-deps {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.timeline-time {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  text-align: right;
+  color: var(--text-secondary);
+}
+
+/* Recommendation box */
+.recommendation {
+  margin-top: 2rem;
+  background: var(--accent-light);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.5rem;
+}
+.recommendation h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  color: var(--accent);
+}
+.recommendation ol {
+  padding-left: 1.3rem;
+  font-size: 0.85rem;
+  line-height: 1.8;
+}
+.recommendation li strong {
+  font-weight: 600;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .container { padding: 2rem 1rem 3rem; }
+  .header h1 { font-size: 1.4rem; }
+  .summary-strip { grid-template-columns: repeat(2, 1fr); }
+  .impact-grid { grid-template-columns: 1fr; }
+  .timeline-row { grid-template-columns: 40px 1fr; }
+  .timeline-time, .timeline-deps { grid-column: 2; font-size: 0.75rem; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header class="header">
+    <div class="header-eyebrow">Code Review · wa-ai-gemini2</div>
+    <h1>Improvement Plan &amp; Impact Analysis</h1>
+    <p class="header-meta">9 item · 3 urgen · 3 high · 2 medium · 1 low · Estimasi total: 6–8 jam</p>
+  </header>
+
+  <div class="summary-strip">
+    <div class="summary-item"><div class="count count-urgent">3</div><div class="label">Urgent</div></div>
+    <div class="summary-item"><div class="count count-high">3</div><div class="label">High</div></div>
+    <div class="summary-item"><div class="count count-medium">2</div><div class="label">Medium</div></div>
+    <div class="summary-item"><div class="count count-low">1</div><div class="label">Low</div></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- #1 MODULARISASI -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="section">
+    <div class="card open" id="card-1">
+      <div class="card-header" tabindex="0" role="button" aria-expanded="true" onclick="toggleCard('card-1')">
+        <span class="card-num badge-urgent">1</span>
+        <span class="card-title">Aktifkan Modularisasi</span>
+        <span class="badge badge-urgent">Urgent</span>
+        <span class="card-toggle">▸</span>
+      </div>
+      <div class="card-body">
+        <p style="font-size:0.88rem;color:var(--text-secondary);margin-bottom:0.5rem">
+          Commit <code>25bf313</code> berjudul <em>"split monolithic server.js (4812 lines) into 13 modular files"</em> — tapi server.js masih 4812 baris. Semua 13 file modular <strong>tidak di-import</strong> oleh server.js. Kode yang aktif adalah copy inline di server.js, bukan versi module.
+        </p>
+
+        <div class="impact-grid">
+          <div class="impact-box impact-bad">
+            <div class="impact-label">Jika TIDAK Diperbaiki</div>
+            <ul>
+              <li>Bug fix harus dilakukan di 2 tempat</li>
+              <li>Jika lupa satu → behavior berbeda</li>
+              <li>Refactoring selanjutnya makin suluh</li>
+              <li>Cognitive load tinggi — baca 4812 baris</li>
+            </ul>
+          </div>
+          <div class="impact-box impact-good">
+            <div class="impact-label">JIKA Diperbaiki</div>
+            <ul>
+              <li>server.js turun ke ~300 baris</li>
+              <li>Single source of truth</li>
+              <li>Test per-module secara terpisah</li>
+              <li>Load time lebih cepat</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="steps-heading">Step-by-step</div>
+        <div class="step"><span class="step-num">1</span><div class="step-content"><strong>Verifikasi module exports</strong> — Buka setiap file module, pastikan fungsi yang di-export SAMA dengan yang ada di server.js. Buat checklist mapping: server.js function → module file.</div></div>
+        <div class="step"><span class="step-num">2</span><div class="step-content"><strong>Import modules ke server.js</strong> — Tambah <code>require('./state-store')</code>, <code>require('./order-state')</code>, <code>require('./message-processor')</code>, <code>require('./webhook-handler')</code>, <code>require('./gemini-service')</code>, dll.</div></div>
+        <div class="step"><span class="step-num">3</span><div class="step-content"><strong>Ganti inline functions dengan import</strong> — Hapus semua duplicate function definitions di server.js. Ganti pemanggilan ke module yang sudah di-import.</div></div>
+        <div class="step"><span class="step-num">4</span><div class="step-content"><strong>Hapus dead code</strong> — Hapus definisi fungsi, constants, dan variabel yang sudah ada di module. server.js hanya: Express setup, middleware, route registration, start server.</div></div>
+        <div class="step"><span class="step-num">5</span><div class="step-content"><strong>Test manual</strong> — Jalankan server, test pesan WhatsApp → AI reply, webhook Meta, dashboard login, order flow step 1–5.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- #2 API KEY -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="section">
+    <div class="card" id="card-2">
+      <div class="card-header" tabindex="0" role="button" aria-expanded="false" onclick="toggleCard('card-2')">
+        <span class="card-num badge-urgent">2</span>
+        <span class="card-title">Pindahkan API Key Komerce dari Hardcoded</span>
+        <span class="badge badge-urgent">Urgent</span>
+        <span class="card-toggle">▸</span>
+      </div>
+      <div class="card-body">
+        <p style="font-size:0.88rem;color:var(--text-secondary);margin-bottom:0.5rem">
+          <code>address-ai.js:18</code> — API key Komerce (<code>Yzx2NjTb1c...</code>) hardcoded langsung di source code.
+        </p>
+        <div class="impact-grid">
+          <div class="impact-box impact-bad">
+            <div class="impact-label">Jika TIDAK Diperbaiki</div>
+            <ul>
+              <li>Key bocor jika repo public atau contributor baru</li>
+              <li>Key bisa dipakai orang lain → quota habis</li>
+              <li>Tidak bisa rotate tanpa edit source + deploy</li>
+            </ul>
+          </div>
+          <div class="impact-box impact-good">
+            <div class="impact-label">JIKA Diperbaiki</div>
+            <ul>
+              <li>Key hanya di .env (sudah di .gitignore)</li>
+              <li>Bisa rotate kapan saja</li>
+              <li>Dev/staging/prod bisa pakai key berbeda</li>
+            </ul>
+          </div>
+        </div>
+        <div class="steps-heading">Step-by-step</div>
+        <div class="step"><span class="step-num">1</span><div class="step-content"><strong>Tambah env var</strong> — <code>KOMERCE_API_KEY=...</code> dan <code>KOMERCE_ORIGIN_ID=73528</code> di .env</div></div>
+        <div class="step"><span class="step-num">2</span><div class="step-content"><strong>Update address-ai.js</strong> — Ganti hardcoded dengan <code>process.env.KOMERCE_API_KEY</code>. Hapus const default. Jika env kosong + settings kosong → log warning.</div></div>
+        <div class="step"><span class="step-num">3</span><div class="step-content"><strong>Verifikasi .gitignore</strong> — Pastikan .env sudah di-exclude dari git.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- #3 IMPORT ERROR -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="section">
+    <div class="card" id="card-3">
+      <div class="card-header" tabindex="0" role="button" aria-expanded="false" onclick="toggleCard('card-3')">
+        <span class="card-num badge-urgent">3</span>
+        <span class="card-title">Fix Import Error <code>normalizeIdNumber</code></span>
+        <span class="badge badge-urgent">Urgent</span>
+        <span class="card-toggle">▸</span>
+      </div>
+      <div class="card-body">
+        <p style="font-size:0.88rem;color:var(--text-secondary);margin-bottom:0.5rem">
+          <code>webhook-handler.js:11</code> — <code>const { normalizeIdNumber } = require('./config')</code> mengimport named export, tapi <code>config.js</code> export object. Bisa crash saat runtime.
+        </p>
+        <div class="impact-grid">
+          <div class="impact-box impact-bad">
+            <div class="impact-label">Jika TIDAK Diperbaiki</div>
+            <ul>
+              <li>Runtime crash jika MacroDroid channel aktif</li>
+              <li>TypeError pada <code>normalizeIdNumber()</code></li>
+              <li>Admin command on/off via MacroDroid gagal</li>
+            </ul>
+          </div>
+          <div class="impact-box impact-good">
+            <div class="impact-label">JIKA Diperbaiki</div>
+            <ul>
+              <li>MacroDroid path tanpa error</li>
+              <li>Admin number normalization konsisten</li>
+            </ul>
+          </div>
+        </div>
+        <div class="steps-heading">Step-by-step</div>
+        <div class="step"><span class="step-num">1</span><div class="step-content"><strong>Verifikasi export di config.js</strong> — <code>normalizeIdNumber</code> harus ada sebagai method di object export.</div></div>
+        <div class="step"><span class="step-num">2</span><div class="step-content"><strong>Test import</strong> — Jalankan server, cek tidak ada error di startup. Test MacroDroid webhook + admin command.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- #4 PASSWORD -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="section">
+    <div class="card" id="card-4">
+      <div class="card-header" tabindex="0" role="button" aria-expanded="false" onclick="toggleCard('card-4')">
+        <span class="card-num badge-high">4</span>
+        <span class="card-title">Hash Password Admin</span>
+        <span class="badge badge-high">High</span>
+        <span class="card-toggle">▸</span>
+      </div>
+      <div class="card-body">
+        <p style="font-size:0.88rem;color:var(--text-secondary);margin-bottom:0.5rem">
+          <code>server.js:190</code> — Password dibandingkan plaintext: <code>password === process.env.ADMIN_PASSWORD</code>. Tidak ada hashing (bcrypt).
+        </p>
+        <div class="impact-grid">
+          <div class="impact-box impact-bad">
+            <div class="impact-label">Jika TIDAK Diperbaiki</div>
+            <ul>
+              <li>Password tersimpan plaintext di .env & memory</li>
+              <li>Bisa di-read dari process memory dump</li>
+              <li>Timing attack dimungkinkan</li>
+            </ul>
+          </div>
+          <div class="impact-box impact-good">
+            <div class="impact-label">JIKA Diperbaiki</div>
+            <ul>
+              <li>Password ter-hash dengan bcrypt</li>
+              <li>Timing-safe comparison</li>
+              <li>DB leak tidak expose password</li>
+            </ul>
+          </div>
+        </div>
+        <div class="steps-heading">Step-by-step</div>
+        <div class="step"><span class="step-num">1</span><div class="step-content"><strong>Install bcryptjs</strong> — <code>npm install bcryptjs</code> (pure JS, no native deps)</div></div>
+        <div class="step"><span class="step-num">2</span><div class="step-content"><strong>Buat auth helper</strong> — Fungsi <code>hashPassword(plain)</code> dan <code>comparePassword(plain, hashed)</code> dengan salt rounds 10.</div></div>
+        <div class="step"><span class="step-num">3</span><div class="step-content"><strong>Update password generation</strong> — Simpan HASH ke .env (<code>ADMIN_PASSWORD_HASH</code>), bukan plaintext. Tampilkan plaintext ke console saja sekali.</div></div>
+        <div class="step"><span class="step-num">4</span><div class="step-content"><strong>Update login endpoint</strong> — Ganti <code>===</code> dengan <code>comparePassword()</code>. Tambah backward compat: jika masih ada plaintext lama → login ok + migrate ke hash.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- #5 CORS -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="section">
+    <div class="card" id="card-5">
+      <div class="card-header" tabindex="0" role="button" aria-expanded="false" onclick="toggleCard('card-5')">
+        <span class="card-num badge-high">5</span>
+        <span class="card-title">Batasi CORS Origin</span>
+        <span class="badge badge-high">High</span>
+        <span class="card-toggle">▸</span>
+      </div>
+      <div class="card-body">
+        <p style="font-size:0.88rem;color:var(--text-secondary);margin-bottom:0.5rem">
+          <code>server.js</code> — <code>app.use(cors())</code> dan Socket.io <code>cors: { origin: '*' }</code>. Semua origin diizinkan tanpa filter.
+        </p>
+        <div class="impact-grid">
+          <div class="impact-box impact-bad">
+            <div class="impact-label">Jika TIDAK Diperbaiki</div>
+            <ul>
+              <li>Situs mana saja bisa akses API endpoints</li>
+              <li>Admin session bisa di-hijack dari domain lain</li>
+              <li>Socket.io events bisa di-intercept</li>
+              <li>CSRF ke /api/login dimungkinkan</li>
+            </ul>
+          </div>
+          <div class="impact-box impact-good">
+            <div class="impact-label">JIKA Diperbaiki</div>
+            <ul>
+              <li>Hanya dashboard domain yang bisa akses</li>
+              <li>Admin session aman dari cross-origin attacks</li>
+              <li>Socket.io hanya terima koneksi trusted</li>
+            </ul>
+          </div>
+        </div>
+        <div class="steps-heading">Step-by-step</div>
+        <div class="step"><span class="step-num">1</span><div class="step-content"><strong>Define allowed origins</strong> — <code>ALLOWED_ORIGINS</code> dari env var, comma-separated. Default: <code>http://localhost:3000</code>.</div></div>
+        <div class="step"><span class="step-num">2</span><div class="step-content"><strong>Apply CORS whitelist</strong> — Ganti <code>cors()</code> dengan <code>cors({ origin: function(origin, callback) {...} })</code> yang cek origin terhadap whitelist.</div></div>
+        <div class="step"><span class="step-num">3</span><div class="step-content"><strong>Apply ke Socket.io</strong> — <code>cors: { origin: ALLOWED_ORIGINS }</code> di Server constructor.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- #6 API KEY DI HEADER -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="section">
+    <div class="card" id="card-6">
+      <div class="card-header" tabindex="0" role="button" aria-expanded="false" onclick="toggleCard('card-6')">
+        <span class="card-num badge-high">6</span>
+        <span class="card-title">Pindahkan API Key Gemini dari URL ke Header</span>
+        <span class="badge badge-high">High</span>
+        <span class="card-toggle">▸</span>
+      </div>
+      <div class="card-body">
+        <p style="font-size:0.88rem;color:var(--text-secondary);margin-bottom:0.5rem">
+          <code>gemini-service.js:547</code> — API key dikirim di URL: <code>?key=...</code>. Bisa ter-log di access logs, proxy, monitoring tools.
+        </p>
+        <div class="impact-grid">
+          <div class="impact-box impact-bad">
+            <div class="impact-label">Jika TIDAK Diperbaiki</div>
+            <ul>
+              <li>Key ter-log di access logs & monitoring</li>
+              <li>Google Audit Log mencatat full URL</li>
+              <li>Key bocor → dipakai orang lain</li>
+            </ul>
+          </div>
+          <div class="impact-box impact-good">
+            <div class="impact-label">JIKA Diperbaiki</div>
+            <ul>
+              <li>Key tidak terlihat di logs</li>
+              <li>Comply dengan Google API best practices</li>
+              <li>Bisa rotate tanpa log bocor</li>
+            </ul>
+          </div>
+        </div>
+        <div class="steps-heading">Step-by-step</div>
+        <div class="step"><span class="step-num">1</span><div class="step-content"><strong>Update callGeminiDirect</strong> — Hapus <code>?key=</code> dari URL, tambah <code>'x-goog-api-key': key</code> di headers.</div></div>
+        <div class="step"><span class="step-num">2</span><div class="step-content"><strong>Update callGeminiRaw</strong> — Apply perubahan yang sama.</div></div>
+        <div class="step"><span class="step-num">3</span><div class="step-content"><strong>Update callThinkerGemini</strong> — Apply perubahan yang sama.</div></div>
+        <div class="step"><span class="step-num">4</span><div class="step-content"><strong>Update processOrderAddressAI</strong> — Apply perubahan yang sama di address-ai.js.</div></div>
+        <div class="step"><span class="step-num">5</span><div class="step-content"><strong>Test semua Gemini calls</strong> — Chat langsung, thinker classification, address AI. Pastikan tidak ada 401/403.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- #7 PRODUCT NAMES -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="section">
+    <div class="card" id="card-7">
+      <div class="card-header" tabindex="0" role="button" aria-expanded="false" onclick="toggleCard('card-7')">
+        <span class="card-num badge-medium">7</span>
+        <span class="card-title">Product Names: Hardcoded → Configurable dari KB</span>
+        <span class="badge badge-medium">Medium</span>
+        <span class="card-toggle">▸</span>
+      </div>
+      <div class="card-body">
+        <p style="font-size:0.88rem;color:var(--text-secondary);margin-bottom:0.5rem">
+          <code>chat-helpers.js:30-33</code> — Nama produk (<code>'baby walking'</code>, <code>'pasta dempul'</code>, dll) hardcode di summary builder.
+        </p>
+        <div class="impact-grid">
+          <div class="impact-box impact-bad">
+            <div class="impact-label">Jika TIDAK Diperbaiki</div>
+            <ul>
+              <li>Tambah/hapus produk → harus edit code + deploy</li>
+              <li>Jika lupa update → summary tidak lengkap</li>
+              <li>Code coupled dengan data produk</li>
+            </ul>
+          </div>
+          <div class="impact-box impact-good">
+            <div class="impact-label">JIKA Diperbaiki</div>
+            <ul>
+              <li>Tambah produk baru → edit KB saja</li>
+              <li>Summary otomatis lengkap</li>
+              <li>Code generic, tidak terikat produk</li>
+            </ul>
+          </div>
+        </div>
+        <div class="steps-heading">Step-by-step</div>
+        <div class="step"><span class="step-num">1</span><div class="step-content"><strong>Dynamic KB parsing</strong> — Ganti hardcoded list dengan <code>parseProductBlocks(store.settings.knowledgeBase)</code>. Cocokkan kata kunci produk dari KB secara otomatis.</div></div>
+        <div class="step"><span class="step-num">2</span><div class="step-content"><strong>Alias mapping</strong> — Jika nama produk di KB tidak match secara langsung, tambah alias di settings: <code>{ "baby walking": "Baby Walking Assistant" }</code>.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- #8 ASYNC I/O -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="section">
+    <div class="card" id="card-8">
+      <div class="card-header" tabindex="0" role="button" aria-expanded="false" onclick="toggleCard('card-8')">
+        <span class="card-num badge-medium">8</span>
+        <span class="card-title">Convert Blocking File I/O ke Async</span>
+        <span class="badge badge-medium">Medium</span>
+        <span class="card-toggle">▸</span>
+      </div>
+      <div class="card-body">
+        <p style="font-size:0.88rem;color:var(--text-secondary);margin-bottom:0.5rem">
+          <code>state-store.js:111</code> — <code>fs.writeFileSync()</code> dipanggil setiap pesan masuk. Dipakai di: saveMessages, saveSettings, saveOrders, persistOrderState.
+        </p>
+        <div class="impact-grid">
+          <div class="impact-box impact-bad">
+            <div class="impact-label">Jika TIDAK Diperbaiki</div>
+            <ul>
+              <li>Event loop block ~5–50ms per write</li>
+              <li>10+ pesan/detik → response time naik</li>
+              <li>Concurrent requests ter-delay</li>
+            </ul>
+          </div>
+          <div class="impact-box impact-good">
+            <div class="impact-label">JIKA Diperbaiki</div>
+            <ul>
+              <li>Event loop tidak ter-block</li>
+              <li>Response time stabil di load tinggi</li>
+              <li>File ops di-background</li>
+            </ul>
+          </div>
+        </div>
+        <div class="steps-heading">Step-by-step</div>
+        <div class="step"><span class="step-num">1</span><div class="step-content"><strong>Convert save()</strong> — Ganti <code>fs.writeFileSync</code> dengan <code>fs.writeFile</code> (async callback).</div></div>
+        <div class="step"><span class="step-num">2</span><div class="step-content"><strong>Convert persistOrderState</strong> — Apply perubahan yang sama. Startup load boleh tetap sync.</div></div>
+        <div class="step"><span class="step-num">3</span><div class="step-content"><strong>Tambah write coalescing</strong> — Jika banyak pesan masuk cepat → hanya tulis sekali (debounce sudah ada di persistOrderState).</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- #9 TEST SUITE -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="section">
+    <div class="card" id="card-9">
+      <div class="card-header" tabindex="0" role="button" aria-expanded="false" onclick="toggleCard('card-9')">
+        <span class="card-num badge-low">9</span>
+        <span class="card-title">Tambahkan Test Suite</span>
+        <span class="badge badge-low">Low</span>
+        <span class="card-toggle">▸</span>
+      </div>
+      <div class="card-body">
+        <p style="font-size:0.88rem;color:var(--text-secondary);margin-bottom:0.5rem">
+          Saat ini: zero unit tests, zero integration tests. Semua testing manual.
+        </p>
+        <div class="impact-grid">
+          <div class="impact-box impact-bad">
+            <div class="impact-label">Jika TIDAK Diperbaiki</div>
+            <ul>
+              <li>Regressions tidak terdeteksi sampai production</li>
+              <li>Refactoring berbahaya — tidak tahu apa yang rusak</li>
+              <li>Debugging lebih lama</li>
+              <li>Velocity turun seiring codebase membesar</li>
+            </ul>
+          </div>
+          <div class="impact-box impact-good">
+            <div class="impact-label">JIKA Diperbaiki</div>
+            <ul>
+              <li>Regressions ketahuan sebelum deploy</li>
+              <li>Refactoring lebih confident</li>
+              <li>Code documentation via tests</li>
+              <li>Onboarding developer baru lebih cepat</li>
+            </ul>
+          </div>
+        </div>
+        <div class="steps-heading">Step-by-step</div>
+        <div class="step"><span class="step-num">1</span><div class="step-content"><strong>Setup Vitest</strong> — <code>npm install --save-dev vitest</code>. Tambah script <code>"test": "vitest run"</code> di package.json.</div></div>
+        <div class="step"><span class="step-num">2</span><div class="step-content"><strong>Test fungsi murni</strong> — extractCustomerFields, detectProductFocus, validateFieldOrder, getRelevantKnowledge, orderStateTransitions.</div></div>
+        <div class="step"><span class="step-num">3</span><div class="step-content"><strong>Test postprocess</strong> — extractOrder, extractEscalations, cleanFieldQuestions.</div></div>
+        <div class="step"><span class="step-num">4</span><div class="step-content"><strong>Test chat helpers</strong> — buildHistory, getReplyDelayMs.</div></div>
+        <div class="step"><span class="step-num">5</span><div class="step-content"><strong>CI/CD integration</strong> — Jalankan test sebelum deploy. Block deploy jika test gagal.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- TIMELINE -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="timeline">
+    <h2>Estimasi Waktu &amp; Urutan Pengerjaan</h2>
+    <div class="timeline-grid">
+      <div class="timeline-row">
+        <span class="timeline-id">#3</span>
+        <span>Fix import normalizeIdNumber</span>
+        <span class="timeline-time">15 mnt</span>
+        <span class="timeline-deps">—</span>
+      </div>
+      <div class="timeline-row">
+        <span class="timeline-id">#2</span>
+        <span>Pindahkan API key Komerce</span>
+        <span class="timeline-time">15 mnt</span>
+        <span class="timeline-deps">—</span>
+      </div>
+      <div class="timeline-row">
+        <span class="timeline-id">#1 + #6 + #8</span>
+        <span>Modularisasi + Header + Async</span>
+        <span class="timeline-time">3 jam</span>
+        <span class="timeline-deps">#6 & #8 depends on #1</span>
+      </div>
+      <div class="timeline-row">
+        <span class="timeline-id">#4 + #5</span>
+        <span>Security hardening</span>
+        <span class="timeline-time">45 mnt</span>
+        <span class="timeline-deps">—</span>
+      </div>
+      <div class="timeline-row">
+        <span class="timeline-id">#7</span>
+        <span>Product names configurable</span>
+        <span class="timeline-time">20 mnt</span>
+        <span class="timeline-deps">—</span>
+      </div>
+      <div class="timeline-row">
+        <span class="timeline-id">#9</span>
+        <span>Test suite (bisa bertahap)</span>
+        <span class="timeline-time">2–3 jam</span>
+        <span class="timeline-deps">depends on #1</span>
+      </div>
+    </div>
+
+    <div class="recommendation">
+      <h3>Rekomendasi Urutan</h3>
+      <ol>
+        <li><strong>Fix #3</strong> — 15 menit, fix crash</li>
+        <li><strong>Fix #2</strong> — 15 menit, fix key leak</li>
+        <li><strong>Fix #1 + #6 + #8 bareng</strong> — modularisasi + header + async = 3 jam</li>
+        <li><strong>Fix #4 + #5</strong> — security hardening = 45 menit</li>
+        <li><strong>Fix #7</strong> — 20 menit</li>
+        <li><strong>Fix #9</strong> — test suite = 2–3 jam, bisa bertahap</li>
+      </ol>
+      <p style="margin-top:0.75rem;font-weight:600;font-size:0.9rem;color:var(--accent)">Total estimasi: 6–8 jam</p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function toggleCard(id) {
+  const card = document.getElementById(id);
+  const isOpen = card.classList.contains('open');
+  card.classList.toggle('open');
+  const header = card.querySelector('.card-header');
+  header.setAttribute('aria-expanded', !isOpen);
+}
+
+// Keyboard support
+document.querySelectorAll('.card-header').forEach(el => {
+  el.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      el.click();
+    }
+  });
+});
+</script>
+</body>
+</html>
