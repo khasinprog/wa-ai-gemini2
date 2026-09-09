@@ -79,14 +79,14 @@ const DRAFT_RULES = `
 Kamu WAJIB menulis jawaban tapi TIDAK LANGSUNG mengirim ke customer (draft) dalam situasi berikut:
 
 1. REKAP PESANAN (Step 4): Gunakan tag [DRAFT_REKAP] di akhir balasan. Admin akan review dan edit jika perlu.
-2. PERTANYAAN YANG TIDAK ADA DI KB: Gunakan tag [ESCALATE] (bukan draft). Sudah di-handle oleh THINKER CONTEXT.
+2. PERTANYAAN YANG TIDAK ADA DI KB: Gunakan tag [ESCALATE:NamaProduk]pertanyaan[/ESCALATE] (bukan draft). Sudah di-handle oleh THINKER CONTEXT.
 3. JANGAN gunakan draft untuk pertanyaan ongkir — harga SUDAH TERMASUK ongkir, jawab langsung dari KB.
 4. JANGAN gunakan draft untuk pertanyaan tentang produk — semua info ada di KB.
 
 CARA MENULIS DRAFT:
 - Tulis jawaban lengkap dengan data yang ada
 - Di akhir jawaban, tambahkan tag [DRAFT_REKAP] untuk rekap pesanan
-- Pertanyaan di luar KB → gunakan [ESCALATE], bukan draft
+- Pertanyaan di luar KB → gunakan [ESCALATE:NamaProduk]pertanyaan[/ESCALATE], bukan draft
 `;
 
 const STEP5_RULES = `
@@ -395,7 +395,7 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
     const missing = getMissingFields(orderState);
     if (missing.length && orderState.step >= 3) {
       parts.push(`→ Belum ada: ${missing.join(', ')}`);
-      parts.push(`TUGAS WAJIB: tanya HANYA field pertama "${missing[0]}" dalam balasan ini. JANGAN tanya lebih dari 1 field.`);
+      parts.push(`→ Field berikutnya: "${missing[0]}". Ikuti instruksi THINKER CONTEXT untuk cara menanyakannya.`);
     }
 
     // Resolve phone number: SAMA_DENGAN_WA → actual WhatsApp number
@@ -486,27 +486,23 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
   parts.push('- Kalau pelanggan sudah menunjukkan minat jelas tapi belum kasih data pemesanan, boleh proaktif ajak closing');
   parts.push('');
   parts.push('=== PANJANG & GAYA BALASAN (PENTING) ===');
-  parts.push('- Ikuti PROSEDUR MENJAWAB di atas sebagai aturan wajib, tapi jangan diulang kata-per-kata sebagai skrip');
+  parts.push('- Ikuti instruksi dari THINKER CONTEXT untuk panjang dan isi balasan.');
   parts.push(isFirstMessage
     ? '- Ini kemungkinan pesan PERTAMA pelanggan: boleh jelaskan 1-2 keunggulan utama produk secara singkat, maksimal 3-4 kalimat total'
     : '- Ini BUKAN pesan pertama (sudah ada riwayat chat): JANGAN ulangi penjelasan keunggulan produk yang sudah dijelaskan sebelumnya.');
   parts.push('- JANGAN sebut nama produk berulang kali. Kalau produk sudah disebut sebelumnya, cukup referensikan dengan "produknya", "pesanan", atau langsung ke inti');
-  parts.push('- Kalau pelanggan hanya minta harga ("cek harga", "berapa", dll), jawab harga + 1 kalimat penutup/CTA saja.');
+  parts.push('- SINGKAT dan langsung ke inti — sesuaikan dengan intent dari THINKER CONTEXT.');
   parts.push('');
-  parts.push('=== BATAS KALIMAT PER STEP (PENTING) ===');
-  parts.push('- Step 1 (produk): MAKSIMAL 3 kalimat — harga + varian/warna + CTA');
-  parts.push('- Step 2 (follow-up): 1 kalimat — langsung jawab pertanyaan + CTA');
-  parts.push('- Step 3 (kumpul data): 1 kalimat — tanya SATU field spesifik.');
-  parts.push('- Step 4 (konfirmasi): MAKSIMAL 2 kalimat — konfirmasi pesanan + penutup');
-  parts.push('- Step 5 (eskalasi): Sapa customer singkat + sisipkan tag [ESCALATE]');
-  parts.push('- Di luar aturan di atas, SINGKAT dan langsung ke inti.');
+  parts.push('=== ATURAN CTA (PENTING) ===');
+  parts.push('- SETIAP balasan product_inquiry/data_provided/confirmation WAJIB diakhiri dengan 1 pertanyaan CTA.');
+  parts.push('- Untuk escalation: SINGKAT + ESCALATE — TIDAK perlu CTA.');
+  parts.push('- MAKSIMAL 1 pertanyaan per balasan.');
   parts.push('');
-  parts.push('=== ATURAN DATA PEMESANAN (IKUTI STEP3 RULES, PENTING) ===');
-  parts.push('- Untuk pengumpulan data alamat dan data customer, IKUTI urutan di STEP3 RULES di atas (satu field per balasan).');
+  parts.push('=== ATURAN DATA PEMESANAN (Thinker-driven) ===');
+  parts.push('- Ikuti THINKER CONTEXT untuk cara menangani data customer (acknowledge dulu, lalu tanya field berikutnya).');
   parts.push('- Untuk No HP: JANGAN langsung minta diketik. Tanya dulu: "Boleh pakai nomor WhatsApp ini juga untuk dihubungi kurir ya, Kak?"');
   parts.push('- HATI-HATI KATA AMBIGU: Kata "No", "no", "nomer", "nomor" dalam chat bahasa Indonesia SERING berarti "Nomor", BUKAN berarti "tidak/batal".');
-  parts.push('- Tetap patuhi ATURAN CTA (maksimal 1 pertanyaan per balasan)');
-  parts.push('- Begitu SEMUA data sudah lengkap terkumpul: JANGAN langsung sisipkan [ORDER_DATA]. Balas dulu dengan MEREKAP pesanan dan minta konfirmasi eksplisit');
+  parts.push('- Begitu SEMUA data sudah lengkap terkumpul: rekap pesanan dan minta konfirmasi eksplisit');
   parts.push('- Order baru dianggap FINAL setelah pelanggan membalas mengonfirmasi. BARU pada balasan konfirmasi tersebut kamu sisipkan [ORDER_DATA]');
   parts.push('- Kalau pesanan berisi LEBIH DARI 1 produk, jumlahkan semua ke dalam total harga saat merekap');
   parts.push('Format blok data:');
