@@ -443,7 +443,15 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
       parts.push('→ Customer memberikan data.');
       parts.push('→ WAJIB acknowledge data yang baru diterima SEBELUM tanya field berikutnya.');
     } else if (thinkerData.intent === 'confirmation') {
-      parts.push('→ Customer mengonfirmasi. Lanjutkan ke step berikutnya.');
+      // Cek patokan sebelum konfirmasi
+      const hasPatokan = orderState?.patokan || orderState?.patokanSkipped;
+      if (!hasPatokan && orderState?.step >= 3) {
+        parts.push('→ Customer mengonfirmasi, TAPI patokan BELUM ada.');
+        parts.push('→ Tanya patokan dulu: "Dekat masjid apa, sekolah apa, atau warung apa ya Kak biar kurir gampang nyarinya?"');
+        parts.push('→ JANGAN langsung ke konfirmasi/summary.');
+      } else {
+        parts.push('→ Customer mengonfirmasi. Semua data sudah lengkap. Lanjutkan ke konfirmasi/summary.');
+      }
     } else if (thinkerData.intent === 'order_intent') {
       parts.push('→ Customer mau order. Lanjutkan ke step pengumpulan data.');
     } else if (thinkerData.intent === 'order_color_selection') {
