@@ -303,7 +303,7 @@ function updateOrderState(from, message) {
 
   // Step 3→5: escalation
   if ([3, 4].includes(state.step)) {
-    const escKeywords = ['estimasi', 'berapa hari', 'stok', 'retur', 'garansi', 'komplain', 'batal', 'gak jadi', 'kirim kapan', 'kirim kapn', 'hari sampai', 'kurir sampai', 'kapan sampai'];
+    const escKeywords = ['estimasi', 'berapa hari', 'stok', 'retur', 'garansi', 'komplain', 'batal', 'gak jadi', 'kirim kapan', 'kirim kapn', 'hari sampai', 'kurir sampai', 'kapan sampai', 'ongkir', 'kurir', 'kapan dikirim', 'kapan kirim', 'tracking', 'resi'];
     const isEscalation = escKeywords.some(k => lower.includes(k));
     const isConfirm = confirmPattern.test(lower);
     if (isEscalation && !isConfirm) state.step = 5;

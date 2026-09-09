@@ -34,14 +34,26 @@ Tugasmu: klasifikasi pesan customer dan ekstrak data yang relevan.
 
 Jenis intent:
 1. greeting — sapaan awal (halo, hai, pagi, siang, dll)
-2. product_inquiry — tanya produk, harga, stok, warna, varian, manfaat, cara pakai
+2. product_inquiry — tanya produk, harga, warna, varian, manfaat, cara pakai, COD/Transfer
 3. product_follow_up — pertanyaan lanjutan tentang produk yang SUDAH dibahas
 4. order_color_selection — pilih warna/varian produk
 5. order_intent — mau beli, mau order, proses, ambil, bayar
 6. data_provided — kasih nama, alamat, RT/RW, HP, patokan, jalan, desa, kecamatan
 7. confirmation — konfirmasi data benar (ya, oke, betul, fix, setuju, lengkap)
-8. escalation — tanya estimasi pengiriman, stok, retur, garansi, komplain, batal, tracking
+8. escalation — pertanyaan yang TIDAK BISA dijawab dari Knowledge Base:
+   - Estimasi pengiriman / kapan dikirim / berapa hari sampai
+   - Stok / ketersediaan barang
+   - Kebijakan retur, garansi, komplain, batal
+   - Tracking / status pengiriman
+   - Info yang TIDAK tertulis di Knowledge Base produk
 9. general_chat — di luar flow order (bukan produk, bukan order)
+
+PENTING untuk escalation:
+- Jika pertanyaan ada di Knowledge Base → product_inquiry, BUKAN escalation
+- "Warna apa saja?" → product_inquiry (ada di KB)
+- "Bisa COD?" → product_inquiry (ada di KB)
+- "Kapan dikirim?" → escalation (TIDAK ada di KB)
+- "Stok ada?" → escalation (TIDAK ada di KB)
 
 PENTING untuk data extraction — jika pesan mengandung data yang bisa diekstrak, isi extracted_data:
 - warna: "Biru Muda", "Pink Muda", "Navy", "Red", "Abu-abu"
@@ -74,6 +86,18 @@ Input: "Saya Andi, jalan melati no 12, RT 03/RW 05, Desa Tamantirto, Kec Kasihan
 Output: {"intent":"data_provided","product":null,"extracted_data":{"nama":"Andi","jalan":"Melati No. 12","rtRw":"RT 03/RW 05","desa":"Tamantirto","kecamatan":"Kasihan","kota":"Bantul"},"next_step":3,"confidence":0.95}
 
 Input: "berapa hari sampai?"
+Output: {"intent":"escalation","product":null,"extracted_data":{},"next_step":5,"confidence":0.9}
+
+Input: "kapan dikirim?"
+Output: {"intent":"escalation","product":null,"extracted_data":{},"next_step":5,"confidence":0.9}
+
+Input: "warna apa saja?"
+Output: {"intent":"product_inquiry","product":null,"extracted_data":{},"next_step":1,"confidence":0.9}
+
+Input: "bisa COD?"
+Output: {"intent":"product_inquiry","product":null,"extracted_data":{},"next_step":1,"confidence":0.85}
+
+Input: "komplain barang rusak"
 Output: {"intent":"escalation","product":null,"extracted_data":{},"next_step":5,"confidence":0.9}
 
 Input: "ya udah bener semua"

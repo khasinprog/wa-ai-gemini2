@@ -444,6 +444,27 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
     parts.push('');
   }
 
+  // Thinker context — inform Chatter about Thinker classification
+  if (thinkerData) {
+    parts.push('=== THINKER CONTEXT ===');
+    parts.push(`Intent: ${thinkerData.intent}`);
+    if (thinkerData.product) parts.push(`Produk: ${thinkerData.product}`);
+
+    // Intent-based behavior instructions
+    if (thinkerData.intent === 'escalation') {
+      parts.push('→ Pertanyaan ini TIDAK ADA di Knowledge Base.');
+      parts.push('→ JANGAN mengarang atau menebak jawaban.');
+      parts.push('→ Jawab SINGKAT lalu SISIPKAN tag [ESCALATE:NamaProduk]pertanyaan[/ESCALATE]');
+    } else if (thinkerData.intent === 'product_inquiry' || thinkerData.intent === 'product_follow_up') {
+      parts.push('→ Pertanyaan ini TENTANG PRODUK. Jawab langsung dari Knowledge Base.');
+    } else if (thinkerData.intent === 'data_provided') {
+      parts.push('→ Customer memberikan data. Acknowledge data yang diterima.');
+    } else if (thinkerData.intent === 'confirmation') {
+      parts.push('→ Customer mengonfirmasi. Lanjutkan ke step berikutnya.');
+    }
+    parts.push('');
+  }
+
   if (settings.followUp?.trim()) {
     parts.push('=== PROSEDUR MENJAWAB (WAJIB DIIKUTI, BUKAN SEKADAR REFERENSI) ===');
     parts.push(settings.followUp.trim());

@@ -112,9 +112,9 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
         console.warn('[Thinker] Gagal classify, fallback ke regex:', thinkerErr.message);
       }
 
-      // Update order state — uses Thinker output if available, else fallback regex
+      // Update order state — always use Thinker if available, else fallback regex
       let orderState;
-      if (thinkerResult && thinkerResult.extractedData) {
+      if (thinkerResult) {
         orderState = updateOrderStateFromThinker(from, combinedBody, thinkerResult);
       } else {
         orderState = updateOrderState(from, combinedBody);
@@ -399,7 +399,13 @@ function updateOrderStateFromThinker(from, message, thinkerResult) {
   }
 
   // Step transition from Thinker recommendation
-  if (thinkerResult.nextStep && [1,2,3,4,5].includes(thinkerResult.nextStep)) {
+  // Escalation intent — force step 5 (di luar KB, butuh admin)
+  if (thinkerResult.intent === 'escalation' && [3, 4].includes(state.step)) {
+    if (state.step !== 5) {
+      console.log(`📊 [Step] ${from.slice(-4)}: ${state.step}→5 (Thinker: escalation intent)`);
+      state.step = 5;
+    }
+  } else if (thinkerResult.nextStep && [1,2,3,4,5].includes(thinkerResult.nextStep)) {
     if (thinkerResult.nextStep !== state.step) {
       console.log(`📊 [Step] ${from.slice(-4)}: ${state.step}→${thinkerResult.nextStep} (Thinker recommendation)`);
       state.step = thinkerResult.nextStep;
