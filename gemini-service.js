@@ -500,7 +500,7 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
   parts.push('');
   parts.push('=== ATURAN DATA PEMESANAN (Thinker-driven) ===');
   parts.push('- Ikuti THINKER CONTEXT untuk cara menangani data customer (acknowledge dulu, lalu tanya field berikutnya).');
-  parts.push('- Untuk No HP: JANGAN langsung minta diketik. Tanya dulu: "Boleh pakai nomor WhatsApp ini juga untuk dihubungi kurir ya, Kak?"');
+  parts.push('- Tanya nomor HP dengan natural: "Boleh pakai nomor Kakak yang ini? Atau ada nomor lain ya Kak?" — JANGAN tanya "nomor HP yang aktif" (terdengar kaku).');
   parts.push('- HATI-HATI KATA AMBIGU: Kata "No", "no", "nomer", "nomor" dalam chat bahasa Indonesia SERING berarti "Nomor", BUKAN berarti "tidak/batal".');
   parts.push('- Begitu SEMUA data sudah lengkap terkumpul: rekap pesanan dan minta konfirmasi eksplisit');
   parts.push('- Order baru dianggap FINAL setelah pelanggan membalas mengonfirmasi. BARU pada balasan konfirmasi tersebut kamu sisipkan [ORDER_DATA]');
