@@ -70,7 +70,24 @@ echo "📦 [2/4] Membuat deploy.zip..."
 cd "$SCRIPT_DIR"
 zip -r "$LOCAL_ZIP" \
   server.js \
+  config.js \
+  db.js \
+  state-store.js \
+  order-state.js \
+  message-processor.js \
+  webhook-handler.js \
+  api-routes.js \
+  gemini-service.js \
+  gemini-thinker.js \
+  chat-helpers.js \
+  whatsapp-api.js \
+  message-postprocess.js \
+  admin-escalation.js \
+  address-ai.js \
+  knowledge-base.js \
   ongkir-helper.js \
+  telegram-service.js \
+  followup-scheduler.js \
   routes/ \
   package.json \
   package-lock.json \
@@ -80,7 +97,6 @@ zip -r "$LOCAL_ZIP" \
   icon-512.png \
   sw.js \
   start.sh \
-  db.js \
   migrate-to-pg.js \
   --exclude "*.DS_Store" \
   --exclude "node_modules/*" \
@@ -118,22 +134,25 @@ echo "⚙️  [4/4] Ekstrak dan restart server..."
 
 REMOTE_CMDS=$(cat <<HEREDOC
 set -e
-echo "[1/3] Backup file lama..."
+echo "[1/5] Backup file lama..."
 if [ -d "$REMOTE_DIR" ]; then
   cp "$REMOTE_DIR/server.js" /tmp/server_backup.js 2>/dev/null || true
 fi
 
-echo "[2/3] Ekstrak file baru..."
+echo "[2/5] Ekstrak file baru..."
 mkdir -p "$REMOTE_DIR"
 cd "$REMOTE_DIR"
 unzip -o /tmp/deploy.zip -d "$REMOTE_DIR"
 
-echo "[3/4] Migrasi data lama ke PostgreSQL..."
+echo "[3/4] Install dependencies (jika ada package.json berubah)..."
+npm install --production 2>/dev/null || true
+
+echo "[4/4] Migrasi data lama ke PostgreSQL..."
 if [ -f "migrate-to-pg.js" ]; then
   node migrate-to-pg.js || true
 fi
 
-echo "[4/4] Restart dengan PM2..."
+echo "[5/5] Restart dengan PM2..."
 if command -v pm2 &> /dev/null; then
   pm2 restart all --update-env 2>/dev/null || pm2 start server.js --name wa-ai
   echo "✅ PM2 restart selesai!"
