@@ -63,8 +63,21 @@ PENTING untuk data extraction — jika pesan mengandung data yang bisa diekstrak
 - kecamatan: nama kecamatan
 - kota: nama kota/kabupaten
 - rtRw: format "RT X/RW Y" atau "RT X"
-- patokan: dekat/sebelah/samping + landmark
+- patokan: dekat/sebelah/samping + landmark, atau nama tempat (masjid, sekolah, warung)
 - phone: nomor HP 08xxxxxxxx
+
+Urutan pengumpulan data order (tanya SESUAI urutan ini):
+1. alamat_detail (jalan/perumahan/nomor rumah)
+2. rtRw (RT/RW)
+3. desa, kecamatan, kabupaten
+4. patokan
+5. nama_lengkap
+6. nomor_telepon
+7. metode_bayar (COD/Transfer)
+
+Tentukan nextField: field pertama dari urutan di atas yang BELUM ada di orderState.
+Contoh: jika jalan✅, rtRw✅, desa✅, kecamatan✅, kota✅, tapi patokan❌ → nextField = "patokan".
+Contoh: jika semua sudah ada → nextField = null.
 
 Keluarkan HANYA JSON valid (tanpa markdown, tanpa backtick):
 {
@@ -72,36 +85,43 @@ Keluarkan HANYA JSON valid (tanpa markdown, tanpa backtick):
   "product": "<nama produk jika disebut, atau null>",
   "extracted_data": { <data yang berhasil diekstrak, kosongkan object jika tidak ada> },
   "next_step": <angka 1-5, step yang direkomendasikan>,
+  "next_field": "<field berikutnya yang harus ditanya, atau null jika semua sudah ada>",
   "confidence": <0.0-1.0>
 }
 
 Contoh output:
+Input: "RT3 kak" (context: jalan✅, desa✅, kecamatan✅, kota✅, rtRw❌)
+Output: {"intent":"data_provided","product":null,"extracted_data":{"rtRw":"RT 03"},"next_step":3,"next_field":"nama_lengkap","confidence":0.95}
+
+Input: "RT03, desa tamantirto, kasihan, bantul" (context: jalan✅, rtRw❌, desa❌)
+Output: {"intent":"data_provided","product":null,"extracted_data":{"rtRw":"RT 03","desa":"Tamantirto","kecamatan":"Kasihan","kota":"Bantul"},"next_step":3,"next_field":"patokan","confidence":0.95}
+
 Input: "mau yang biru aja kak"
-Output: {"intent":"order_color_selection","product":null,"extracted_data":{"color":"Biru Muda"},"next_step":2,"confidence":0.95}
+Output: {"intent":"order_color_selection","product":null,"extracted_data":{"color":"Biru Muda"},"next_step":2,"next_field":null,"confidence":0.95}
 
 Input: "halo kak, ada baby walking gak?"
-Output: {"intent":"product_inquiry","product":"Baby Walking Assistant","extracted_data":{},"next_step":1,"confidence":0.9}
+Output: {"intent":"product_inquiry","product":"Baby Walking Assistant","extracted_data":{},"next_step":1,"next_field":null,"confidence":0.9}
 
 Input: "Saya Andi, jalan melati no 12, RT 03/RW 05, Desa Tamantirto, Kec Kasihan, Kab Bantul"
-Output: {"intent":"data_provided","product":null,"extracted_data":{"nama":"Andi","jalan":"Melati No. 12","rtRw":"RT 03/RW 05","desa":"Tamantirto","kecamatan":"Kasihan","kota":"Bantul"},"next_step":3,"confidence":0.95}
+Output: {"intent":"data_provided","product":null,"extracted_data":{"nama":"Andi","jalan":"Melati No. 12","rtRw":"RT 03/RW 05","desa":"Tamantirto","kecamatan":"Kasihan","kota":"Bantul"},"next_step":3,"next_field":"patokan","confidence":0.95}
 
 Input: "berapa hari sampai?"
-Output: {"intent":"escalation","product":null,"extracted_data":{},"next_step":5,"confidence":0.9}
+Output: {"intent":"escalation","product":null,"extracted_data":{},"next_step":5,"next_field":null,"confidence":0.9}
 
 Input: "kapan dikirim?"
-Output: {"intent":"escalation","product":null,"extracted_data":{},"next_step":5,"confidence":0.9}
+Output: {"intent":"escalation","product":null,"extracted_data":{},"next_step":5,"next_field":null,"confidence":0.9}
 
 Input: "warna apa saja?"
-Output: {"intent":"product_inquiry","product":null,"extracted_data":{},"next_step":1,"confidence":0.9}
+Output: {"intent":"product_inquiry","product":null,"extracted_data":{},"next_step":1,"next_field":null,"confidence":0.9}
 
 Input: "bisa COD?"
-Output: {"intent":"product_inquiry","product":null,"extracted_data":{},"next_step":1,"confidence":0.85}
+Output: {"intent":"product_inquiry","product":null,"extracted_data":{},"next_step":1,"next_field":null,"confidence":0.85}
 
 Input: "komplain barang rusak"
-Output: {"intent":"escalation","product":null,"extracted_data":{},"next_step":5,"confidence":0.9}
+Output: {"intent":"escalation","product":null,"extracted_data":{},"next_step":5,"next_field":null,"confidence":0.9}
 
 Input: "ya udah bener semua"
-Output: {"intent":"confirmation","product":null,"extracted_data":{},"next_step":4,"confidence":0.95}`;
+Output: {"intent":"confirmation","product":null,"extracted_data":{},"next_step":4,"next_field":null,"confidence":0.95}`;
 
 // ── Main classify function ────────────────────────────────────────
 async function classifyIntent(message, context = {}) {
@@ -113,17 +133,27 @@ async function classifyIntent(message, context = {}) {
     contextLines.push(`Step saat ini: ${orderState.step}`);
     if (orderState.product) contextLines.push(`Produk fokus: ${orderState.product}`);
     if (orderState.color) contextLines.push(`Warna sudah dipilih: ${orderState.color}`);
-    if (orderState.namaLengkap) contextLines.push(`Nama: ${orderState.namaLengkap}`);
-    if (orderState.desa) contextLines.push(`Desa: ${orderState.desa}`);
-    if (orderState.rtRw) contextLines.push(`RT/RW: ${orderState.rtRw}`);
-    if (orderState.noHp) contextLines.push(`HP: ${orderState.noHp}`);
+    if (orderState.jalan) contextLines.push(`Jalan: ${orderState.jalan} ✓`);
+    if (orderState.rtRw) contextLines.push(`RT/RW: ${orderState.rtRw} ✓`);
+    if (orderState.desa) contextLines.push(`Desa: ${orderState.desa} ✓`);
+    if (orderState.kecamatan) contextLines.push(`Kecamatan: ${orderState.kecamatan} ✓`);
+    if (orderState.kota) contextLines.push(`Kota: ${orderState.kota} ✓`);
+    if (orderState.patokan) contextLines.push(`Patokan: ${orderState.patokan} ✓`);
+    if (orderState.namaLengkap) contextLines.push(`Nama: ${orderState.namaLengkap} ✓`);
+    if (orderState.noHp) contextLines.push(`HP: ${orderState.noHp} ✓`);
+
+    // Field yang belum ada (dalam urutan collection)
     const missingFields = [];
-    if (!orderState.namaLengkap) missingFields.push('nama');
-    if (!orderState.desa) missingFields.push('alamat');
-    if (!orderState.rtRw) missingFields.push('RT/RW');
-    if (!orderState.noHp) missingFields.push('HP');
+    if (!orderState.jalan) missingFields.push('alamat_detail');
+    if (!orderState.rtRw) missingFields.push('rtRw');
+    if (!orderState.desa) missingFields.push('desa');
+    if (!orderState.kecamatan) missingFields.push('kecamatan');
+    if (!orderState.kota) missingFields.push('kota');
+    if (!orderState.patokan && !orderState.patokanSkipped) missingFields.push('patokan');
+    if (!orderState.namaLengkap || !orderState.namaVerified) missingFields.push('nama_lengkap');
+    if (!orderState.noHp) missingFields.push('nomor_telepon');
     if (missingFields.length && orderState.step >= 3) {
-      contextLines.push(`Field belum ada: ${missingFields.join(', ')}`);
+      contextLines.push(`Field belum ada (urutan): ${missingFields.join(' → ')}`);
     }
   }
 
@@ -172,6 +202,7 @@ async function classifyIntent(message, context = {}) {
       product: parsed.product || null,
       extractedData: parsed.extracted_data,
       nextStep: parsed.next_step,
+      nextField: parsed.next_field || null,
       confidence: Math.min(1, Math.max(0, parsed.confidence || 0.5)),
     };
   } catch (parseErr) {

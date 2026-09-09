@@ -430,28 +430,23 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
       }
     }
 
+    // Next field dari Thinker — ini yang HARUS ditanya
+    if (thinkerData.nextField) {
+      parts.push(`→ Tanya field berikutnya: ${thinkerData.nextField}`);
+      parts.push('→ Acknowledge data baru dulu (jika ada), lalu tanya field di atas.');
+    } else if (thinkerData.intent === 'data_provided' || thinkerData.intent === 'confirmation') {
+      parts.push('→ Semua field sudah lengkap. Lanjutkan ke konfirmasi/summary.');
+    }
+
     // Behavior instructions based on intent
     if (thinkerData.intent === 'escalation') {
       parts.push('→ Pertanyaan ini TIDAK ADA di Knowledge Base.');
       parts.push('→ JANGAN mengarang atau menebak jawaban.');
       parts.push('→ Jawab SINGKAT dulu, lalu SISIPKAN tag [ESCALATE:NamaProduk]pertanyaan[/ESCALATE]');
-      parts.push('→ Jika pertanyaan tentang ongkir/estimasi: jawab "Saya cek ke admin dulu ya Kak" lalu ESCALATE');
     } else if (thinkerData.intent === 'product_inquiry' || thinkerData.intent === 'product_follow_up') {
       parts.push('→ Pertanyaan ini TENTANG PRODUK. Jawab langsung dari Knowledge Base.');
-      parts.push('→ JANGAN eskalasi — info ada di KB.');
     } else if (thinkerData.intent === 'data_provided') {
-      parts.push('→ Customer memberikan data.');
-      parts.push('→ WAJIB acknowledge data yang baru diterima SEBELUM tanya field berikutnya.');
-    } else if (thinkerData.intent === 'confirmation') {
-      // Cek patokan sebelum konfirmasi
-      const hasPatokan = orderState?.patokan || orderState?.patokanSkipped;
-      if (!hasPatokan && orderState?.step >= 3) {
-        parts.push('→ Customer mengonfirmasi, TAPI patokan BELUM ada.');
-        parts.push('→ Tanya patokan dulu: "Dekat masjid apa, sekolah apa, atau warung apa ya Kak biar kurir gampang nyarinya?"');
-        parts.push('→ JANGAN langsung ke konfirmasi/summary.');
-      } else {
-        parts.push('→ Customer mengonfirmasi. Semua data sudah lengkap. Lanjutkan ke konfirmasi/summary.');
-      }
+      parts.push('→ Customer memberikan data. Acknowledge lalu tanya nextField.');
     } else if (thinkerData.intent === 'order_intent') {
       parts.push('→ Customer mau order. Lanjutkan ke step pengumpulan data.');
     } else if (thinkerData.intent === 'order_color_selection') {
