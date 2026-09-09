@@ -82,10 +82,11 @@ Format rekap WAJIB:
   • Nama: [nama lengkap penerima]
   • Alamat: [nama jalan, nomor rumah, RT/RW, desa, kecamatan, kota]
   • Patokan: [patokan/landmark]
-  • Nomor HP: [nomor HP]
+  • Nomor HP: [nomor HP ASLI customer — JANGAN tulis "08xxxxxxxx" atau "nomor yang ini"]
+  • Pembayaran: [COD atau Transfer]
 
+- Jika noHp = "SAMA_DENGAN_WA", gunakan nomor WhatsApp customer yang terlihat di STATUS SAAT INI.
 - Setelah rekap, tutup dengan: "Apakah data di atas sudah benar semua Kak?"
-- SISIPKAN tag [DRAFT_REKAP] di baris paling akhir balasanmu.
 - JANGAN tanya data tambahan di step ini.
 - Tanda akhir: tampilkan tag [STEP=4] di baris terakhir balasanmu.
 `;
@@ -432,6 +433,13 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
         parts.push(fields.join('\n'));
         parts.push('→ WAJIB: acknowledge data di atas SEBELUM tanya field berikutnya. Contoh: "Perumahan dalem tamantirto C3 sudah dicatat ya Kak."');
       }
+    }
+
+    // Resolve phone number: SAMA_DENGAN_WA → actual WhatsApp number
+    if (orderState?.noHp === 'SAMA_DENGAN_WA' && from) {
+      const resolvedPhone = from.replace('@s.whatsapp.net', '').replace('@c.us', '');
+      parts.push('');
+      parts.push(`Nomor HP customer: ${resolvedPhone} (SAMA_DENGAN_WA)`);
     }
     parts.push('');
   }
