@@ -96,14 +96,14 @@ const DRAFT_RULES = `
 Kamu WAJIB menulis jawaban tapi TIDAK LANGSUNG mengirim ke customer (draft) dalam situasi berikut:
 
 1. REKAP PESANAN (Step 4): Gunakan tag [DRAFT_REKAP] di akhir balasan. Admin akan review dan edit jika perlu.
-2. PERTANYAAN ONGKIR: Ketika customer tanya ongkir dan kamu tidak yakin/punya data lengkap, gunakan tag [DRAFT_ONGKIR] di akhir balasan.
-3. "KAPAN DIKIRIM" / ESTIMASI WAKTU: Jika customer tanya "kapan dikirim", "brp hari sampai", atau estimasi waktu -> draft + tag [DRAFT_ONGKIR].
-4. PERTANYAAN DI LUAR FLOW: Pertanyaan yang tidak ada di KB dan tidak bisa kamu jawab sendiri -> draft + tag [DRAFT_ONGKIR].
+2. PERTANYAAN YANG TIDAK ADA DI KB: Gunakan tag [ESCALATE] (bukan draft). Sudah di-handle oleh THINKER CONTEXT.
+3. JANGAN gunakan draft untuk pertanyaan ongkir — harga SUDAH TERMASUK ongkir, jawab langsung dari KB.
+4. JANGAN gunakan draft untuk pertanyaan tentang produk — semua info ada di KB.
 
 CARA MENULIS DRAFT:
-- Tetap tulis jawaban yang SUDAH KAMU KETAHUI (jangan tulis kosong)
-- Di akhir jawaban, tambahkan salah satu tag: [DRAFT_REKAP] atau [DRAFT_ONGKIR]
-- Jika ragu antara dua tag, gunakan [DRAFT_ONGKIR]
+- Tulis jawaban lengkap dengan data yang ada
+- Di akhir jawaban, tambahkan tag [DRAFT_REKAP] untuk rekap pesanan
+- Pertanyaan di luar KB → gunakan [ESCALATE], bukan draft
 `;
 
 const STEP5_RULES = `
@@ -422,19 +422,6 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
       parts.push(`TUGAS WAJIB: tanya HANYA field pertama "${missing[0]}" dalam balasan ini. JANGAN tanya lebih dari 1 field.`);
     }
 
-    // Thinker extracted data — acknowledge before asking next field
-    if (thinkerData?.extractedData && Object.keys(thinkerData.extractedData).length > 0) {
-      const fields = Object.entries(thinkerData.extractedData)
-        .filter(([, v]) => v)
-        .map(([k, v]) => `${k}: "${v}"`);
-      if (fields.length) {
-        parts.push('');
-        parts.push('=== DATA BARU DARI CUSTOMER (pesan ini) ===');
-        parts.push(fields.join('\n'));
-        parts.push('→ WAJIB: acknowledge data di atas SEBELUM tanya field berikutnya. Contoh: "Perumahan dalem tamantirto C3 sudah dicatat ya Kak."');
-      }
-    }
-
     // Resolve phone number: SAMA_DENGAN_WA → actual WhatsApp number
     if (orderState?.noHp === 'SAMA_DENGAN_WA' && from) {
       const resolvedPhone = from.replace('@s.whatsapp.net', '').replace('@c.us', '');
@@ -444,30 +431,48 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
     parts.push('');
   }
 
-  // Thinker context — inform Chatter about Thinker classification
-  if (thinkerData) {
-    parts.push('=== THINKER CONTEXT ===');
-    parts.push(`Intent: ${thinkerData.intent}`);
-    if (thinkerData.product) parts.push(`Produk: ${thinkerData.product}`);
-
-    // Intent-based behavior instructions
-    if (thinkerData.intent === 'escalation') {
-      parts.push('→ Pertanyaan ini TIDAK ADA di Knowledge Base.');
-      parts.push('→ JANGAN mengarang atau menebak jawaban.');
-      parts.push('→ Jawab SINGKAT lalu SISIPKAN tag [ESCALATE:NamaProduk]pertanyaan[/ESCALATE]');
-    } else if (thinkerData.intent === 'product_inquiry' || thinkerData.intent === 'product_follow_up') {
-      parts.push('→ Pertanyaan ini TENTANG PRODUK. Jawab langsung dari Knowledge Base.');
-    } else if (thinkerData.intent === 'data_provided') {
-      parts.push('→ Customer memberikan data. Acknowledge data yang diterima.');
-    } else if (thinkerData.intent === 'confirmation') {
-      parts.push('→ Customer mengonfirmasi. Lanjutkan ke step berikutnya.');
-    }
-    parts.push('');
-  }
-
   if (settings.followUp?.trim()) {
     parts.push('=== PROSEDUR MENJAWAB (WAJIB DIIKUTI, BUKAN SEKADAR REFERENSI) ===');
     parts.push(settings.followUp.trim());
+    parts.push('');
+  }
+
+  // ── THINKER CONTEXT — Satu section gabungan: intent + extracted data + behavior ──
+  if (thinkerData) {
+    parts.push('=== THINKER CONTEXT ===');
+    parts.push(`Intent: ${thinkerData.intent}`);
+    if (thinkerData.product) parts.push(`Produk fokus: ${thinkerData.product}`);
+
+    // Show extracted data from this message
+    if (thinkerData.extractedData && Object.keys(thinkerData.extractedData).length > 0) {
+      const fields = Object.entries(thinkerData.extractedData)
+        .filter(([, v]) => v)
+        .map(([k, v]) => `- ${k}: "${v}"`);
+      if (fields.length) {
+        parts.push('Data baru dari customer:');
+        parts.push(fields.join('\n'));
+      }
+    }
+
+    // Behavior instructions based on intent
+    if (thinkerData.intent === 'escalation') {
+      parts.push('→ Pertanyaan ini TIDAK ADA di Knowledge Base.');
+      parts.push('→ JANGAN mengarang atau menebak jawaban.');
+      parts.push('→ Jawab SINGKAT dulu, lalu SISIPKAN tag [ESCALATE:NamaProduk]pertanyaan[/ESCALATE]');
+      parts.push('→ Jika pertanyaan tentang ongkir/estimasi: jawab "Saya cek ke admin dulu ya Kak" lalu ESCALATE');
+    } else if (thinkerData.intent === 'product_inquiry' || thinkerData.intent === 'product_follow_up') {
+      parts.push('→ Pertanyaan ini TENTANG PRODUK. Jawab langsung dari Knowledge Base.');
+      parts.push('→ JANGAN eskalasi — info ada di KB.');
+    } else if (thinkerData.intent === 'data_provided') {
+      parts.push('→ Customer memberikan data.');
+      parts.push('→ WAJIB acknowledge data yang baru diterima SEBELUM tanya field berikutnya.');
+    } else if (thinkerData.intent === 'confirmation') {
+      parts.push('→ Customer mengonfirmasi. Lanjutkan ke step berikutnya.');
+    } else if (thinkerData.intent === 'order_intent') {
+      parts.push('→ Customer mau order. Lanjutkan ke step pengumpulan data.');
+    } else if (thinkerData.intent === 'order_color_selection') {
+      parts.push('→ Customer pilih warna. Acknowledge dan lanjut ke data pengiriman.');
+    }
     parts.push('');
   }
 

@@ -107,6 +107,8 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
         });
         if (thinkerResult) {
           console.log(`🧠 [Thinker] intent=${thinkerResult.intent}, product=${thinkerResult.product || '-'}, confidence=${thinkerResult.confidence}`);
+        } else {
+          console.warn('[Thinker] null result, fallback ke regex');
         }
       } catch(thinkerErr) {
         console.warn('[Thinker] Gagal classify, fallback ke regex:', thinkerErr.message);
@@ -400,7 +402,8 @@ function updateOrderStateFromThinker(from, message, thinkerResult) {
 
   // Step transition from Thinker recommendation
   // Escalation intent — force step 5 (di luar KB, butuh admin)
-  if (thinkerResult.intent === 'escalation' && [3, 4].includes(state.step)) {
+  // Dihandle dari step manapun (bukan hanya 3/4)
+  if (thinkerResult.intent === 'escalation') {
     if (state.step !== 5) {
       console.log(`📊 [Step] ${from.slice(-4)}: ${state.step}→5 (Thinker: escalation intent)`);
       state.step = 5;
