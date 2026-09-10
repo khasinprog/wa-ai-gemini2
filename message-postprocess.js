@@ -18,7 +18,7 @@ const FIELD_ORDER = [
   { key: 'rtRw',       pattern: /(?:rt|rw|rt\s*\/?\s*rw)\b/i, get: s => s.rtRw },
   { key: 'kecamatan',  pattern: /(?:kecamatan|kec\.?)\b/i, get: s => s.kecamatan },
   { key: 'kota',       pattern: /(?:kabupaten|kota|kab\.?)\b/i, get: s => s.kota },
-  { key: 'patokan',    pattern: /(?:patokan|dekat|sebelah|samping)\b/i, get: s => s.patokan },
+  // patokan DI-HAPUS dari validasi — sudah di-handle oleh followUp & THINKER CONTEXT
   { key: 'namaLengkap', pattern: /(?:nama\s+lengkap|nama\s+yang\s+lengkap|siapa\s+nama|nama\s+anda)\b/i, get: s => s.namaLengkap && s.namaVerified },
   { key: 'noHp',       pattern: /(?:nomor\s*(?:hp|wa|whatsapp)|no\.?\s*(?:hp|wa)|nomor\s+hp)\b/i, get: s => s.noHp },
 ];
@@ -29,7 +29,6 @@ const FIELD_LABELS = {
   rtRw: 'RT dan RW',
   kecamatan: 'kecamatan',
   kota: 'kabupaten atau kota',
-  patokan: 'patokan atau landmark terdekat',
   namaLengkap: 'nama lengkap',
   noHp: 'nomor HP yang aktif',
 };
@@ -49,7 +48,7 @@ function cleanFieldQuestions(aiReply, orderState) {
     { pattern: /(?:dusun|desa|kelurahan|kel\.|kampung)\b/i, collected: () => orderState.desa },
     { pattern: /(?:kecamatan|kec\.?)\b/i, collected: () => orderState.kecamatan },
     { pattern: /(?:kabupaten|kota|kab\.?)\b/i, collected: () => orderState.kota },
-    { pattern: /(?:patokan|dekat|sebelah|samping)\b/i, collected: () => orderState.patokan },
+    // patokan DI-HAPUS — sudah di-handle oleh followUp & THINKER CONTEXT
     { pattern: /(?:nama\s+lengkap|nama\s+yang\s+lengkap|siapa\s+nama)\b/i, collected: () => orderState.namaLengkap && orderState.namaVerified },
     { pattern: /(?:nomor\s*(?:hp|wa|whatsapp)|no\.?\s*(?:hp|wa))\b/i, collected: () => orderState.noHp },
   ];
