@@ -395,7 +395,8 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
     const missing = getMissingFields(orderState);
     if (missing.length && orderState.step >= 3) {
       parts.push(`→ Belum ada: ${missing.join(', ')}`);
-      parts.push(`→ Field berikutnya: "${missing[0]}". Ikuti instruksi THINKER CONTEXT untuk cara menanyakannya.`);
+      parts.push(`→ Field berikutnya: "${missing[0]}". WAJIB tanya field ini.`);
+      console.log(`🔍 [DEBUG] missing: ${missing.join(', ')} → nextField: ${missing[0]}`);
     }
 
     // Resolve phone number: SAMA_DENGAN_WA → actual WhatsApp number
