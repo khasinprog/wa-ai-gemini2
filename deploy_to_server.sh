@@ -79,6 +79,7 @@ zip -r "$LOCAL_ZIP" \
   api-routes.js \
   gemini-service.js \
   gemini-thinker.js \
+  v2-postprocess.js \
   chat-helpers.js \
   whatsapp-api.js \
   message-postprocess.js \

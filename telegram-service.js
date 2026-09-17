@@ -328,10 +328,78 @@ async function sendClaimAlert({ imagePath, customerPhone, customerName, descript
   }
 }
 
+// ── Notifikasi Draft ke Admin ─────────────────────────────────────
+// Dikirim setiap ada pesan customer yang masuk draft (di luar KB / rekap)
+// draftType: 'outside_kb' | 'rekap' | 'ongkir' | 'other'
+async function sendDraftNotification({ customerPhone, customerName, customerMessage, draftReply, draftType = 'other' }) {
+  if (!bot && !init()) return { success: false, error: 'Bot tidak aktif' };
+
+  const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+
+  const typeLabel = {
+    outside_kb: '❓ Pertanyaan di luar KB',
+    rekap:      '📋 Draft rekap pesanan',
+    ongkir:     '🚚 Draft ongkir',
+    other:      '📝 Draft pesan',
+  }[draftType] || '📝 Draft pesan';
+
+  const phone = (customerPhone || '').replace('@s.whatsapp.net', '').replace('@c.us', '');
+
+  const text =
+    `🔔 <b>DRAFT PERLU REVIEW</b>\n` +
+    `━━━━━━━━━━━━━━━━━━━━\n` +
+    `${typeLabel}\n` +
+    `⏰ ${timeStr} WIB\n\n` +
+    `👤 <b>Customer:</b> ${customerName || 'Unknown'}\n` +
+    `📱 <b>WA:</b> <code>${phone}</code>\n\n` +
+    `💬 <b>Pesan customer:</b>\n<i>${(customerMessage || '').slice(0, 300)}</i>\n\n` +
+    `🤖 <b>Draft balasan AI:</b>\n<code>${(draftReply || '').slice(0, 300)}</code>\n\n` +
+    `━━━━━━━━━━━━━━━━━━━━\n` +
+    `👉 Buka dashboard untuk review & kirim draft.`;
+
+  try {
+    await bot.api.sendMessage(ADMIN_CHAT_ID, text, { parse_mode: 'HTML' });
+    console.log(`[Telegram] 📝 Notifikasi draft terkirim (${typeLabel})`);
+    return { success: true };
+  } catch(e) {
+    console.error('[Telegram] ❌ Gagal kirim notifikasi draft:', e.message);
+    return { success: false, error: e.message };
+  }
+}
+
+// ── Notifikasi pesan masuk saat chat di-pause ────────────────────────
+async function sendPausedChatNotification({ customerPhone, customerName, customerMessage }) {
+  if (!bot && !init()) return { success: false, error: 'Bot tidak aktif' };
+
+  const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  const phone = (customerPhone || '').replace('@s.whatsapp.net', '').replace('@c.us', '');
+
+  const text =
+    `⏸️ <b>PESAN MASUK — CHAT DI-PAUSE</b>\n` +
+    `━━━━━━━━━━━━━━━━━━━━\n` +
+    `⏰ ${timeStr} WIB\n\n` +
+    `👤 <b>Customer:</b> ${customerName || 'Unknown'}\n` +
+    `📱 <b>WA:</b> <code>${phone}</code>\n\n` +
+    `💬 <b>Pesan:</b>\n<i>${(customerMessage || '').slice(0, 400)}</i>\n\n` +
+    `━━━━━━━━━━━━━━━━━━━━\n` +
+    `👉 Chat ini sedang di-pause. Buka dashboard untuk balas manual.`;
+
+  try {
+    await bot.api.sendMessage(ADMIN_CHAT_ID, text, { parse_mode: 'HTML' });
+    console.log(`[Telegram] ⏸️ Notifikasi pause terkirim (${phone})`);
+    return { success: true };
+  } catch(e) {
+    console.error('[Telegram] ❌ Gagal kirim notifikasi pause:', e.message);
+    return { success: false, error: e.message };
+  }
+}
+
 module.exports = {
   isConfigured,
   startPolling,
   notifyAdminEscalations,
+  sendDraftNotification,
+  sendPausedChatNotification,
   sendTransferProof,
   sendClaimAlert,
   onTransferApproved,

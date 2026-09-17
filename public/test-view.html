@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Test Pipeline View</title>
+<style>
+  :root{--bg:#f8f9fa;--card:#fff;--text:#1a1a2e;--muted:#6c757d;--border:#e2e8f0;--s1:#f1f5f9;--blue:#4361ee;--green:#10b981;--orange:#f59e0b;--purple:#8b5cf6}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);padding:16px}
+  h1{font-size:1.3rem;margin-bottom:4px}
+  .sub{color:var(--muted);font-size:0.82rem;margin-bottom:16px}
+  .controls{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+  .controls input,.controls select{padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.82rem}
+  .controls input{width:220px}
+  .controls select{min-width:100px}
+  .btn{padding:6px 14px;border:none;border-radius:6px;cursor:pointer;font-size:0.82rem;font-weight:600}
+  .btn-blue{background:var(--blue);color:#fff}
+  .btn-green{background:var(--green);color:#fff}
+  .btn-orange{background:var(--orange);color:#fff}
+  .btn:hover{opacity:0.9}
+  .count{color:var(--muted);font-size:0.82rem;margin-left:auto}
+
+  .table-wrap{overflow-x:auto;border-radius:10px;border:1px solid var(--border);background:var(--card)}
+  table{width:100%;border-collapse:collapse;font-size:0.82rem}
+  th{background:var(--s1);padding:10px 12px;text-align:left;font-weight:700;color:var(--muted);text-transform:uppercase;font-size:0.7rem;letter-spacing:0.5px;border-bottom:2px solid var(--border);white-space:nowrap}
+  td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top;line-height:1.5}
+  tr:hover td{background:var(--s1)}
+
+  .cell-input{font-weight:600;color:var(--blue);min-width:160px}
+  .cell-raw{font-family:'SF Mono',Consolas,monospace;font-size:0.78rem;white-space:pre-wrap;word-break:break-word;max-width:320px}
+  .cell-final{color:var(--green);font-weight:500;min-width:180px}
+  .cell-step{text-align:center;font-weight:700}
+  .step-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:700}
+  .step-1{background:#dbeafe;color:#1d4ed8} .step-2{background:#e0e7ff;color:#4338ca}
+  .step-3{background:#fef3c7;color:#92400e} .step-4{background:#d1fae5;color:#065f46}
+  .step-5{background:#fce4ec;color:#991b1b}
+
+  .expand-btn{background:none;border:1px solid var(--border);border-radius:4px;padding:2px 6px;cursor:pointer;font-size:0.7rem;color:var(--muted)}
+  .expand-btn:hover{background:var(--s1)}
+  .detail-row{display:none}
+  .detail-row.open{display:table-row}
+  .detail-cell{padding:10px 12px;background:var(--s1);font-family:'SF Mono',Consolas,monospace;font-size:0.78rem;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto;line-height:1.4}
+  .detail-label{font-weight:700;color:var(--muted);font-size:0.7rem;text-transform:uppercase;margin-bottom:4px;display:block}
+  .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:768px){.detail-grid{grid-template-columns:1fr}}
+
+  .empty{text-align:center;padding:40px;color:var(--muted)}
+  .empty .icon{font-size:2rem;margin-bottom:8px}
+  .tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.7rem;font-weight:600}
+  .tag-held{background:#fef3c7;color:#92400e}
+  .tag-ok{background:#d1fae5;color:#065f46}
+  .tag-err{background:#fce4ec;color:#991b1b}
+
+  .filter-bar{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+  .filter-chip{padding:4px 10px;border:1px solid var(--border);border-radius:20px;font-size:0.75rem;cursor:pointer;background:var(--card);color:var(--muted)}
+  .filter-chip.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+</style>
+</head>
+<body>
+
+<h1>Test Pipeline View</h1>
+<p class="sub">Chat test → App processing → Gemini raw → Response ke HP</p>
+
+<div class="controls">
+  <input type="text" id="serverUrl" placeholder="Server URL (contoh: http://localhost:3000)" />
+  <input type="password" id="authToken" placeholder="Auth token" />
+  <button class="btn btn-blue" onclick="loadTurns()">Load Data</button>
+  <button class="btn btn-orange" onclick="clearTable()">Clear</button>
+  <button class="btn btn-green" onclick="exportCSV()">Export CSV</button>
+  <span class="count" id="turnCount">0 turns</span>
+</div>
+
+<div class="filter-bar" id="filterBar">
+  <span class="filter-chip active" data-filter="all">Semua</span>
+  <span class="filter-chip" data-filter="held">Held/Preempted</span>
+  <span class="filter-chip" data-filter="step3">Step 3</span>
+  <span class="filter-chip" data-filter="step4">Step 4</span>
+  <span class="filter-chip" data-filter="escalate">Eskalasi</span>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th style="width:30px">#</th>
+      <th>Chat Test (Input)</th>
+      <th>App → Gemini (System Prompt + History + Message)</th>
+      <th>Gemini Raw Response</th>
+      <th>Response ke HP (Final)</th>
+      <th>Step</th>
+      <th style="width:50px"></th>
+    </tr>
+  </thead>
+  <tbody id="turnsBody">
+    <tr><td colspan="7" class="empty"><div class="icon">🧪</div>Masukkan server URL dan token, lalu klik Load Data</td></tr>
+  </tbody>
+</table>
+</div>
+
+<script>
+let turnsData = [];
+let activeFilter = 'all';
+
+// Restore from localStorage
+document.getElementById('serverUrl').value = localStorage.getItem('testView_serverUrl') || '';
+document.getElementById('authToken').value = localStorage.getItem('testView_authToken') || '';
+
+async function loadTurns() {
+  const baseUrl = document.getElementById('serverUrl').value.trim().replace(/\/$/, '');
+  const token = document.getElementById('authToken').value.trim();
+  if (!baseUrl || !token) return alert('Isi server URL dan token dulu');
+
+  localStorage.setItem('testView_serverUrl', baseUrl);
+  localStorage.setItem('testView_authToken', token);
+
+  try {
+    const res = await fetch(`${baseUrl}/api/test/internal/turns`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const data = await res.json();
+    if (!data.ok) return alert('Gagal load: ' + JSON.stringify(data));
+    turnsData = data.turns || [];
+    renderTable();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+function renderTable() {
+  const tbody = document.getElementById('turnsBody');
+  const filtered = filterTurns(turnsData);
+  document.getElementById('turnCount').textContent = `${filtered.length} turns`;
+
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty"><div class="icon">📭</div>Belum ada data test</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map((t, i) => {
+    const input = escapeHtml(t.input || '-');
+    const step = t.step ?? '-';
+    const isHeld = t.heldReply;
+    const stepClass = `step-${step}`;
+
+    // Gemini request: system prompt + message
+    const sysPrompt = t.geminiRequest?.systemPrompt || '(tidak ada)';
+    const gemMsg = t.geminiRequest?.message || '(tidak ada)';
+    const history = t.geminiRequest?.history;
+    const historyStr = history ? (typeof history === 'string' ? history : JSON.stringify(history, null, 2)) : '(tidak ada)';
+
+    // Gemini raw response
+    const gemRaw = t.geminiResponse?.rawText || t.rawGeminiText || '(tidak ada)';
+
+    // Final response
+    const final = escapeHtml(t.aiOutput || '-');
+
+    return `
+      <tr>
+        <td style="color:var(--muted)">${filtered.length - i}</td>
+        <td class="cell-input">
+          ${input}
+          ${isHeld ? '<br><span class="tag tag-held">HELD</span>' : ''}
+        </td>
+        <td>
+          <button class="expand-btn" onclick="toggleDetail(this)">Lihat Detail ▾</button>
+        </td>
+        <td class="cell-raw">${escapeHtml(gemRaw.substring(0, 200))}${gemRaw.length > 200 ? '...' : ''}</td>
+        <td class="cell-final">${final}</td>
+        <td class="cell-step"><span class="step-badge ${stepClass}">Step ${step}</span></td>
+        <td>
+          ${t.validation ? `<span class="tag ${t.validation.every(v=>v.pass) ? 'tag-ok' : 'tag-err'}">${t.validation.filter(v=>v.pass).length}/${t.validation.length}</span>` : ''}
+        </td>
+      </tr>
+      <tr class="detail-row">
+        <td colspan="7" class="detail-cell">
+          <div class="detail-grid">
+            <div>
+              <span class="detail-label">System Prompt (lengkap)</span>
+${escapeHtml(sysPrompt)}
+            </div>
+            <div>
+              <span class="detail-label">History (dikirim ke Gemini)</span>
+${escapeHtml(historyStr.substring(0, 3000))}${historyStr.length > 3000 ? '\n... (dipotong)' : ''}
+            </div>
+            <div>
+              <span class="detail-label">Message (pesan customer)</span>
+${escapeHtml(gemMsg)}
+            </div>
+            <div>
+              <span class="detail-label">Gemini Raw Response (lengkap)</span>
+${escapeHtml(gemRaw)}
+            </div>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function filterTurns(turns) {
+  if (activeFilter === 'all') return turns;
+  if (activeFilter === 'held') return turns.filter(t => t.heldReply);
+  if (activeFilter === 'step3') return turns.filter(t => t.step === 3);
+  if (activeFilter === 'step4') return turns.filter(t => t.step === 4);
+  if (activeFilter === 'escalate') return turns.filter(t => {
+    const out = (t.aiOutput || '').toLowerCase();
+    return out.includes('eskalasi') || out.includes('[escalate]') || out.includes('admin');
+  });
+  return turns;
+}
+
+function toggleDetail(btn) {
+  const row = btn.closest('tr').nextElementSibling;
+  const isOpen = row.classList.toggle('open');
+  btn.textContent = isOpen ? 'Tutup ▴' : 'Lihat Detail ▾';
+}
+
+function clearTable() {
+  turnsData = [];
+  renderTable();
+}
+
+function exportCSV() {
+  const filtered = filterTurns(turnsData);
+  if (!filtered.length) return alert('Tidak ada data');
+
+  const header = ['#','Input','System Prompt','Gemini Raw','Final Response','Step','Held'];
+  const rows = filtered.map((t, i) => [
+    filtered.length - i,
+    t.input || '',
+    t.geminiRequest?.systemPrompt || '',
+    t.geminiResponse?.rawText || t.rawGeminiText || '',
+    t.aiOutput || '',
+    t.step ?? '',
+    t.heldReply ? 'YES' : ''
+  ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+
+  const csv = [header.join(','), ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `test-turns-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Filter chips
+document.querySelectorAll('.filter-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    activeFilter = chip.dataset.filter;
+    renderTable();
+  });
+});
+
+// Auto-load if saved
+if (localStorage.getItem('testView_serverUrl') && localStorage.getItem('testView_authToken')) {
+  loadTurns();
+}
+</script>
+</body>
+</html>

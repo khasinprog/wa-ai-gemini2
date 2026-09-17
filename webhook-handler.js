@@ -249,8 +249,9 @@ function registerWebhookRoutes(app) {
               }
               markWamidProcessed(wamid);
 
-              // Tandai dibaca (fire-and-forget)
-              markAsReadWithTyping(wamid, false);
+              // Centang biru + typing dihandle oleh message-processor
+              // dengan timing: max(0, delay - 10s) sebelum pesan terkirim
+              // Jangan mark as read di sini agar tidak langsung biru
 
               // Extract body berdasarkan tipe pesan
               let body = extractMessageBody(msg, from, wamid, contactName);
@@ -294,8 +295,36 @@ function registerWebhookRoutes(app) {
 
               // ── Stop chat per nomor ──
               if (store.settings.stoppedChats?.includes(from)) {
-                console.log(`Chat ${senderName} (${from.slice(-4)}) di-stop — AI tidak memproses.`);
-                continue;
+                console.log(`Chat ${senderName} (${from.slice(-4)}) di-pause — disimpan ke dashboard, AI tidak memproses.`);
+                // Simpan pesan agar muncul di dashboard (admin bisa lihat & balas manual)
+                const pausedEntry = {
+                  id:              Date.now(),
+                  from,
+                  senderName,
+                  body,
+                  wamid,
+                  waba_message_id: wamid,
+                  message_type:    msg.type === 'image' ? 'image' : 'text',
+                  timestamp:       new Date().toISOString(),
+                  replied:         false,
+                  aiReply:         null,
+                };
+                store.messages.unshift(pausedEntry);
+                if (store.messages.length > config.MESSAGE_LIMIT)
+                  store.messages = store.messages.slice(0, config.MESSAGE_LIMIT);
+                store.save(store.PATHS.MSG_FILE, store.messages);
+                store.persistMessageToDB(pausedEntry);
+                store.io?.emit('new_message', pausedEntry);
+                // Kirim notifikasi Telegram ke admin
+                const tgPause = require('./telegram-service');
+                if (tgPause.isConfigured()) {
+                  tgPause.sendPausedChatNotification({
+                    customerPhone:   from,
+                    customerName:    senderName,
+                    customerMessage: body,
+                  }).catch(e => console.error('[Pause Notif] Gagal kirim ke Telegram:', e.message));
+                }
+                continue; // skip AI processing
               }
 
               // ── Buffer & debounce ──
@@ -487,7 +516,9 @@ async function flushMacrodroidBuffer(from) {
     // DRAFT MODE: Step >= 4 ATAU ada [DRAFT_ONGKIR] tag → simpan draft
     const _macroStep = store.orderStates.get(from)?.step || 1;
     const _hasMacroDraftTag = finalCleanReply.includes('[DRAFT_ONGKIR]') || finalCleanReply.includes('[DRAFT_REKAP]');
-    if (_macroStep >= 4 || _hasMacroDraftTag) {
+    // V2 mode: jangan auto-draft dari step >= 4 (MacroDroid path belum punya thinkerResult)
+    const _macroShouldDraft = _hasMacroDraftTag || (!store.settings.v2ResponseStyle && _macroStep >= 4);
+    if (_macroShouldDraft) {
       finalCleanReply = finalCleanReply.replace(/\[DRAFT_REKAP\]/gi, '').replace(/\[DRAFT_ONGKIR\]/gi, '').trim();
       entry.aiReplyDraft = finalCleanReply;
       entry.draftStatus = 'pending';

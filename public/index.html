@@ -662,7 +662,7 @@ input:checked+.slider:before{transform:translateX(18px)}
     <div class="setup-ico">🔒</div>
     <div class="setup-title">Dashboard Terkunci</div>
     <div class="setup-sub">Masukkan password admin untuk mengakses kontrol panel.</div>
-    <input type="password" id="loginPassword" class="setup-input" placeholder="Password..." onkeypress="if(event.key==='Enter') doLogin()" />
+    <input type="password" id="loginPassword" class="setup-input" placeholder="Password..." onkeypress="if(event.key==='Enter') doLogin()" autocapitalize="none" autocorrect="off" autocomplete="current-password" spellcheck="false" />
     <button class="btn btn-primary" style="width:100%;margin-top:10px" onclick="doLogin()">Masuk</button>
     <div class="setup-err" id="loginErr"></div>
   </div>
@@ -831,6 +831,10 @@ input:checked+.slider:before{transform:translateX(18px)}
         <div class="toggle-row">
           <div><div class="tl">Auto Reply</div><div class="ts">AI balas otomatis</div></div>
           <label class="sw"><input type="checkbox" id="arToggle" onchange="patch('autoReply',this.checked)"/><span class="sl"></span></label>
+        </div>
+        <div class="toggle-row">
+          <div><div class="tl">V2 Response Style</div><div class="ts">Template respons v2 (eksperimental)</div></div>
+          <label class="sw"><input type="checkbox" id="v2Toggle" onchange="patch('v2ResponseStyle',this.checked)"/><span class="sl"></span></label>
         </div>
         <div class="toggle-row">
           <div><div class="tl">Jam Operasional</div><div class="ts">Batasi jam aktif</div></div>
@@ -1343,6 +1347,7 @@ async function initApp() {
   });
   socket.on('settings_updated',s=>{
     document.getElementById('arToggle').checked=s.autoReply??true;
+    document.getElementById('v2Toggle').checked=s.v2ResponseStyle??false;
     settings = s; // update global settings
     renderContacts(); // re-render to update stop buttons
   });
@@ -1390,6 +1395,7 @@ function applySettings(s){
   document.getElementById('webhookUrlMacro').textContent=location.origin+'/webhook/wa-incoming';
   updateChannelHint(s.channel||'cloudapi');
   document.getElementById('arToggle').checked=s.autoReply??true;
+  document.getElementById('v2Toggle').checked=s.v2ResponseStyle??false;
   document.getElementById('persona').value=s.persona||'';
   document.getElementById('modelName').value=s.modelName||'gemini-3.5-flash-lite';
   document.getElementById('lang').value=s.language||'Indonesia';

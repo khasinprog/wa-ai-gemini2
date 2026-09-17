@@ -1,0 +1,106 @@
+
+locking chat produk ======================
+tanyaProduk= waba
+If (tanyaproduk== baby walking)
+  Flag=baby walking
+If (tanyaproduk == dempul instan)
+  Flag=dempulinstan
+Else (tanya produk != produk yg di Knowladebase)
+Flag= null 
+Send pertanya ke customer, ini tidak ada, produk yang tersedia sesuai Knowladebase
+
+in chat dari customer di flag di jenis produk, jadi setiap ada pertanyaan yang tidak menyebutkan nama produk flag produk akan menjadi konteks ai
+-=================================
+
+Cara menjawab pertanyaan customer,
+Step1:
+Customer bertanya produk,
+kak mau tanya pasta dempul?
+harga berapa?
+
+jawaban lengkap
+Produk ini bisa di pake di tembok bisa dilakukan dengan mudah.... (sesuai dengan  KB)
+harga: 90 rb
+
+tandain flagnya
+flagproduk: pastadempul
+flagstep: Step1
+
+step 1 ini menjawab sesuai knowladgebase
+
+------------------------------------------------------
+
+Step 2: Pertanyaan yang lain selain tanya produk
+
+flagproduk: pastadempul
+flagstep: step 2
+
+contoh:
+customer: itu ukurannya berapa?
+ai : jawab sesaui pertanyaan, tidak usah di jelaskan panjang,  250gram kak per unit, jadi kalo 2 dapet 500gram (gak perlu lagi dijelasin manfaat)
+
+-----------------------------------------------------------
+
+
+Step 3: pertnyaan terkait alamat, setelah customer mau beli
+
+flagproduk: pasta dempul
+flagstep: step3
+tanya lengkap terkait nama, alamat, rt,rw,desa, kecamatan, kabupaten,
+
+customer: nama, khasin, kalo dia nyebut cuma 1 kata, tanyain lagi, ini sudah nama lengkap, kalo iya
+flagnamacustomer = khasin
+
+customer: rukeman, tamantirto
+ai, lihat rukeman tamantirto itu nama apa (semacam search alamat)
+rukeman: dusun, tamatirto: desa
+flagdesa: rukeman, tamantirto
+
+kalo kecamatan belum ada, ai tanya ke customer, kecamatan mana 
+customer jawab: kasihan
+
+flagkecamatan: kasihan
+
+flagrt/rw: ini juga harus ditanyakan,
+flagpatokan: ini juga harus ditanyakan
+
+flagkota: ini juga harus ditanyakan
+
+intinya di step 3 ini, flag harus diisi oleh ai, dan pertanyaan cek di flag, nama yang belum, ini akan memudahkan ai untuk menjawab
+
+-----------------------------------------------
+step 4 : confirmasi
+flagproduk: pasta dempul
+flagstep: step 4 (ini hanya konfirmasi saja, gak usah pertanyaan yang awal)
+
+kalo sudah benar
+
+nanti ketika customer udah jawab oke
+flagorder: namacusotmer ordered.
+
+bisa digunakan buat nyatat data ke order.
+
+------------------------------------------------
+step 5: others
+flag produk: pasta dempul (ini gak akan berubah sebelum customer tanya produk selain pasta dempul ya, ini di setiap step seperti itu, intinya keep kalo ga di triger berubah)
+ketika dapat pesan ini, ai hanya ngecek, dan pertanyaan di lempar ke telegram ku, jadi aku yang jawab>
+
+ini ada pertanyaan ini dari customer ini, tolong di jawab
+aku (admin): misal: ini akan dikirim hari ini
+ app kirim jawaban dari telegramku ke wa customer.
+
+ jadi ini enggak otomatis kalo sudah di step 5.
+
+ ------------------------------------------
+
+ jadi prosedure menjawab, ai harus cek flagnya + kb, supaya ai menjawab sesuai step
+
+
+
+
+
+
+
+
+
+

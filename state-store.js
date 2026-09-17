@@ -43,6 +43,7 @@ const DEF = {
   productImages: {},
   courierPriority: DEFAULT_COURIER_PRIORITY,
   stoppedChats: [],
+  v2ResponseStyle: false,
 };
 
 // ── Load persisted state from files ──

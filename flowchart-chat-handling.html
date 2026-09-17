@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flowchart — Penanganan Chat Customer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.0/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #f8f9fa; --card: #fff; --text: #1a1a2e; --muted: #6c757d;
+      --blue: #4361ee; --green: #2ec4b6; --red: #e63946; --orange: #f77f00;
+      --purple: #7b2cbf; --teal: #0d9488; --border: #dee2e6;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --muted: #94a3b8;
+        --blue: #60a5fa; --green: #34d399; --red: #f87171; --orange: #fb923c;
+        --purple: #c084fc; --teal: #2dd4bf; --border: #334155;
+      }
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg); color: var(--text);
+      padding: 24px; line-height: 1.5;
+    }
+    h1 { font-size: 1.6rem; margin-bottom: 4px; }
+    .subtitle { color: var(--muted); font-size: 0.9rem; margin-bottom: 24px; }
+    .section { margin-bottom: 32px; }
+    .section-title {
+      font-size: 1.1rem; font-weight: 700; margin-bottom: 12px;
+      padding-bottom: 6px; border-bottom: 2px solid var(--blue);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .section-title .num {
+      background: var(--blue); color: #fff; border-radius: 50%;
+      width: 26px; height: 26px; display: flex; align-items: center;
+      justify-content: center; font-size: 0.8rem; font-weight: 700;
+    }
+    .mermaid {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 20px; overflow-x: auto;
+    }
+    .mermaid svg { max-width: 100%; height: auto; }
+    .legend {
+      display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px;
+      font-size: 0.82rem; color: var(--muted);
+    }
+    .legend-item { display: flex; align-items: center; gap: 5px; }
+    .legend-dot {
+      width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0;
+    }
+    .note {
+      background: var(--card); border-left: 4px solid var(--orange);
+      padding: 12px 16px; border-radius: 0 8px 8px 0;
+      font-size: 0.88rem; margin-top: 12px; color: var(--muted);
+    }
+    .note strong { color: var(--text); }
+    @media print {
+      body { padding: 12px; }
+      .mermaid { border: 1px solid #ccc; break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+
+<h1>Flowchart — Penanganan Chat Customer</h1>
+<p class="subtitle">WhatsApp AI Assistant · server.js · updated 2026-09-04</p>
+
+<!-- ═══ SECTION 1: MAIN FLOW ═══ -->
+<div class="section">
+  <div class="section-title"><span class="num">1</span> Main Flow — Webhook ke Balasan AI</div>
+  <div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#e8f0fe', 'primaryTextColor': '#1a1a2e',
+  'primaryBorderColor': '#4361ee', 'lineColor': '#6c757d',
+  'secondaryColor': '#fef3c7', 'tertiaryColor': '#f0fdf4',
+  'fontFamily': 'Segoe UI, system-ui, sans-serif', 'fontSize': '13px'
+}}}%%
+flowchart TD
+    A["POST /webhook<br/>Meta WhatsApp Cloud API"]
+    B{"Valid<br/>signature?"}
+    C["Balas 200 OK"]
+    D{"Isi admin<br/>command<br/>on / off?"}
+    D2["Toggle autoReply"]
+    E{"Chat di-<br/>stop?"}
+    F{"autoReply ON<br/>+ jam operasional<br/>+ whitelist?"}
+    G[" Debounce Buffer<br/>gabung pesan cepat<br/>(2 detik window)"]
+    H[" processCustomerMessage()"]
+    I[" updateOrderState()<br/>deteksi produk + data order"]
+    J[" buildHistory()<br/>potong/ringkas riwayat lama"]
+    K[" aiReply() → Gemini API<br/>+ System Prompt (KB + Step Rules)"]
+    L{"B1 Hold Cek #1<br/>ada pesan susulan?"}
+    L2["Tahan reply<br/>heldReply = true<br/>return early"]
+    M[" extractOrder()<br/>parse [ORDER_DATA]"]
+    N{"Reply kosong<br/>setelah strip<br/>[ESCALATE]?"}
+    N2["Tahan → admin<br/>via Telegram"]
+    O["Proses tag:<br/>[CEK_ONGKIR] [BUKTI_TRANSFER]<br/>[DELAY_SUMMARY] [KLAIM_GARANSI]<br/>[KIRIM_GAMBAR]"]
+    P["Hitung delay<br/>10-15 detik + jitter"]
+    Q{"B1 Hold Cek #2<br/>ada pesan susulan?"}
+    Q2["Tahan reply<br/>heldReply = true"]
+    R["[STEP=X] tag → update step"]
+    S["Split [SPLIT] → multi-bubble"]
+    T[" sendWhatsAppText()"]
+    T2{"Test phone?"}
+    T3["Intercept → dashboard"]
+    T4["Kirim ke WABA Graph API"]
+    U["Kirim gambar produk<br/>(jika ada [KIRIM_GAMBAR])"]
+    V{"Reply mengandung<br/>no rekening?"}
+    V2["Schedule follow-up<br/>transfer 3 jam"]
+    W["Simpan order<br/>+ emit event"]
+
+    A --> B
+    B -->|"❌ Invalid"| C
+    B -->|"✅ Valid"| D
+    D -->|"Ya (admin)"| D2
+    D -->|"Bukan admin"| E
+    D2 --> C
+    E -->|"Ya (stopped)"| C
+    E -->|"Tidak"| F
+    F -->|"❌ Salah satu"| C
+    F -->|"✅ Semua OK"| G
+    G --> H
+    H --> I --> J --> K
+    K --> L
+    L -->|"Ya (susulan)"| L2
+    L -->|"Tidak"| M
+    M --> N
+    N -->|"Ya (escalate)"| N2
+    N -->|"Tidak"| O
+    O --> P --> Q
+    Q -->|"Ya (susulan)"| Q2
+    Q -->|"Tidak"| R
+    R --> S --> T
+    T --> T2
+    T2 -->|"Ya (test)"| T3
+    T2 -->|"Tidak (real)"| T4
+    T3 --> U
+    T4 --> U
+    U --> V
+    V -->|"Ya (transfer)"| V2
+    V -->|"Tidak"| W
+
+    style L2 fill:#fef3c7,stroke:#f77f00,color:#1a1a2e
+    style Q2 fill:#fef3c7,stroke:#f77f00,color:#1a1a2e
+    style N2 fill:#fce4ec,stroke:#e63946,color:#1a1a2e
+    style T3 fill:#e8f5e9,stroke:#2ec4b6,color:#1a1a2e
+    style V2 fill:#ede7f6,stroke:#7b2cbf,color:#1a1a2e
+    style C fill:#f5f5f5,stroke:#9e9e9e,color:#6c757d
+  </div>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#fef3c7;border:1px solid #f77f00"></div> Hold / Tunda</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#fce4ec;border:1px solid #e63946"></div> Eskalasi ke Admin</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#e8f5e9;border:1px solid #2ec4b6"></div> Test Mode Intercept</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ede7f6;border:1px solid #7b2cbf"></div> Follow-up Scheduler</div>
+  </div>
+</div>
+
+<!-- ═══ SECTION 2: ORDER STATE MACHINE ═══ -->
+<div class="section">
+  <div class="section-title"><span class="num">2</span> Order State Machine — Step Transisi</div>
+  <div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#e8f0fe', 'primaryTextColor': '#1a1a2e',
+  'primaryBorderColor': '#4361ee', 'lineColor': '#6c757d',
+  'fontFamily': 'Segoe UI, system-ui, sans-serif', 'fontSize': '13px'
+}}}%%
+stateDiagram-v2
+    [*] --> Step1: Customer sebut produk
+    Step1: <b>Step 1 — Produk</b><br/>AI jawab: harga, varian, manfaat<br/>CTA: tanya warna / minat order
+    Step1 --> Step2: AI sudah jawab ≥1x<br/>(priorReplies ≥ 1)
+
+    Step2: <b>Step 2 — Follow-up</b><br/>AI jawab pertanyaan lanjutan<br/>CTA: ajak order / tanya alamat
+    Step2 --> Step3: Customer sebut<br/>kata "order/beli/proses"
+
+    Step3: <b>Step 3 — Kumpul Data</b><br/>Satu field per balasan:<br/>warna → alamat → patokan<br/>→ nama → no HP
+    Step3 --> Step4: Semua data lengkap<br/>+ customer konfirmasi<br/>"ya/benar/oke"
+    Step3 --> Step5: Kata eskalasi<br/>(estimasi, stok, retur,<br/>garansi, batal)
+
+    Step4: <b>Step 4 — Konfirmasi</b><br/>Rekap pesanan → konfirmasi<br/>→ pilih bayar (COD/Transfer)<br/>→ [ORDER_DATA]
+    Step4 --> Step5: Kata eskalasi
+
+    Step5: <b>Step 5 — Eskalasi</b><br/>Tag [ESCALATE] → Telegram admin<br/>Admin jawab → lanjut
+    Step5 --> Step3: Admin jawab,<br/>kembali kumpul data
+    Step5 --> Step4: Admin jawab,<br/>lanjut konfirmasi
+
+    note right of Step4
+      COD: edukasi paket tidak bisa
+      dibuka (ketentuan kurir)
+      Transfer: diskon 10% nudge
+    end note
+  </div>
+</div>
+
+<!-- ═══ SECTION 3: DATA EXTRACTION ═══ -->
+<div class="section">
+  <div class="section-title"><span class="num">3</span> Data Extraction — extractCustomerFields()</div>
+  <div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#e8f0fe', 'primaryTextColor': '#1a1a2e',
+  'primaryBorderColor': '#4361ee', 'lineColor': '#6c757d',
+  'fontFamily': 'Segoe UI, system-ui, sans-serif', 'fontSize': '13px'
+}}}%%
+flowchart TD
+    A["Pesan Customer"]
+    B{"Match RT/RW?<br/>rt XX/rw YY"}
+    B2["Simpan rtRw<br/>buang dari pesan"]
+    C{"Jumlah item<br/>(split koma)"}
+    D["2 item:<br/>desa + kecamatan"]
+    D2["2 item (desa+kec ada):<br/>kecamatan + kota"]
+    E["3 item:<br/>desa + kecamatan + kota"]
+    F["4+ item:<br/>dusun + desa + kecamatan + kota"]
+    G{"Match pola nama<br/>(≥2 kata, bukan alamat,<br/>bukan pertanyaan)"}
+    G2["Simpan namaLengkap<br/>+ namaVerified = true"]
+    H{"Match pola patokan?<br/>(dekat/sebelah/masjid/...)"}
+    H2["Simpan patokan"]
+    I["Deteksi HP:<br/>08xxxxxxxxxx<br/>atau 'pakai nomor ini'"]
+    I2["Simpan noHp"]
+
+    A --> B
+    B -->|"Ya"| B2 --> C
+    B -->|"Tidak"| C
+    C -->|"0"| G
+    C -->|"2"| D
+    C -->|"2 (isi ada)"| D2
+    C -->|"3"| E
+    C -->|"4+"| F
+    D --> G
+    D2 --> G
+    E --> G
+    F --> G
+    G -->|"Ya"| G2 --> H
+    G -->|"Tidak"| H
+    H -->|"Ya"| H2 --> I
+    H -->|"Tidak"| I
+    I --> I2
+
+    style B2 fill:#e3f2fd,stroke:#1976d2,color:#1a1a2e
+    style G2 fill:#e8f5e9,stroke:#388e3c,color:#1a1a2e
+    style H2 fill:#fff3e0,stroke:#f57c00,color:#1a1a2e
+    style I2 fill:#fce4ec,stroke:#c62828,color:#1a1a2e
+  </div>
+  <div class="note">
+    <strong>Catatan:</strong> ExtractCustomerFields dijalankan di SEMUA step (tidak dibatasi step ≥ 3) karena saat rapid messages / preemption,
+    step mungkin belum naik tapi data sudah dikirim customer. RT/RW diekstrak DULU supaya tidak salah parse sebagai alamat.
+  </div>
+</div>
+
+<!-- ═══ SECTION 4: PAYMENT FLOW ═══ -->
+<div class="section">
+  <div class="section-title"><span class="num">4</span> Payment Flow — COD vs Transfer</div>
+  <div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#e8f0fe', 'primaryTextColor': '#1a1a2e',
+  'primaryBorderColor': '#4361ee', 'lineColor': '#6c757d',
+  'fontFamily': 'Segoe UI, system-ui, sans-serif', 'fontSize': '13px'
+}}}%%
+flowchart TD
+    A["Customer konfirmasi data<br/>(ya/benar/oke)"]
+    B["AI tawarkan metode bayar<br/>+'Diskon 10% Transfer lho'"]
+    C{"Customer pilih?"}
+
+    D["Transfer"]
+    D1["Sebut harga setelah diskon<br/>Rp95.000 → Rp85.500"]
+    D2["Info rekening:<br/>Bank Mandiri · 1240011135580<br/>a.n. KHASIN KHAFABI"]
+    D3["Minta bukti transfer"]
+    D4["Schedule follow-up<br/>3 jam jika belum kirim bukti"]
+
+    E["COD"]
+    E1["Edukasi: paket tidak bisa<br/>dibuka sebelum bayar<br/>(ketentuan kurir)"]
+    E2{"Setuju?"}
+    E3["Lanjut konfirmasi order"]
+    E4["Tawarkan Transfer<br/>+ diskon 10% sebagai alternatif"]
+
+    F["Sisipkan [ORDER_DATA]<br/>+ [DELAY_SUMMARY]"]
+    G["Schedule summary<br/>15 menit kemudian"]
+
+    A --> B --> C
+    C -->|"Transfer"| D
+    C -->|"COD"| E
+    C -->|"Belum tentu"| A
+
+    D --> D1 --> D2 --> D3 --> D4
+    E --> E1 --> E2
+    E2 -->|"Ya"| E3
+    E2 -->|"Tidak"| E4
+    D3 --> F
+    E3 --> F
+    F --> G
+
+    style D fill:#e3f2fd,stroke:#1976d2,color:#1a1a2e
+    style E fill:#fff3e0,stroke:#f57c00,color:#1a1a2e
+    style D1 fill:#bbdefb,stroke:#1976d2,color:#1a1a2e
+    style E1 fill:#ffe0b2,stroke:#f57c00,color:#1a1a2e
+    style F fill:#e8f5e9,stroke:#388e3c,color:#1a1a2e
+  </div>
+</div>
+
+<!-- ═══ SECTION 5: B1 HOLD MECHANISM ═══ -->
+<div class="section">
+  <div class="section-title"><span class="num">5</span> B1 Hold Mechanism — Penanganan Pesan Cepat</div>
+  <div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#e8f0fe', 'primaryTextColor': '#1a1a2e',
+  'primaryBorderColor': '#4361ee', 'lineColor': '#6c757d',
+  'fontFamily': 'Segoe UI, system-ui, sans-serif', 'fontSize': '13px'
+}}}%%
+flowchart TD
+    A["Pesan N dikirim"]
+    B["Proses pesan N<br/>→ updateOrderState<br/>→ aiReply (Gemini)"]
+    C{"B1 Hold Cek #1<br/>pesan N+1 datang?"}
+    C2["Reply di-tahan<br/>heldReply = true<br/>data tetap tersimpan"]
+    D["Hitung delay<br/>10-15 detik"]
+    E{"B1 Hold Cek #2<br/>pesan N+2 datang?"}
+    E2["Reply di-tahan<br/>heldReply = true"]
+    F{"Preemption?<br/>activeProcessing<br/>masih jalan?"}
+    F2["Abort proses lama<br/>Mulai proses baru"]
+    G["Kirim reply ke customer<br/>+ log testTurn"]
+
+    A --> B --> C
+    C -->|"Ya (susulan)"| C2
+    C -->|"Tidak"| D --> E
+    E -->|"Ya (susulan)"| E2
+    E -->|"Tidak"| G
+
+    C2 -.->|"Pesan N+1 diproses"| F
+    F -->|"Ya (proses lama aktif)"| F2
+    F -->|"Tidak"| B
+
+    style C2 fill:#fef3c7,stroke:#f77f00,color:#1a1a2e
+    style E2 fill:#fef3c7,stroke:#f77f00,color:#1a1a2e
+    style F2 fill:#fce4ec,stroke:#e63946,color:#1a1a2e
+    style G fill:#e8f5e9,stroke:#388e3c,color:#1a1a2e
+  </div>
+  <div class="note">
+    <strong>Preemption:</strong> Saat pesan N+1 datang sementara pesan N masih diproses, pesan N di-abort (tidak dikirim),
+    tapi <strong>data tetap tersimpan</strong> di orderState (karena updateOrderState dijalankan sebelum B1 hold check).
+    Reply N ditandai <code>heldReply = true</code> — tersedia untuk context Gemini tapi tidak dikirim ke customer.
+  </div>
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    securityLevel: 'loose',
+    flowchart: { curve: 'basis', padding: 16 },
+    theme: 'base'
+  });
+</script>
+
+</body>
+</html>

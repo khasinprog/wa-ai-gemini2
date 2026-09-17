@@ -13,6 +13,7 @@ const fs     = require('fs');
 const { getRelevantKnowledge } = require('./knowledge-base');
 const { cleanFieldQuestions } = require('./message-postprocess');
 const { getMissingFields } = require('./order-state');
+const { V2_CHATTER_HINTS } = require('./v2-postprocess');
 
 // ── File paths ─────────────────────────────────────────────────────
 const RAW_CAP_FILE = store.PATHS.RAW_CAP_FILE;
@@ -66,7 +67,7 @@ STEP 4 — KONFIRMASI & FORMAT REKAP (FORMAT GUIDE — Thinker yang tentukan kap
   • Harga: Rp [harga]
   • Nama: [nama lengkap penerima]
   • Alamat: [alamat ringkas, satu baris]
-  • Nomor HP: [nomor HP ASLI customer — JANGAN tulis "08xxxxxxxx"]
+  • Nomor HP: [tulis nomor HP persis seperti di STATUS SAAT INI, contoh: 6281234567890]
   • Pembayaran: [COD atau Transfer]
 
 - Jika noHp = "SAMA_DENGAN_WA", gunakan nomor WhatsApp customer yang terlihat di STATUS SAAT INI.
@@ -451,9 +452,57 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
     } else if (thinkerData.intent === 'order_intent') {
       parts.push('→ Customer mau order. Lanjutkan ke step pengumpulan data.');
     } else if (thinkerData.intent === 'order_color_selection') {
-      parts.push('→ Customer pilih warna. Acknowledge dan lanjut ke data pengiriman.');
+      parts.push('→ Customer pilih warna. Acknowledge dan minta alamat lengkap berikut: nama jalan/perumahan, nomor rumah, RT/RW, dusun (jika ada), desa, kecamatan, dan kabupaten/kota. Tanya semuanya dalam 1 pesan.');
+    }
+    // V2 granular intent behavior
+    else if (thinkerData.intent === 'customer_pilihvariasi') {
+      parts.push('→ Customer pilih variasi. Tulis 1 kalimat konfirmasi + minta alamat lengkap berikut: nama jalan/perumahan, nomor rumah, RT/RW, dusun (jika ada), desa, kecamatan, dan kabupaten/kota. Tanya semuanya dalam 1 pesan.');
+    } else if (thinkerData.intent === 'Alamat_lengkap_noRTRW') {
+      parts.push('→ Customer kasih alamat tapi belum ada RT/RW. Tanya RT/RW.');
+    } else if (thinkerData.intent === 'Alamat_lengkap_hasRTRW') {
+      parts.push('→ Alamat dan RT/RW sudah ada. Tanya patokan rumah.');
+    } else if (thinkerData.intent === 'Alamat_patokan') {
+      parts.push('→ Patokan sudah ada. Tanya nama lengkap penerima.');
+    } else if (thinkerData.intent === 'Terkait_namaCustomer') {
+      parts.push('→ Nama sudah ada. Tanya nomor HP yang bisa dihubungi kurir.');
+    } else if (thinkerData.intent === 'NomorCustomer') {
+      parts.push('→ Nomor HP sudah ada. Tanya metode pembayaran (COD/Transfer), sebutkan diskon 10% transfer.');
+    } else if (thinkerData.intent === 'Terkait_pilihan_pembayaran_COD') {
+      parts.push('→ Customer pilih COD. Informasikan aturan COD. BELUM tampilkan rekap — tunggu customer setuju dulu.');
+    } else if (thinkerData.intent === 'Terkait_setuju_COD') {
+      parts.push('→ Customer setuju aturan COD. Tampilkan rekap pesanan lengkap. JANGAN finalize order — tunggu konfirmasi rekap dari customer.');
+    } else if (thinkerData.intent === 'Terkait_pilihan_pembayaran_Transfer') {
+      parts.push('→ Customer pilih transfer. Informasikan rekening bank. BELUM tampilkan rekap — tunggu customer balas dulu.');
+    } else if (thinkerData.intent === 'Terkait_konfirmasi_Transfer') {
+      parts.push('→ Customer sudah balas setelah terima info rekening. Tampilkan rekap pesanan. JANGAN finalize order — tunggu konfirmasi rekap dari customer.');
+    } else if (thinkerData.intent === 'Verifikasi') {
+      parts.push('→ Semua data lengkap. Siapkan rekap verifikasi dengan format emoji.');
+    } else if (thinkerData.intent === 'customer_konfirmasi_order') {
+      parts.push('→ Customer konfirmasi pesanan (rekap sudah ditampilkan). Konfirmasi pesanan sedang diproses. WAJIB sisipkan [ORDER_DATA]...[/ORDER_DATA] dengan data lengkap.');
+    } else if (thinkerData.intent === 'customer_ragu') {
+      parts.push('→ Customer ragu. Balas dengan hangat, tawarkan bantuan tanpa push.');
+    } else if (thinkerData.intent === 'customer_batal') {
+      parts.push('→ Customer batal. Terima dengan sopan, tutup percakapan dengan baik.');
+    } else if (thinkerData.intent === 'customer_pilihproduk_baru') {
+      parts.push('→ Customer ganti ke produk baru. Jelaskan produk baru dari Knowledge Base.');
+    } else if (thinkerData.intent === 'Lain') {
+      parts.push('→ Pertanyaan di luar flow. Balas 1-2 kalimat natural, jangan mengarang.');
+    } else if (thinkerData.intent === 'Ada_di_KB') {
+      parts.push('→ Pertanyaan ada di Knowledge Base. Jawab langsung dari KB.');
     }
     parts.push('');
+  }
+
+  // ── V2 RESPONSE INSTRUCTION (only when v2 mode active) ──────────
+  if (store.settings.v2ResponseStyle && thinkerData) {
+    const v2Hint = V2_CHATTER_HINTS[thinkerData.intent];
+    if (v2Hint && v2Hint !== 'Ikuti STEP rules yang berlaku.') {
+      parts.push('=== V2 RESPONSE INSTRUCTION ===');
+      parts.push(`Intent: ${thinkerData.intent}`);
+      parts.push(`Instruksi: ${v2Hint}`);
+      parts.push('JANGAN tulis kalimat fixed yang sudah disediakan template. Tulis HANYA kalimat dinamis sesuai instruksi di atas.');
+      parts.push('');
+    }
   }
 
   // Step rules
@@ -465,6 +514,12 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
   parts.push(DRAFT_RULES);
 
   parts.push('=== ATURAN MENJAWAB ===');
+  if (store.settings.v2ResponseStyle) {
+    parts.push('⚠️ V2 MODE — ATURAN PANJANG RESPONS:');
+    parts.push('- Jawab HANYA 1-2 kalimat. Langsung ke inti, tidak perlu penjelasan panjang.');
+    parts.push('- Jangan tambahkan informasi yang tidak diminta customer.');
+    parts.push('');
+  }
   parts.push('- THINKER CONTEXT di atas menentukan APA yang harus dilakukan. Ikuti instruksi dari THINKER, bukan dari STEP rules.');
   parts.push('- STEP (1/2/3/4/5) hanya menunjukkan PROGRESS — bukan aturan perilaku.');
   parts.push('- FOKUS pada produk yang sedang ditanyakan customer SAAT INI. Jangan campur informasi produk lain dari riwayat chat sebelumnya.');

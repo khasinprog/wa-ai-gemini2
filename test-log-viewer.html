@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Log — Pasta Dempul Order Flow</title>
+  <style>
+    @media print {
+      body { font-size: 11px; }
+      .turn-card { break-inside: avoid; page-break-inside: avoid; }
+      .no-print { display: none !important; }
+      .raw-payload { display: block !important; }
+      .raw-toggle::before { content: '▼ '; }
+    }
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --accent: #38bdf8;
+      --green: #4ade80;
+      --yellow: #fbbf24;
+      --red: #f87171;
+      --orange: #fb923c;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --code-bg: #0f172a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 24px;
+    }
+    h1 { font-size: 1.5rem; color: var(--accent); margin-bottom: 4px; }
+    .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 24px; }
+    .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; font-size: 0.8rem; }
+    .legend span { display: flex; align-items: center; gap: 6px; }
+    .legend .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .turn-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+    .turn-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 16px;
+      background: rgba(56, 189, 248, 0.08);
+      border-bottom: 1px solid var(--border);
+    }
+    .turn-num { font-weight: 700; color: var(--accent); font-size: 0.95rem; }
+    .turn-step {
+      font-size: 0.75rem;
+      padding: 2px 10px;
+      border-radius: 9999px;
+      font-weight: 600;
+    }
+    .step-1 { background: rgba(56, 189, 248, 0.2); color: var(--accent); }
+    .step-2 { background: rgba(74, 222, 128, 0.2); color: var(--green); }
+    .step-3 { background: rgba(251, 191, 36, 0.2); color: var(--yellow); }
+    .step-4 { background: rgba(251, 146, 60, 0.2); color: var(--orange); }
+    .step-5 { background: rgba(248, 113, 113, 0.2); color: var(--red); }
+    .turn-body {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1.5fr;
+      gap: 0;
+    }
+    .col { padding: 14px 16px; border-right: 1px solid var(--border); font-size: 0.85rem; }
+    .col:last-child { border-right: none; }
+    .col-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+    .chat-bubble {
+      padding: 8px 12px;
+      border-radius: 10px;
+      margin-bottom: 6px;
+      max-width: 95%;
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }
+    .customer { background: #1a3a2a; border: 1px solid #2d5a3d; margin-left: auto; text-align: right; }
+    .ai { background: #1a2a3a; border: 1px solid #2d4a5a; }
+    .gemini-section { margin-bottom: 10px; }
+    .gemini-label { font-size: 0.7rem; font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+    .gemini-code {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.72rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #cbd5e1;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .gemini-code .hl-section { color: var(--accent); font-weight: 700; }
+    .gemini-code .hl-step { color: var(--yellow); font-weight: 700; }
+    .gemini-code .hl-warn { color: var(--red); font-weight: 700; }
+    .gemini-code .hl-ok { color: var(--green); }
+    .gemini-code .hl-dim { color: #64748b; }
+    .issue-badge {
+      display: inline-block;
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 600;
+      margin-top: 6px;
+    }
+    .issue-high { background: rgba(248, 113, 113, 0.2); color: var(--red); }
+    .issue-medium { background: rgba(251, 191, 36, 0.2); color: var(--yellow); }
+    .issue-ok { background: rgba(74, 222, 128, 0.2); color: var(--green); }
+    /* Raw Payload */
+    .raw-toggle {
+      display: block; width: 100%; background: rgba(56, 189, 248, 0.08);
+      border: none; border-top: 1px solid var(--border);
+      color: var(--accent); font-size: 0.78rem; font-weight: 600;
+      padding: 8px 16px; cursor: pointer; text-align: left; font-family: inherit;
+    }
+    .raw-toggle:hover { background: rgba(56, 189, 248, 0.15); }
+    .raw-toggle::before { content: '▶ '; font-size: 0.65rem; }
+    .raw-toggle.open::before { content: '▼ '; }
+    .raw-payload {
+      display: none; background: #020617; border-top: 1px solid var(--border); padding: 14px 16px;
+    }
+    .raw-payload.show { display: block; }
+    .raw-payload pre {
+      margin: 0; font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.68rem; line-height: 1.5; color: #94a3b8;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .json-key { color: #7dd3fc; }
+    .json-str { color: #86efac; }
+    .json-num { color: #fbbf24; }
+    .json-null { color: #64748b; }
+    @media (max-width: 900px) {
+      .turn-body { grid-template-columns: 1fr; }
+      .col { border-right: none; border-bottom: 1px solid var(--border); }
+    }
+  </style>
+</head>
+<body>
+  <h1>Test Log — Pasta Dempul Order Flow</h1>
+  <p class="subtitle">2 September 2026 | Customer: Khafastore | Rekonstruksi berdasarkan code step-based system</p>
+
+  <div class="legend no-print">
+    <span><span class="dot" style="background:var(--accent)"></span> Step 1</span>
+    <span><span class="dot" style="background:var(--green)"></span> Step 2</span>
+    <span><span class="dot" style="background:var(--yellow)"></span> Step 3</span>
+    <span><span class="dot" style="background:var(--orange)"></span> Step 4</span>
+    <span><span class="dot" style="background:var(--red)"></span> Step 5</span>
+    <span style="margin-left:auto; color:var(--muted);">Klik "Raw Payload" untuk lihat JSON ke Gemini</span>
+  </div>
+
+  <!-- ═══════════ TURN 1 ═══════════ -->
+  <div class="turn-card">
+    <div class="turn-header">
+      <span class="turn-num">Turn 1 — Tanya Produk</span>
+      <span class="turn-step step-1">STEP 1</span>
+    </div>
+    <div class="turn-body">
+      <div class="col">
+        <div class="col-label">Customer</div>
+        <div class="chat-bubble customer">Halo kak ada pasta dempul?</div>
+        <div class="chat-bubble customer">Cek hrga</div>
+      </div>
+      <div class="col">
+        <div class="col-label">AI Response</div>
+        <div class="chat-bubble ai">Pasta Dempul Instan Tembok ya Kak. Tentu ada Kak, produknya ready ya.</div>
+        <div class="chat-bubble ai">Harganya Rp89.000 (dapat 2 unit) dan sudah termasuk ongkir. COD tersedia.</div>
+        <div class="chat-bubble ai">Mau diproses pesanannya sekarang Kak?</div>
+      </div>
+      <div class="col">
+        <div class="col-label">Data ke Gemini</div>
+        <div class="gemini-section">
+          <div class="gemini-label">SYSTEM PROMPT (excerpt)</div>
+          <div class="gemini-code"><span class="hl-section">=== INFORMASI PRODUK ===</span>
+<span class="hl-dim">[KB: Pasta Dempul Instan Tembok Rp89.000]</span>
+
+<span class="hl-dim">Produk Fokus: TIDAK ADA</span>
+
+<span class="hl-step">STEP 1 — JAWAB PRODUK:</span>
+- Jawab LENGKAP dari KB
+- Sebutkan: harga, varian, manfaat, CTA
+- JANGAN tanya data order</div>
+        </div>
+        <div class="gemini-section">
+          <div class="gemini-label">HISTORY</div>
+          <div class="gemini-code"><span class="hl-dim">[] kosong — pesan pertama</span></div>
+        </div>
+        <div class="gemini-section">
+          <div class="gemini-label">CURRENT MESSAGE</div>
+          <div class="gemini-code">"Halo kak ada pasta dempul? Cek hrga"</div>
+        </div>
+      </div>
+    </div>
+    <button class="raw-toggle" onclick="toggleRaw(this)">Raw Payload JSON</button>
+    <div class="raw-payload"><pre>{
+  <span class="json-key">"endpoint"</span>: <span class="json-str">"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent"</span>,
+  <span class="json-key">"systemInstruction"</span>: {
+    <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Kamu adalah admin Khafastore...\nPanggil customer \"Kak\"...\n=== INFORMASI PRODUK ===\nPasta Dempul Instan Tembok: Rp89.000...\n\n📌 STEP 1 — JAWAB PRODUK:\n- Jawab LENGKAP dari KB\n- Sebutkan: harga, varian, manfaat, CTA\n- JANGAN tanya data order\n\n=== ATURAN MENJAWAB ===\n..."</span> }]
+  },
+  <span class="json-key">"contents"</span>: [
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>, <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Halo kak ada pasta dempul? Cek hrga"</span> }] }
+  ],
+  <span class="json-key">"generationConfig"</span>: { <span class="json-key">"temperature"</span>: <span class="json-num">0.7</span> }
+}</pre></div>
+  </div>
+
+  <!-- ═══════════ TURN 2 ═══════════ -->
+  <div class="turn-card">
+    <div class="turn-header">
+      <span class="turn-num">Turn 2 — Follow-up: Ukuran</span>
+      <span class="turn-step step-2">STEP 2</span>
+    </div>
+    <div class="turn-body">
+      <div class="col">
+        <div class="col-label">Customer</div>
+        <div class="chat-bubble customer">Ini 1 botol brpa gram</div>
+      </div>
+      <div class="col">
+        <div class="col-label">AI Response</div>
+        <div class="chat-bubble ai">Isi per tube-nya 250 gram ya Kak.</div>
+        <div class="issue-badge issue-medium">⚠️ Step harusnya naik ke 2 — tapi auto-detect belum ada</div>
+      </div>
+      <div class="col">
+        <div class="col-label">Data ke Gemini</div>
+        <div class="gemini-section">
+          <div class="gemini-label">SYSTEM PROMPT (excerpt)</div>
+          <div class="gemini-code"><span class="hl-section">=== PRODUK FOKUS: Pasta Dempul ===</span>
+
+<span class="hl-section">=== STATUS SAAT INI ===</span>
+<span class="hl-step">Step: 1</span>
+→ Belum ada: nama, dusun, kecamatan, kota, patokan, RT/RW, HP
+
+<span class="hl-step">STEP 1 — JAWAB PRODUK</span>
+<span class="hl-dim">⚠️ Step masih 1 → AI akan ulang KB</span></div>
+        </div>
+        <div class="gemini-section">
+          <div class="gemini-label">HISTORY</div>
+          <div class="gemini-code">[1] User: "Halo kak ada pasta dempul?..."
+    AI:   "Pasta Dempul Instan Tembok ya
+           Kak! Harganya Rp89.000..."</div>
+        </div>
+      </div>
+    </div>
+    <button class="raw-toggle" onclick="toggleRaw(this)">Raw Payload JSON</button>
+    <div class="raw-payload"><pre>{
+  <span class="json-key">"systemInstruction"</span>: {
+    <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Kamu adalah admin Khafastore...\n=== PRODUK FOKUS: Pasta Dempul Instan Tembok ===\nCustomer sedang membahas \"Pasta Dempul Instan Tembok\"\n\n=== STATUS SAAT INI ===\nStep: 1\n→ Belum ada: nama lengkap, dusun/desa, kecamatan, kota, patokan, RT/RW, nomor HP\nTanyakan field yang masih kurang, satu per satu.\n\n📌 STEP 1 — JAWAB PRODUK:\n- Jawab LENGKAP dari KB\n..."</span> }]
+  },
+  <span class="json-key">"contents"</span>: [
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,    <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Halo kak ada pasta dempul? Cek hrga"</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"model"</span>,   <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Pasta Dempul Instan Tembok ya Kak. Harganya Rp89.000..."</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,    <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Ini 1 botol brpa gram"</span> }] }
+  ],
+  <span class="json-key">"generationConfig"</span>: { <span class="json-key">"temperature"</span>: <span class="json-num">0.7</span> }
+}</pre></div>
+  </div>
+
+  <!-- ═══════════ TURN 3 ═══════════ -->
+  <div class="turn-card">
+    <div class="turn-header">
+      <span class="turn-num">Turn 3 — Konfirmasi Order</span>
+      <span class="turn-step step-3">STEP 3</span>
+    </div>
+    <div class="turn-body">
+      <div class="col">
+        <div class="col-label">Customer</div>
+        <div class="chat-bubble customer">Iya ka</div>
+      </div>
+      <div class="col">
+        <div class="col-label">AI Response</div>
+        <div class="chat-bubble ai">Siap Kak! Boleh minta nama lengkap penerimanya ya?</div>
+        <div class="issue-badge issue-high">❌ Step masih 1 — AI tanya "mau diproses?" lagi</div>
+      </div>
+      <div class="col">
+        <div class="col-label">Data ke Gemini</div>
+        <div class="gemini-section">
+          <div class="gemini-label">SYSTEM PROMPT (excerpt)</div>
+          <div class="gemini-code"><span class="hl-section">=== STATUS SAAT INI ===</span>
+<span class="hl-step">Step: 1</span>
+→ Belum ada: nama, dusun, kecamatan...
+
+<span class="hl-step">STEP 1 — JAWAB PRODUK</span>
+<span class="hl-dim">⚠️ Customer sudah mau order tapi system masih Step 1</span></div>
+        </div>
+        <div class="gemini-section">
+          <div class="gemini-label">HISTORY (3 entries)</div>
+          <div class="gemini-code">[1] User: "Halo kak ada pasta dempul?..."
+    AI:   "Pasta Dempul Instan Tembok..."
+[2] User: "Ini 1 botol brpa gram"
+    AI:   "Isi per tube-nya 250 gram..."</div>
+        </div>
+      </div>
+    </div>
+    <button class="raw-toggle" onclick="toggleRaw(this)">Raw Payload JSON</button>
+    <div class="raw-payload"><pre>{
+  <span class="json-key">"systemInstruction"</span>: {
+    <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Kamu adalah admin Khafastore...\n=== PRODUK FOKUS: Pasta Dempul Instan Tembok ===\n\n=== STATUS SAAT INI ===\nStep: 1\n→ Belum ada: nama lengkap, dusun/desa, kecamatan, kota, patokan, RT/RW, nomor HP\n\n📌 STEP 1 — JAWAB PRODUK:\n- Jawab LENGKAP dari KB\n- JANGAN tanya data order\n..."</span> }]
+  },
+  <span class="json-key">"contents"</span>: [
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,  <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Halo kak ada pasta dempul? Cek hrga"</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"model"</span>, <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Pasta Dempul Instan Tembok ya Kak..."</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,  <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Ini 1 botol brpa gram"</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"model"</span>, <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Isi per tube-nya 250 gram ya Kak..."</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,  <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Iya ka"</span> }] }
+  ],
+  <span class="json-key">"generationConfig"</span>: { <span class="json-key">"temperature"</span>: <span class="json-num">0.7</span> }
+}</pre></div>
+  </div>
+
+  <!-- ═══════════ TURN 4 ═══════════ -->
+  <div class="turn-card">
+    <div class="turn-header">
+      <span class="turn-num">Turn 4 — Konfirmasi Lagi</span>
+      <span class="turn-step step-3">STEP 3</span>
+    </div>
+    <div class="turn-body">
+      <div class="col">
+        <div class="col-label">Customer</div>
+        <div class="chat-bubble customer">Iya</div>
+      </div>
+      <div class="col">
+        <div class="col-label">AI Response</div>
+        <div class="chat-bubble ai">Siap Kak! Boleh minta alamat lengkapnya — dusun, desa, kecamatan, kota?</div>
+        <div class="issue-badge issue-high">❌ Tanya alamat duluan, skip nama</div>
+      </div>
+      <div class="col">
+        <div class="col-label">Data ke Gemini</div>
+        <div class="gemini-section">
+          <div class="gemini-label">SYSTEM PROMPT (excerpt)</div>
+          <div class="gemini-code"><span class="hl-step">Step: 1</span>
+→ Belum ada: nama, dusun, kecamatan...
+
+<span class="hl-step">STEP 1 — JAWAB PRODUK</span></div>
+        </div>
+      </div>
+    </div>
+    <button class="raw-toggle" onclick="toggleRaw(this)">Raw Payload JSON</button>
+    <div class="raw-payload"><pre>{
+  <span class="json-key">"systemInstruction"</span>: {
+    <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Kamu adalah admin Khafastore...\nStep: 1\n→ Belum ada: nama, dusun, kecamatan, kota, patokan, RT/RW, HP\n\n📌 STEP 1 — JAWAB PRODUK\n..."</span> }]
+  },
+  <span class="json-key">"contents"</span>: [
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,  <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Halo kak ada pasta dempul?..."</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"model"</span>, <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Pasta Dempul Instan Tembok..."</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,  <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Ini 1 botol brpa gram"</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"model"</span>, <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Isi per tube-nya 250 gram..."</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,  <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Iya ka"</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"model"</span>, <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Siap Kak! Mau diproses..."</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,  <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Iya"</span> }] }
+  ],
+  <span class="json-key">"generationConfig"</span>: { <span class="json-key">"temperature"</span>: <span class="json-num">0.7</span> }
+}</pre></div>
+  </div>
+
+  <!-- ═══════════ TURN 5 ═══════════ -->
+  <div class="turn-card">
+    <div class="turn-header">
+      <span class="turn-num">Turn 5 — Alamat (3 items)</span>
+      <span class="turn-step step-3">STEP 3</span>
+    </div>
+    <div class="turn-body">
+      <div class="col">
+        <div class="col-label">Customer</div>
+        <div class="chat-bubble customer">Tamantirto, kasihan, bantul</div>
+      </div>
+      <div class="col">
+        <div class="col-label">AI Response</div>
+        <div class="chat-bubble ai">Siap Kak. Patokan rumahnya apa? Biar kurir gampang cari.</div>
+        <div class="issue-badge issue-medium">⚠️ extractCustomerFields() parse: desa=Tamantirto, kec=Kasihan, kota=Bantul</div>
+      </div>
+      <div class="col">
+        <div class="col-label">Data ke Gemini</div>
+        <div class="gemini-section">
+          <div class="gemini-label">SYSTEM PROMPT (excerpt)</div>
+          <div class="gemini-code"><span class="hl-section">=== STATUS SAAT INI ===</span>
+<span class="hl-step">Step: 3</span>
+Desa: Tamantirto
+Kecamatan: Kasihan
+Kota: Bantul
+→ Belum ada: nama, patokan, RT/RW, HP
+
+<span class="hl-step">STEP 3 — KUMPULKAN DATA:</span>
+- Tanya SATU PER SATU
+- VERIFIKASI NAMA: 1 kata = tanya verifikasi
+- CEK FLAG: jangan tanya field sudah ada</div>
+        </div>
+        <div class="gemini-section">
+          <div class="gemini-label">extractCustomerFields()</div>
+          <div class="gemini-code"><span class="hl-ok">→ dusun: "Tamantirto"</span>
+<span class="hl-ok">→ desa: "Kasihan"</span>
+<span class="hl-ok">→ kecamatan: "Bantul"</span></div>
+        </div>
+      </div>
+    </div>
+    <button class="raw-toggle" onclick="toggleRaw(this)">Raw Payload JSON</button>
+    <div class="raw-payload"><pre>{
+  <span class="json-key">"systemInstruction"</span>: {
+    <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Kamu adalah admin Khafastore...\n=== PRODUK FOKUS: Pasta Dempul Instan Tembok ===\n\n=== STATUS SAAT INI ===\nStep: 3\nDesa: Tamantirto\nKecamatan: Kasihan\nKota: Bantul\n→ Belum ada: nama lengkap, patokan, RT/RW, nomor HP\nTanyakan field yang masih kurang, satu per satu.\n\n📌 STEP 3 — KUMPULKAN DATA:\n- Tanya SATU PER SATU\n- VERIFIKASI NAMA: 1 kata = tanya verifikasi\n- CEK FLAG: jangan tanya field sudah ada\n..."</span> }]
+  },
+  <span class="json-key">"contents"</span>: [
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,  <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Halo kak ada pasta dempul?..."</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"model"</span>, <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Pasta Dempul Instan Tembok..."</span> }] },
+    <span class="json-null">... (turns 2-4) ...</span>
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,  <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Iya"</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"model"</span>, <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Siap Kak! Mau diproses..."</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,  <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Tamantirto, kasihan, bantul"</span> }] }
+  ],
+  <span class="json-key">"generationConfig"</span>: { <span class="json-key">"temperature"</span>: <span class="json-num">0.7</span> }
+}</pre></div>
+  </div>
+
+  <!-- ═══════════ TURN 7 — NAMA ═══════════ -->
+  <div class="turn-card">
+    <div class="turn-header">
+      <span class="turn-num">Turn 7 — Nama (1 kata)</span>
+      <span class="turn-step step-3">STEP 3</span>
+    </div>
+    <div class="turn-body">
+      <div class="col">
+        <div class="col-label">Customer</div>
+        <div class="chat-bubble customer">Khasin</div>
+      </div>
+      <div class="col">
+        <div class="col-label">AI Response</div>
+        <div class="chat-bubble ai">Ini sudah nama lengkap Kak? Mohon nama lengkap ya.</div>
+        <div class="issue-badge issue-ok">✅ Verifikasi nama: 1 kata</div>
+      </div>
+      <div class="col">
+        <div class="col-label">Data ke Gemini</div>
+        <div class="gemini-section">
+          <div class="gemini-label">SYSTEM PROMPT (excerpt)</div>
+          <div class="gemini-code"><span class="hl-section">=== STATUS SAAT INI ===</span>
+<span class="hl-step">Step: 3</span>
+→ Belum ada: nama, patokan, RT/RW, HP
+
+<span class="hl-step">STEP 3 — KUMPULKAN DATA:</span>
+<span class="hl-warn">- VERIFIKASI NAMA: Kalau 1 kata saja</span>
+<span class="hl-warn">  WAJIB tanya: "Ini sudah nama lengkap?"</span>
+<span class="hl-warn">  JANGAN langsung catat.</span></div>
+        </div>
+        <div class="gemini-section">
+          <div class="gemini-label">extractCustomerFields()</div>
+          <div class="gemini-code"><span class="hl-ok">→ namaLengkap: "Khasin"</span>
+<span class="hl-warn">→ namaVerified: false (1 kata)</span></div>
+        </div>
+      </div>
+    </div>
+    <button class="raw-toggle" onclick="toggleRaw(this)">Raw Payload JSON</button>
+    <div class="raw-payload"><pre>{
+  <span class="json-key">"systemInstruction"</span>: {
+    <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Kamu adalah admin Khafastore...\n=== STATUS SAAT INI ===\nStep: 3\n→ Belum ada: nama lengkap, patokan, RT/RW, nomor HP\nTanyakan field yang masih kurang.\n\n📌 STEP 3 — KUMPULKAN DATA:\n- VERIFIKASI NAMA: Kalau 1 kata saja, WAJIB tanya: \"Ini sudah nama lengkap?\"\n  JANGAN langsung catat.\n- CEK FLAG: jangan tanya field yang sudah ada\n..."</span> }]
+  },
+  <span class="json-key">"contents"</span>: [
+    <span class="json-null">... (turns 1-6) ...</span>
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,  <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Perum dalem tamantirto C3"</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"model"</span>, <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Siap. RT/RW nya berapa Kak?"</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,  <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Khasin"</span> }] }
+  ],
+  <span class="json-key">"generationConfig"</span>: { <span class="json-key">"temperature"</span>: <span class="json-num">0.7</span> }
+}</pre></div>
+  </div>
+
+  <!-- ═══════════ TURN 10 — KONFIRMASI ═══════════ -->
+  <div class="turn-card">
+    <div class="turn-header">
+      <span class="turn-num">Turn 10 — Konfirmasi Rekap</span>
+      <span class="turn-step step-4">STEP 4</span>
+    </div>
+    <div class="turn-body">
+      <div class="col">
+        <div class="col-label">Customer</div>
+        <div class="chat-bubble customer">Iya</div>
+      </div>
+      <div class="col">
+        <div class="col-label">AI Response</div>
+        <div class="chat-bubble ai">Baik Kak, pesanan sudah kami proses! Terima kasih.</div>
+        <div class="issue-badge issue-ok">✅ [ORDER_DATA] tag dikirim</div>
+      </div>
+      <div class="col">
+        <div class="col-label">Data ke Gemini</div>
+        <div class="gemini-section">
+          <div class="gemini-label">SYSTEM PROMPT (excerpt)</div>
+          <div class="gemini-code"><span class="hl-section">=== STATUS SAAT INI ===</span>
+<span class="hl-step">Step: 4</span>
+Produk: Pasta Dempul Instan Tembok
+Nama: Khasin Khafabi (verified: <span class="hl-ok">true</span>)
+Desa: Kasihan
+HP: SAMA_DENGAN_WA
+
+<span class="hl-step">STEP 4 — KONFIRMASI:</span>
+- SEMUA data sudah lengkap
+- Setelah "ya" → sisipkan [ORDER_DATA]</div>
+        </div>
+        <div class="gemini-section">
+          <div class="gemini-label">AI OUTPUT</div>
+          <div class="gemini-code"><span class="hl-ok">[ORDER_DATA]{
+  "nama": "Khasin Khafabi",
+  "produk": "Pasta Dempul Instan Tembok",
+  "hp": "SAMA_DENGAN_WA",
+  "alamat": "Perum Dalem Tamantirto C3,
+             Tamantirto, Kasihan, Bantul",
+  "pembayaran": "COD"
+}[/ORDER_DATA]</span></div>
+        </div>
+      </div>
+    </div>
+    <button class="raw-toggle" onclick="toggleRaw(this)">Raw Payload JSON</button>
+    <div class="raw-payload"><pre>{
+  <span class="json-key">"systemInstruction"</span>: {
+    <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Kamu adalah admin Khafastore...\n=== STATUS SAAT INI ===\nStep: 4\nProduk: Pasta Dempul Instan Tembok\nNama: Khasin Khafabi (verified: true)\nDesa: Kasihan\nHP: SAMA_DENGAN_WA\n\n📌 STEP 4 — KONFIRMASI:\n- SEMUA data sudah lengkap\n- Rekap: produk, harga, nama, alamat, HP\n- Setelah \"ya\" → sisipkan [ORDER_DATA]\n..."</span> }]
+  },
+  <span class="json-key">"contents"</span>: [
+    <span class="json-null">... (turns 1-9) ...</span>
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,  <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Boleh"</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"model"</span>, <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Baik Kak, saya rekap ya:..."</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,  <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Iya"</span> }] }
+  ],
+  <span class="json-key">"generationConfig"</span>: { <span class="json-key">"temperature"</span>: <span class="json-num">0.7</span> }
+}</pre></div>
+  </div>
+
+  <!-- ═══════════ TURN 12 — ESKALASI ═══════════ -->
+  <div class="turn-card">
+    <div class="turn-header">
+      <span class="turn-num">Turn 12 — Estimasi Kirim</span>
+      <span class="turn-step step-5">STEP 5</span>
+    </div>
+    <div class="turn-body">
+      <div class="col">
+        <div class="col-label">Customer</div>
+        <div class="chat-bubble customer">Ini dikirim kapn</div>
+      </div>
+      <div class="col">
+        <div class="col-label">AI Response</div>
+        <div class="chat-bubble ai">Sebentar ya Kak, saya tanyakan ke admin dulu.</div>
+        <div class="issue-badge issue-ok">✅ Eskalasi ke Telegram</div>
+      </div>
+      <div class="col">
+        <div class="col-label">Data ke Gemini</div>
+        <div class="gemini-section">
+          <div class="gemini-label">SYSTEM PROMPT (excerpt)</div>
+          <div class="gemini-code"><span class="hl-section">=== STATUS SAAT INI ===</span>
+<span class="hl-step">Step: 5</span> <span class="hl-warn">(isEscalationNeeded=true)</span>
+
+<span class="hl-step">STEP 5 — ESKALASI KE ADMIN:</span>
+- Pertanyaan TIDAK bisa dijawab dari KB
+- JANGAN jawab sendiri
+- Balas: "Sebentar ya Kak, saya tanyakan ke admin dulu."
+- Tampilkan [STEP=5]</div>
+        </div>
+        <div class="gemini-section">
+          <div class="gemini-label">isEscalationNeeded()</div>
+          <div class="gemini-code">keyword "kirim" <span class="hl-ok">MATCH</span>
+→ step = 5</div>
+        </div>
+      </div>
+    </div>
+    <button class="raw-toggle" onclick="toggleRaw(this)">Raw Payload JSON</button>
+    <div class="raw-payload"><pre>{
+  <span class="json-key">"systemInstruction"</span>: {
+    <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Kamu adalah admin Khafastore...\n=== STATUS SAAT INI ===\nStep: 5\nProduk: Pasta Dempul Instan Tembok\n\n📌 STEP 5 — ESKALASI KE ADMIN:\n- Pertanyaan TIDAK bisa dijawab dari KB\n- JANGAN jawab sendiri, JANGAN mengarang\n- Balas: \"Sebentar ya Kak, saya tanyakan ke admin dulu.\"\n- Tampilkan [STEP=5] di baris terakhir\n..."</span> }]
+  },
+  <span class="json-key">"contents"</span>: [
+    <span class="json-null">... (turns 1-11) ...</span>
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,  <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Cukup"</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"model"</span>, <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Baik Kak, ada lagi yang bisa saya bantu?"</span> }] },
+    { <span class="json-key">"role"</span>: <span class="json-str">"user"</span>,  <span class="json-key">"parts"</span>: [{ <span class="json-key">"text"</span>: <span class="json-str">"Ini dikirim kapn"</span> }] }
+  ],
+  <span class="json-key">"generationConfig"</span>: { <span class="json-key">"temperature"</span>: <span class="json-num">0.7</span> }
+}</pre></div>
+  </div>
+
+  <p style="text-align:center; color:var(--muted); font-size:0.75rem; margin-top:32px;">
+    Generated by Claude Code — 2 September 2026 | Data bersifat rekonstruksi — test ulang diperlukan
+  </p>
+
+  <script>
+    function toggleRaw(btn) {
+      const payload = btn.nextElementSibling;
+      const isOpen = payload.classList.toggle('show');
+      btn.classList.toggle('open', isOpen);
+    }
+  </script>
+</body>
+</html>
