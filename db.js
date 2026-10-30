@@ -270,6 +270,48 @@ function dbRowToMsg(row) {
   };
 }
 
+// ── AI History ───────────────────────────────────────────────────
+
+/**
+ * Ambil history chat untuk konteks AI — hanya pesan yang sudah dibalas AI.
+ * Diurutkan oldest-first agar AI bisa baca percakapan secara berurutan.
+ * @param {string} waId  - nomor WA customer (format: 628xxx@s.whatsapp.net atau 628xxx@c.us)
+ * @param {number} limit - max jumlah pesan (default 30)
+ * @param {*} excludeId  - id pesan yang sedang diproses (agar tidak masuk history)
+ */
+async function getHistoryForAI(waId, limit = 30, excludeId = null) {
+  if (!DB_ENABLED) return null; // null = fallback ke JSON
+  try {
+    const res = await pool.query(`
+      SELECT id, wa_id, body, ai_reply, ai_reply_draft, draft_status,
+             cancelled_entry, replied, timestamp
+      FROM messages
+      WHERE wa_id = $1
+        AND direction = 'inbound'
+        AND cancelled_entry = false
+        AND ai_reply IS NOT NULL
+        AND ($2::bigint IS NULL OR id != $2)
+      ORDER BY timestamp ASC
+      LIMIT $3
+    `, [waId, excludeId || null, limit]);
+
+    return res.rows.map(row => ({
+      id:            row.id,
+      from:          row.wa_id,
+      body:          row.body,
+      aiReply:       row.ai_reply,
+      aiReplyDraft:  row.ai_reply_draft,
+      draftStatus:   row.draft_status,
+      cancelledEntry: row.cancelled_entry,
+      replied:       row.replied,
+      timestamp:     row.timestamp,
+    }));
+  } catch (e) {
+    console.error('[DB] getHistoryForAI error:', e.message);
+    return null; // fallback ke JSON
+  }
+}
+
 // ── Contacts ─────────────────────────────────────────────────────
 
 async function upsertContact(waId, name) {
@@ -433,6 +475,7 @@ async function loadActiveClaims() {
 module.exports = {
   pool, initDB,
   saveMessage, updateMessage, getMessages, getMessageById, getUnrepliedMessages,
+  getHistoryForAI,
   upsertContact,
   saveOrder, getOrders, updateOrder, getOrderById, deleteOrder,
   loadSettings, saveSettings,

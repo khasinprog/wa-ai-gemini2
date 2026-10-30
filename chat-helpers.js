@@ -5,19 +5,43 @@
 'use strict';
 
 const store = require('./state-store');
+const db    = require('./db');
 const { parseProductBlocks } = require('./knowledge-base');
 
 const REPLY_LENGTH_THRESHOLD = 80;
 
-function buildHistory(from, currentEntryId, maxEntries = 20) {
+/**
+ * buildHistory — ambil history chat per nomor WA untuk konteks AI.
+ * Prioritas: PostgreSQL (lengkap, persistent) → fallback JSON (in-memory).
+ * @param {string} from         - nomor WA customer
+ * @param {*}      currentEntryId - id pesan yang sedang diproses (dikecualikan)
+ * @param {number} maxEntries   - max pesan yang dikirim ke AI (default 30)
+ */
+async function buildHistory(from, currentEntryId, maxEntries = 30) {
+  // ── Coba ambil dari PostgreSQL dulu ──
+  const dbHistory = await db.getHistoryForAI(from, maxEntries, currentEntryId);
+
+  if (dbHistory !== null) {
+    // DB aktif dan query berhasil
+    if (dbHistory.length > maxEntries) {
+      const recent = dbHistory.slice(-maxEntries);
+      const old    = dbHistory.slice(0, -maxEntries);
+      const summary = buildConversationSummary(old);
+      return [{ _summary: true, summary }, ...recent];
+    }
+    return dbHistory;
+  }
+
+  // ── Fallback: baca dari in-memory JSON ──
+  console.warn('[History] DB tidak aktif atau error — fallback ke JSON');
   const relevantMessages = store.messages
     .filter(m => m.from === from && m.id !== currentEntryId && !m.cancelledEntry && m.aiReply)
     .sort((a, b) => a.id - b.id);
 
   if (relevantMessages.length <= maxEntries) return relevantMessages;
 
-  const recent = relevantMessages.slice(-maxEntries);
-  const old = relevantMessages.slice(0, -maxEntries);
+  const recent  = relevantMessages.slice(-maxEntries);
+  const old     = relevantMessages.slice(0, -maxEntries);
   const summary = buildConversationSummary(old);
   return [{ _summary: true, summary }, ...recent];
 }
@@ -64,3 +88,4 @@ function getReplyDelayMs(text) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 module.exports = { buildHistory, buildConversationSummary, getReplyDelayMs, sleep, REPLY_LENGTH_THRESHOLD };
+

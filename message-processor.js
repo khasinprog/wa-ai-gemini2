@@ -11,12 +11,10 @@ const config = require('./config');
 const store  = require('./state-store');
 const db     = require('./db');
 const { buildHistory, buildConversationSummary, getReplyDelayMs } = require('./chat-helpers');
-const { classifyIntent } = require('./gemini-thinker');
 const { getRelevantKnowledge } = require('./knowledge-base');
 const { updateOrderState, createOrderState } = require('./order-state');
-const { postprocessV2Reply } = require('./v2-postprocess');
 const { aiReply, buildSystemPrompt } = require('./gemini-service');
-const { cleanFieldQuestions, validateFieldOrder, extractOrder, extractEscalations, buildOrderSummary } = require('./message-postprocess');
+const { cleanFieldQuestions, extractOrder, extractEscalations, buildOrderSummary } = require('./message-postprocess');
 const { markAsReadWithTyping, sendWhatsAppText, sendWhatsAppImageByPath, downloadAndSaveCustomerMedia, downloadAndSaveCustomerAudio } = require('./whatsapp-api');
 const scheduler = require('./followup-scheduler');
 
@@ -79,7 +77,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
 
 
 
-      const history = buildHistory(from, entry.id);
+      const history = await buildHistory(from, entry.id, 30);
 
       // Audio path
       let audioPathForAI = null;
@@ -98,69 +96,17 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
         }
       }
 
-      // ── THINKER: Classify intent (hybrid mode) ──
-      let thinkerResult = null;
-      try {
-        thinkerResult = await classifyIntent(combinedBody, {
-          from,
-          orderState: store.orderStates.get(from),
-          history: history.slice(-3),
-        });
-        if (thinkerResult) {
-          console.log(`🧠 [Thinker] intent=${thinkerResult.intent}, product=${thinkerResult.product || '-'}, confidence=${thinkerResult.confidence}`);
-        } else {
-          console.warn('[Thinker] null result, fallback ke regex');
-        }
-      } catch(thinkerErr) {
-        console.warn('[Thinker] Gagal classify, fallback ke regex:', thinkerErr.message);
-      }
-
-      // Update order state — always use Thinker if available, else fallback regex
-      let orderState;
-      if (thinkerResult) {
-        orderState = updateOrderStateFromThinker(from, combinedBody, thinkerResult);
-      } else {
-        orderState = updateOrderState(from, combinedBody);
-      }
+      // Update order state dari regex (untuk product tracking dasar)
+      const orderState = updateOrderState(from, combinedBody);
       if (orderState) {
-        console.log(`📋 [OrderState] ${senderName}: step=${orderState.step}, product=${orderState.product}, color=${orderState.color || '-'}, nama=${orderState.namaLengkap || '-'} desa=${orderState.desa || '-'}`);
+        console.log(`📋 [OrderState] ${senderName}: step=${orderState.step}, product=${orderState.product || '-'}`);
       }
 
-      let reply = await aiReply(combinedBody, senderName, history, controller.signal, from, imagePath, audioPathForAI, thinkerResult);
+      // ── AI REPLY: kirim full history + system prompt, biarkan AI baca sendiri ──
+      let reply = await aiReply(combinedBody, senderName, history, controller.signal, from, imagePath, audioPathForAI);
 
-      // ── V2 Response Style Postprocess ─────────────────────────────
-      let usedV2 = false;
-      if (reply && thinkerResult && store.settings.v2ResponseStyle) {
-        const currentState = store.orderStates.get(from);
-        const v2Result = postprocessV2Reply(reply, thinkerResult, currentState, store.settings, from);
-        if (v2Result.usedV2) {
-          reply = v2Result.reply;
-          usedV2 = true;
-          console.log(`[V2] Template applied: intent=${thinkerResult.intent} → "${reply.slice(0, 80)}..."`);
-        }
-      }
-
-      // CEK_ONGKIR tag
-      let ongkirFormatted = null;
-      if (reply) {
-        const ongkirMatch = reply.match(/\[CEK_ONGKIR:([^\]]+)\]/i);
-        if (ongkirMatch) {
-          reply = reply.replace(/\[CEK_ONGKIR:[^\]]+\]/gi, '').trim();
-          try {
-            const ongkirHelper = require('./ongkir-helper');
-            const ongkirResult = await ongkirHelper.processCekOngkirTag(ongkirMatch[1].trim(), 100000);
-            if (ongkirResult?.formatted) ongkirFormatted = ongkirResult.formatted;
-          } catch (ongkirErr) { console.warn('[P2-C] Error cek ongkir:', ongkirErr.message); }
-        }
-      }
-
-      // Validate field order (skip if V2 template applied — template is authoritative)
-      if (reply && !usedV2) {
-        const currentState = store.orderStates.get(from);
-        if (currentState && currentState.step >= 3) {
-          reply = validateFieldOrder(reply, currentState);
-        }
-      }
+      // Track apakah reply original berisi [ORDER_DATA] (untuk draft logic)
+      const _replyHadOrderData = !!(reply && reply.includes('[ORDER_DATA]'));
 
       if (reply) {
         // B1: Hold check
@@ -194,7 +140,6 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
         }
 
         let cleanReply = reply;
-        if (ongkirFormatted) cleanReply = cleanReply + '\n\n' + ongkirFormatted;
 
         // BUKTI_TRANSFER
         if (cleanReply.includes('[BUKTI_TRANSFER]')) {
@@ -321,16 +266,9 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
         }
 
         // DRAFT MODE
-        const _currentStep = store.orderStates.get(from)?.step || 1;
+        // Trigger draft jika: ada tag manual [DRAFT_*], atau reply berisi [ORDER_DATA] (konfirmasi order — admin review dulu)
         const _hasDraftTag = cleanReply.includes('[DRAFT_ONGKIR]') || cleanReply.includes('[DRAFT_REKAP]');
-        // Draft untuk pertanyaan di luar KB — berlaku di SEMUA mode (v2 ON maupun OFF)
-        // 'Lain' = pertanyaan tidak ada di KB (v2 mode)
-        // 'escalation' = pertanyaan tidak bisa dijawab dari KB (non-v2 mode)
-        const _isOutsideKBIntent = thinkerResult?.intent === 'Lain' || thinkerResult?.intent === 'escalation';
-        // customer_konfirmasi_order: konfirmasi final pesanan — WAJIB draft agar admin bisa review sebelum kirim
-        const _isFinalConfirmIntent = thinkerResult?.intent === 'customer_konfirmasi_order';
-        // Non-V2 mode: draft via tag, escalation, atau step >= 4
-        const _shouldDraft = _hasDraftTag || _isOutsideKBIntent || _isFinalConfirmIntent || (!store.settings.v2ResponseStyle && _currentStep >= 4);
+        const _shouldDraft = _hasDraftTag || _replyHadOrderData;
         if (_shouldDraft) {
           cleanReply = cleanReply.replace(/\[DRAFT_REKAP\]/gi, '').replace(/\[DRAFT_ONGKIR\]/gi, '').trim();
           entry.aiReplyDraft = cleanReply;
@@ -345,9 +283,9 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
           // Kirim notifikasi Telegram ke admin
           const tgDraft = require('./telegram-service');
           if (tgDraft.isConfigured()) {
-            const draftType = _isOutsideKBIntent ? 'outside_kb'
-              : _hasDraftTag && cleanReply.includes('rekap') ? 'rekap'
+            const draftType = _hasDraftTag && cleanReply.toLowerCase().includes('rekap') ? 'rekap'
               : _hasDraftTag ? 'ongkir'
+              : _replyHadOrderData ? 'order_confirm'
               : 'other';
             tgDraft.sendDraftNotification({
               customerPhone:   from,
@@ -435,77 +373,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
   store.userLocks.set(from, nextTask);
 }
 
-// Update order state from Thinker output (hybrid mode)
-function updateOrderStateFromThinker(from, message, thinkerResult) {
-  const { intent, extractedData, product } = thinkerResult;
-  let state = store.orderStates.get(from);
-
-  // Product focus
-  if (product && (!state || state.product !== product)) {
-    state = createOrderState(product);
-    store.orderStates.set(from, state);
-  }
-  if (!state) return null;
-
-  // Apply extracted data from Thinker
-  if (extractedData) {
-    if (extractedData.color && !state.color) state.color = extractedData.color;
-    if (extractedData.phone && !state.noHp) state.noHp = extractedData.phone;
-    if (extractedData.nama && !state.namaLengkap) { state.namaLengkap = extractedData.nama; state.namaVerified = true; }
-    if (extractedData.jalan && !state.jalan) state.jalan = extractedData.jalan;
-    if (extractedData.desa && !state.desa) state.desa = extractedData.desa;
-    if (extractedData.kecamatan && !state.kecamatan) state.kecamatan = extractedData.kecamatan;
-    if (extractedData.kota && !state.kota) state.kota = extractedData.kota;
-    if (extractedData.rtRw && !state.rtRw) state.rtRw = extractedData.rtRw;
-    if (extractedData.patokan && !state.patokan) state.patokan = extractedData.patokan;
-    // Simpan metode pembayaran ke orderState (penting untuk konteks Thinker)
-    const pm = extractedData.payment_method || extractedData.pembayaran;
-    if (pm && !state.paymentMethod) state.paymentMethod = pm;
-  }
-
-  // Tandai state khusus berdasarkan intent
-  if (thinkerResult.intent === 'Terkait_pilihan_pembayaran_COD') {
-    // Customer baru pilih COD — tandai sedang menunggu konfirmasi aturan COD
-    state.awaitingCODConfirmation = true;
-    state.paymentMethod = 'COD';
-    console.log(`[OrderState] awaitingCODConfirmation = true`);
-  } else if (thinkerResult.intent === 'Terkait_setuju_COD') {
-    // Customer sudah setuju aturan COD — clear flag, lanjut ke rekap
-    state.awaitingCODConfirmation = false;
-    state.codConfirmed = true;
-    state.paymentMethod = 'COD';
-    console.log(`[OrderState] COD confirmed, awaitingCODConfirmation = false`);
-  } else if (thinkerResult.intent === 'Terkait_pilihan_pembayaran_Transfer') {
-    // Customer pilih Transfer — tandai sedang menunggu customer balas setelah terima info rekening
-    state.awaitingTransferConfirmation = true;
-    state.paymentMethod = 'Transfer';
-    console.log(`[OrderState] awaitingTransferConfirmation = true`);
-  } else if (thinkerResult.intent === 'Terkait_konfirmasi_Transfer') {
-    // Customer sudah balas setelah terima info rekening — clear flag, lanjut ke rekap
-    state.awaitingTransferConfirmation = false;
-    state.paymentMethod = 'Transfer';
-    console.log(`[OrderState] Transfer balas diterima, awaitingTransferConfirmation = false`);
-  }
-
-  // Step transition from Thinker recommendation
-  // Escalation intent — force step 5 (di luar KB, butuh admin)
-  // Dihandle dari step manapun (bukan hanya 3/4)
-  if (thinkerResult.intent === 'escalation') {
-    if (state.step !== 5) {
-      console.log(`📊 [Step] ${from.slice(-4)}: ${state.step}→5 (Thinker: escalation intent)`);
-      state.step = 5;
-    }
-  } else if (thinkerResult.nextStep && [1,2,3,4,5].includes(thinkerResult.nextStep)) {
-    if (thinkerResult.nextStep !== state.step) {
-      console.log(`📊 [Step] ${from.slice(-4)}: ${state.step}→${thinkerResult.nextStep} (Thinker recommendation)`);
-      state.step = thinkerResult.nextStep;
-    }
-  }
-
-  state.lastUpdate = Date.now();
-  store.orderStates.set(from, state);
-  return state;
-}
+// (updateOrderStateFromThinker telah dihapus — diganti pure conversational mode)
 
 // ── Process buffered messages ──
 async function processBufferedMessages(from) {
@@ -586,15 +454,10 @@ async function retryFailedMessages() {
       if (entry.replied) return;
       if (!isOpHour() || !isWhitelisted(entry.from)) return;
 
-      const history = buildHistory(entry.from, entry.id);
+      const history = await buildHistory(entry.from, entry.id);
       entry.retryCount = (entry.retryCount || 0) + 1;
 
       let reply = await aiReply(entry.body, entry.senderName, history, null, entry.from);
-
-      if (reply) {
-        const retryState = store.orderStates.get(entry.from);
-        if (retryState && retryState.step >= 3) reply = validateFieldOrder(reply, retryState);
-      }
 
       if (reply) {
         reply = extractOrder(reply, entry.from);
@@ -617,12 +480,9 @@ async function retryFailedMessages() {
         const productsToImage = [];
         for (const match of imgMatches) { productsToImage.push(match[1].trim()); cleanReply = cleanReply.replace(match[0], '').trim(); }
 
-        const _retryStep = store.orderStates.get(entry.from)?.step || 1;
         const _hasRetryDraftTag = cleanReply.includes('[DRAFT_ONGKIR]') || cleanReply.includes('[DRAFT_REKAP]');
-        // Retry path tidak memanggil Thinker — intent selalu null, draft hanya via tag atau step >= 4
-        const _isRetryOutsideKBIntent = false;
-        const _isRetryFinalConfirmIntent = false;
-        if (_retryStep >= 4 || _hasRetryDraftTag || _isRetryOutsideKBIntent || _isRetryFinalConfirmIntent) {
+        const _retryHadOrderData = !!(reply && reply.includes('[ORDER_DATA]'));
+        if (_hasRetryDraftTag || _retryHadOrderData) {
           cleanReply = cleanReply.replace(/\[DRAFT_REKAP\]/gi, '').replace(/\[DRAFT_ONGKIR\]/gi, '').trim();
           entry.aiReplyDraft = cleanReply;
           entry.draftStatus = 'pending';
@@ -632,13 +492,11 @@ async function retryFailedMessages() {
           store.persistMessageToDB(entry);
           store.io?.emit('message_updated', entry);
 
-          // Kirim notifikasi Telegram ke admin (retry path)
           const tgRetry = require('./telegram-service');
           if (tgRetry.isConfigured()) {
-            const draftType = _isRetryOutsideKBIntent ? 'outside_kb'
-              : _hasRetryDraftTag && cleanReply.includes('rekap') ? 'rekap'
+            const draftType = _hasRetryDraftTag && cleanReply.toLowerCase().includes('rekap') ? 'rekap'
               : _hasRetryDraftTag ? 'ongkir'
-              : 'other';
+              : 'order_confirm';
             tgRetry.sendDraftNotification({
               customerPhone:   entry.from,
               customerName:    entry.senderName || entry.from,
