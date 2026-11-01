@@ -11,9 +11,6 @@ const path   = require('path');
 const fs     = require('fs');
 
 const { getRelevantKnowledge } = require('./knowledge-base');
-const { cleanFieldQuestions } = require('./message-postprocess');
-const { getMissingFields } = require('./order-state');
-const { V2_CHATTER_HINTS } = require('./v2-postprocess');
 
 // ── File paths ─────────────────────────────────────────────────────
 const RAW_CAP_FILE = store.PATHS.RAW_CAP_FILE;
@@ -29,73 +26,12 @@ let lastUsedKeyIndex = 0;
 // PROMPT RULES (step rules + draft rules)
 // ═══════════════════════════════════════════════════════════════════
 
-const STEP1_RULES = `
-STEP 1 — JAWAB PRODUK (MAKSIMAL 3 KALIMAT):
-- Customer bertanya tentang produk (nama, harga, manfaat, varian, stok)
-- MAKSIMAL 3 kalimat. Susun: (1) harga + ongkir, (2) sebutkan SEMUA varian/warna yang tersedia dari KB, (3) CTA tanya pilihan
-- Jika produk punya varian/warna: WAJIB sebut semua pilihan supaya customer bisa pilih. Contoh: "Pilih yang mana, Kak?"
-- Contoh: "Harganya Rp95.000 sudah termasuk ongkir Kak. Pilihan warna: Navy, Red, Pink Muda, Biru Muda. Mau pilih yang mana?"
-- JANGAN tanya data order di step ini
-- JANGAN lebih dari 3 kalimat
-`;
-
-const STEP2_RULES = `
-STEP 2 — FOLLOW-UP:
-- Customer bertanya DETAIL tentang produk yang SUDAH dibahas di Step 1
-- Jawab SINGKAT langsung ke inti, JANGAN ulang penjelasan dari Step 1
-- Contoh: "ukurannya berapa?" → "250 gram per unit Kak"
-- JANGAN sebut manfaat lagi jika sudah dijelaskan di Step 1
-- JANGAN sebut harga lagi jika sudah disebut di Step 1
-`;
-
-const STEP3_RULES = `
-STEP 3 — KUMPULKAN DATA (INFORMATIONAL — Thinker yang tentukan perilaku)
-- Tahap ini untuk mengumpulkan data pengiriman dari customer.
-- Field yang diperlukan: nama lengkap, jalan/nomor rumah, RT/RW, desa, kecamatan, kota, patokan, nomor HP.
-- Ikuti instruksi dari THINKER CONTEXT untuk cara menangani setiap pesan customer.
-- JANGAN tanya ulang field yang sudah tercatat di STATUS SAAT INI.
-- Kalau customer tidak kasih nomor HP: "Boleh pakai nomor WhatsApp ini juga Kak?"
-- Kalau patokan berupa masjid: WAJIB minta NAMA masjidnya
-`;
-
-const STEP4_RULES = `
-STEP 4 — KONFIRMASI & FORMAT REKAP (FORMAT GUIDE — Thinker yang tentukan kapan)
-- Tahap ini aktif ketika SEMUA data sudah lengkap dan customer konfirmasi.
-- Format rekap yang disarankan (bukan wajib — ikuti instruksi THINKER CONTEXT):
-  • Produk: [nama produk]
-  • Varian: [warna/kategori]
-  • Harga: Rp [harga]
-  • Nama: [nama lengkap penerima]
-  • Alamat: [alamat ringkas, satu baris]
-  • Nomor HP: [tulis nomor HP persis seperti di STATUS SAAT INI, contoh: 6281234567890]
-  • Pembayaran: [COD atau Transfer]
-
-- Jika noHp = "SAMA_DENGAN_WA", gunakan nomor WhatsApp customer yang terlihat di STATUS SAAT INI.
-- Tutup dengan: "Apakah data di atas sudah benar semua Kak?"
-- JANGAN tanya data tambahan di step ini.
-`;
-
-const DRAFT_RULES = `
-=== ATURAN DRAFT (KAPAN JAWABAN TIDAK LANGSUNG DIKIRIM) ===
-Kamu WAJIB menulis jawaban tapi TIDAK LANGSUNG mengirim ke customer (draft) dalam situasi berikut:
-
-1. REKAP PESANAN (Step 4): Gunakan tag [DRAFT_REKAP] di akhir balasan. Admin akan review dan edit jika perlu.
-2. PERTANYAAN YANG TIDAK ADA DI KB: Gunakan tag [ESCALATE:NamaProduk]pertanyaan[/ESCALATE] (bukan draft). Sudah di-handle oleh THINKER CONTEXT.
-3. JANGAN gunakan draft untuk pertanyaan ongkir — harga SUDAH TERMASUK ongkir, jawab langsung dari KB.
-4. JANGAN gunakan draft untuk pertanyaan tentang produk — semua info ada di KB.
-
-CARA MENULIS DRAFT:
-- Tulis jawaban lengkap dengan data yang ada
-- Di akhir jawaban, tambahkan tag [DRAFT_REKAP] untuk rekap pesanan
-- Pertanyaan di luar KB → gunakan [ESCALATE:NamaProduk]pertanyaan[/ESCALATE], bukan draft
-`;
-
-const STEP5_RULES = `
-STEP 5 — ESKALASI (INFORMATIONAL — Thinker yang tentukan perilaku)
-- Tahap ini aktif ketika pertanyaan customer TIDAK BISA dijawab dari Knowledge Base.
-- Ikuti instruksi dari THINKER CONTEXT — jangan mengarang atau menebak jawaban.
-- JANGAN tanya data tambahan di step ini.
-`;
+// ── Payment config (used in system prompt) ─────────────────────────
+const PAYMENT = {
+  bankName:      process.env.PAYMENT_BANK_NAME      || '',
+  accountNumber: process.env.PAYMENT_ACCOUNT_NUMBER || '',
+  accountName:   process.env.PAYMENT_ACCOUNT_NAME   || '',
+};
 
 // ═══════════════════════════════════════════════════════════════════
 // 1. getApiKeys
@@ -344,274 +280,102 @@ function logGeminiRequest(direction, data) {
 // ═══════════════════════════════════════════════════════════════════
 // BUILD SYSTEM PROMPT (inline for now)
 // ═══════════════════════════════════════════════════════════════════
-function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesForFrom, thinkerData) {
+function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesForFrom) {
   const settings = store.settings;
   const orderStates = store.orderStates;
 
-  const greetingRule = '- Sapaan ke pelanggan: panggil "Kak" saja tanpa menyebut nama sama sekali (jangan pakai nama dari WhatsApp, baik di pesan pertama maupun balasan berikutnya)';
-
   const parts = [
-    `Kamu adalah ${settings.persona}`,
-    greetingRule,
-    `Bahasa: ${settings.language}`,
-    `Tone: ${settings.tone}`,
+    `Kamu adalah ${settings.persona || 'admin customer service toko online'}.`,
+    `Balas pesan WhatsApp customer dengan bahasa percakapan yang hangat dan natural — seperti admin toko sungguhan, bukan robot.`,
+    `Panggil customer "Kak". Perkenalkan diri sebagai "kami" atau "admin toko", JANGAN sebut nama persona dan JANGAN akui kamu AI kecuali ditanya langsung.`,
+    `Bahasa: ${settings.language || 'Indonesia sehari-hari'} | Tone: ${settings.tone || 'ramah dan santai'}`,
     '',
   ];
 
-  // Product focus — declare early so it can be referenced in the KB-missing branch
-  const orderState = from ? orderStates.get(from) : null;
-  const focus = orderState?.product || null;
-
+  // Knowledge Base
   if (relevantKB?.trim()) {
-    parts.push('=== INFORMASI PRODUK & BISNIS ===');
+    parts.push('=== INFO PRODUK & TOKO ===');
     parts.push(relevantKB.trim());
     parts.push('');
-  } else if (isFirstMessage && focus) {
-    parts.push(`// CATATAN SISTEM: Produk "${focus}" tidak memiliki informasi di Knowledge Base.`);
-    parts.push('// Balas dengan sopan bahwa informasi produk ini belum tersedia, dan tawarkan untuk menghubungi admin.');
-    parts.push('');
   }
 
-  // Product focus + Step State
-  if (focus) {
-    parts.push(`=== PRODUK FOKUS: ${focus} ===`);
-    parts.push(`Customer sedang membahas "${focus}". Fokus HANYA pada produk ini. Jika customer tanya produk lain, barulah pindah fokus.`);
-    parts.push('');
-  }
-
-  // Step State + flags
-  if (orderState && orderState.step) {
-    parts.push('=== STATUS SAAT INI ===');
-    parts.push(`Step: ${orderState.step}`);
-    if (orderState.color) parts.push(`Warna: ${orderState.color}`);
-    if (orderState.jalan) parts.push(`Jalan: ${orderState.jalan}`);
-    if (orderState.namaLengkap) parts.push(`Nama: ${orderState.namaLengkap} (verified: ${orderState.namaVerified})`);
-    if (orderState.desa) parts.push(`Desa: ${orderState.desa}`);
-    if (orderState.kecamatan) parts.push(`Kecamatan: ${orderState.kecamatan}`);
-    if (orderState.kota) parts.push(`Kota: ${orderState.kota}`);
-    if (orderState.rtRw) parts.push(`RT/RW: ${orderState.rtRw}`);
-    if (orderState.patokan) parts.push(`Patokan: ${orderState.patokan}`);
-    if (orderState.noHp) parts.push(`HP: ${orderState.noHp}`);
-
-    const missing = getMissingFields(orderState);
-    if (missing.length && orderState.step >= 3) {
-      parts.push(`→ Belum ada: ${missing.join(', ')}`);
-      parts.push(`→ Field berikutnya: "${missing[0]}". WAJIB tanya field ini.`);
-      console.log(`🔍 [DEBUG] missing: ${missing.join(', ')} → nextField: ${missing[0]}`);
-    }
-
-    // Resolve phone number: SAMA_DENGAN_WA → actual WhatsApp number
-    if (orderState?.noHp === 'SAMA_DENGAN_WA' && from) {
-      const resolvedPhone = from.replace('@s.whatsapp.net', '').replace('@c.us', '');
-      parts.push('');
-      parts.push(`Nomor HP customer: ${resolvedPhone} (SAMA_DENGAN_WA)`);
-    }
-    parts.push('');
-  }
-
+  // Custom procedures from settings
   if (settings.followUp?.trim()) {
-    parts.push('=== PROSEDUR MENJAWAB (WAJIB DIIKUTI, BUKAN SEKADAR REFERENSI) ===');
+    parts.push('=== PROSEDUR KHUSUS ===');
     parts.push(settings.followUp.trim());
     parts.push('');
   }
 
-  // ── THINKER CONTEXT — Satu section gabungan: intent + extracted data + behavior ──
-  if (thinkerData) {
-    parts.push('=== THINKER CONTEXT ===');
-    parts.push(`Intent: ${thinkerData.intent}`);
-    if (thinkerData.product) parts.push(`Produk fokus: ${thinkerData.product}`);
-
-    // Show extracted data from this message
-    if (thinkerData.extractedData && Object.keys(thinkerData.extractedData).length > 0) {
-      const fields = Object.entries(thinkerData.extractedData)
-        .filter(([, v]) => v)
-        .map(([k, v]) => `- ${k}: "${v}"`);
-      if (fields.length) {
-        parts.push('Data baru dari customer:');
-        parts.push(fields.join('\n'));
-      }
-    }
-
-    // Next field dari Thinker — ini yang HARUS ditanya
-    if (thinkerData.nextField) {
-      parts.push(`→ Tanya field berikutnya: ${thinkerData.nextField}`);
-      parts.push('→ Acknowledge data baru dulu (jika ada), lalu tanya field di atas.');
-    } else if (thinkerData.intent === 'data_provided' || thinkerData.intent === 'confirmation') {
-      parts.push('→ Semua field sudah lengkap. Lanjutkan ke konfirmasi/summary.');
-    }
-
-    // Behavior instructions based on intent
-    if (thinkerData.intent === 'escalation') {
-      parts.push('→ Pertanyaan ini TIDAK ADA di Knowledge Base.');
-      parts.push('→ JANGAN mengarang atau menebak jawaban.');
-      parts.push('→ Jawab SINGKAT dulu, lalu SISIPKAN tag [ESCALATE:NamaProduk]pertanyaan[/ESCALATE]');
-    } else if (thinkerData.intent === 'product_inquiry' || thinkerData.intent === 'product_follow_up') {
-      parts.push('→ Pertanyaan ini TENTANG PRODUK. Jawab langsung dari Knowledge Base.');
-    } else if (thinkerData.intent === 'data_provided') {
-      parts.push('→ Customer memberikan data. Acknowledge lalu tanya nextField.');
-    } else if (thinkerData.intent === 'order_intent') {
-      parts.push('→ Customer mau order. Lanjutkan ke step pengumpulan data.');
-    } else if (thinkerData.intent === 'order_color_selection') {
-      parts.push('→ Customer pilih warna. Acknowledge dan minta alamat lengkap berikut: nama jalan/perumahan, nomor rumah, RT/RW, dusun (jika ada), desa, kecamatan, dan kabupaten/kota. Tanya semuanya dalam 1 pesan.');
-    }
-    // V2 granular intent behavior
-    else if (thinkerData.intent === 'customer_pilihvariasi') {
-      parts.push('→ Customer pilih variasi. Tulis 1 kalimat konfirmasi + minta alamat lengkap berikut: nama jalan/perumahan, nomor rumah, RT/RW, dusun (jika ada), desa, kecamatan, dan kabupaten/kota. Tanya semuanya dalam 1 pesan.');
-    } else if (thinkerData.intent === 'Alamat_lengkap_noRTRW') {
-      parts.push('→ Customer kasih alamat tapi belum ada RT/RW. Tanya RT/RW.');
-    } else if (thinkerData.intent === 'Alamat_lengkap_hasRTRW') {
-      parts.push('→ Alamat dan RT/RW sudah ada. Tanya patokan rumah.');
-    } else if (thinkerData.intent === 'Alamat_patokan') {
-      parts.push('→ Patokan sudah ada. Tanya nama lengkap penerima.');
-    } else if (thinkerData.intent === 'Terkait_namaCustomer') {
-      parts.push('→ Nama sudah ada. Tanya nomor HP yang bisa dihubungi kurir.');
-    } else if (thinkerData.intent === 'NomorCustomer') {
-      parts.push('→ Nomor HP sudah ada. Tanya metode pembayaran (COD/Transfer), sebutkan diskon 10% transfer.');
-    } else if (thinkerData.intent === 'Terkait_pilihan_pembayaran_COD') {
-      parts.push('→ Customer pilih COD. Informasikan aturan COD. BELUM tampilkan rekap — tunggu customer setuju dulu.');
-    } else if (thinkerData.intent === 'Terkait_setuju_COD') {
-      parts.push('→ Customer setuju aturan COD. Tampilkan rekap pesanan lengkap. JANGAN finalize order — tunggu konfirmasi rekap dari customer.');
-    } else if (thinkerData.intent === 'Terkait_pilihan_pembayaran_Transfer') {
-      parts.push('→ Customer pilih transfer. Informasikan rekening bank. BELUM tampilkan rekap — tunggu customer balas dulu.');
-    } else if (thinkerData.intent === 'Terkait_konfirmasi_Transfer') {
-      parts.push('→ Customer sudah balas setelah terima info rekening. Tampilkan rekap pesanan. JANGAN finalize order — tunggu konfirmasi rekap dari customer.');
-    } else if (thinkerData.intent === 'Verifikasi') {
-      parts.push('→ Semua data lengkap. Siapkan rekap verifikasi dengan format emoji.');
-    } else if (thinkerData.intent === 'customer_konfirmasi_order') {
-      parts.push('→ Customer konfirmasi pesanan (rekap sudah ditampilkan). Konfirmasi pesanan sedang diproses. WAJIB sisipkan [ORDER_DATA]...[/ORDER_DATA] dengan data lengkap.');
-    } else if (thinkerData.intent === 'customer_ragu') {
-      parts.push('→ Customer ragu. Balas dengan hangat, tawarkan bantuan tanpa push.');
-    } else if (thinkerData.intent === 'customer_batal') {
-      parts.push('→ Customer batal. Terima dengan sopan, tutup percakapan dengan baik.');
-    } else if (thinkerData.intent === 'customer_pilihproduk_baru') {
-      parts.push('→ Customer ganti ke produk baru. Jelaskan produk baru dari Knowledge Base.');
-    } else if (thinkerData.intent === 'Lain') {
-      parts.push('→ Pertanyaan di luar flow. Balas 1-2 kalimat natural, jangan mengarang.');
-    } else if (thinkerData.intent === 'Ada_di_KB') {
-      parts.push('→ Pertanyaan ada di Knowledge Base. Jawab langsung dari KB.');
-    }
-    parts.push('');
-  }
-
-  // ── V2 RESPONSE INSTRUCTION (only when v2 mode active) ──────────
-  if (store.settings.v2ResponseStyle && thinkerData) {
-    const v2Hint = V2_CHATTER_HINTS[thinkerData.intent];
-    if (v2Hint && v2Hint !== 'Ikuti STEP rules yang berlaku.') {
-      parts.push('=== V2 RESPONSE INSTRUCTION ===');
-      parts.push(`Intent: ${thinkerData.intent}`);
-      parts.push(`Instruksi: ${v2Hint}`);
-      parts.push('JANGAN tulis kalimat fixed yang sudah disediakan template. Tulis HANYA kalimat dinamis sesuai instruksi di atas.');
-      parts.push('');
-    }
-  }
-
-  // Step rules
-  if (!orderState || orderState.step === 1) parts.push(STEP1_RULES);
-  else if (orderState.step === 2) parts.push(STEP2_RULES);
-  else if (orderState.step === 3) parts.push(STEP3_RULES);
-  else if (orderState.step === 4) parts.push(STEP4_RULES);
-  else if (orderState.step === 5) parts.push(STEP5_RULES);
-  parts.push(DRAFT_RULES);
-
-  parts.push('=== ATURAN MENJAWAB ===');
-  if (store.settings.v2ResponseStyle) {
-    parts.push('⚠️ V2 MODE — ATURAN PANJANG RESPONS:');
-    parts.push('- Jawab HANYA 1-2 kalimat. Langsung ke inti, tidak perlu penjelasan panjang.');
-    parts.push('- Jangan tambahkan informasi yang tidak diminta customer.');
-    parts.push('');
-  }
-  parts.push('- THINKER CONTEXT di atas menentukan APA yang harus dilakukan. Ikuti instruksi dari THINKER, bukan dari STEP rules.');
-  parts.push('- STEP (1/2/3/4/5) hanya menunjukkan PROGRESS — bukan aturan perilaku.');
-  parts.push('- FOKUS pada produk yang sedang ditanyakan customer SAAT INI. Jangan campur informasi produk lain dari riwayat chat sebelumnya.');
-  parts.push('- Balas secara natural seperti manusia, bukan robot');
-  parts.push('- Gunakan bahasa percakapan sehari-hari yang hangat, gaya tetap profesional (bukan lebay/berlebihan)');
-  parts.push('- JANGAN tanya ulang field yang sudah tercatat di STATUS SAAT INI.');
-  parts.push('- JANGAN gunakan tanda petik di awal atau akhir pesan');
-  parts.push('- Jika menerima pesan suara (audio), DENGARKAN isi audionya dan balas berdasarkan konten suara pelanggan.');
-  parts.push('- Kamu mengaku sebagai "admin"/"kami" toko — JANGAN pakai nama persona apapun, dan JANGAN sebut bahwa kamu AI kecuali ditanya langsung');
-  parts.push('- Emoji dipakai JARANG saja (boleh sesekali, jangan tiap kalimat)');
-  parts.push('- Pisahkan paragraf dengan baris baru (enter) agar mudah dibaca.');
+  // ── CORE: How to serve customer ──────────────────────────────────
+  parts.push('=== CARA MELAYANI ===');
+  parts.push('⚡ ATURAN PALING PENTING: BACA SELURUH RIWAYAT CHAT sebelum menjawab.');
+  parts.push('Jangan PERNAH menanyakan informasi yang sudah diberikan customer di pesan sebelumnya.');
   parts.push('');
-  parts.push('=== ATURAN NEGO HARGA & SITUASI SULIT ===');
-  parts.push('- Kalau pelanggan minta nego/diskon harga: boleh kasih potongan MAKSIMAL Rp10.000 dari harga normal, putuskan sendiri tanpa perlu tanya admin. Kalau minta lebih dari itu, tetap tolak sopan dan pertahankan harga setelah potongan Rp10.000 tersebut');
-  parts.push('- Kalau pelanggan minta harga reseller/grosir/mau dijual lagi: TOLAK dengan sopan, harga tetap sama berapa pun jumlah/tujuan pembeliannya');
-  parts.push('- Kalau pelanggan marah, kecewa, sarkas, atau menuduh: tetap balas dengan SOPAN dan NORMAL seperti biasa, jangan defensif berlebihan');
-  parts.push('- Kalau pelanggan bilang batal/gak jadi/mundur/kemahalan: TERIMA langsung dengan ucapan terima kasih yang sopan dan TUTUP percakapan dengan baik. DILARANG KERAS menawarkan apapun sebagai "penggantinya"');
+  parts.push('Ketika customer ingin membeli, kumpulkan data berikut secara natural — satu per satu, sesuai konteks chat:');
+  parts.push('  1. Nama lengkap penerima');
+  parts.push('  2. Alamat: nama jalan/gang/perumahan + nomor rumah');
+  parts.push('  3. RT/RW (jika tidak ada RT/RW, tidak apa-apa)');
+  parts.push('  4. Desa / kelurahan');
+  parts.push('  5. Kecamatan');
+  parts.push('  6. Kota / kabupaten');
+  parts.push('  7. Patokan rumah (dekat masjid/sekolah/toko/dll)');
+  parts.push('  8. Nomor HP untuk kurir (tawarkan: "Boleh pakai nomor WA ini Kak, atau ada nomor lain?")');
+  parts.push('  9. Metode bayar: COD atau Transfer');
   parts.push('');
-  parts.push('=== ATURAN CTA / ARAHKAN KE CLOSING (PENTING) ===');
-  parts.push('- SETIAP balasan WAJIB diakhiri dengan 1 pertanyaan yang mengarahkan percakapan lebih dekat ke closing');
-  parts.push('- Pilih SENDIRI pertanyaan yang paling relevan sesuai konteks saat itu');
-  parts.push('- MAKSIMAL 1 pertanyaan per balasan.');
-  parts.push('- Kalau pelanggan sudah menunjukkan minat jelas tapi belum kasih data pemesanan, boleh proaktif ajak closing');
+  parts.push('Setelah SEMUA data di atas sudah ada di chat history, tampilkan rekap pesanan dan minta konfirmasi customer.');
+  parts.push('Setelah customer KONFIRMASI rekap (bukan saat rekap ditampilkan), sisipkan blok ini di akhir balasan:');
+  parts.push('[ORDER_DATA]{"nama":"Nama Lengkap","hp":"Nomor HP atau SAMA_DENGAN_WA","produk":"Nama Produk","alamat":"Alamat lengkap satu baris","pembayaran":"COD atau Transfer"}[/ORDER_DATA]');
+  parts.push('PENTING: Jangan sisipkan [ORDER_DATA] sebelum customer konfirmasi rekap!');
   parts.push('');
-  parts.push('=== PANJANG & GAYA BALASAN (PENTING) ===');
-  parts.push('- Ikuti instruksi dari THINKER CONTEXT untuk panjang dan isi balasan.');
+
+  // ── Business rules ───────────────────────────────────────────────
+  parts.push('=== ATURAN BISNIS ===');
+  parts.push('- Harga SUDAH termasuk ongkir — jangan bilang ongkir belum termasuk');
+  parts.push('- Nego: boleh kasih diskon MAKSIMAL Rp10.000, tolak kalau minta lebih');
+  parts.push('- Harga reseller/grosir: TOLAK sopan, harga tetap sama');
+  parts.push('- Customer batal: terima sopan, jangan tawarkan alternatif apapun');
+  parts.push('- Customer marah/sarkas: tetap balas sopan dan normal');
+  parts.push('- COD: paket tidak bisa dibuka sebelum dibayar. Jika tidak sesuai bisa ajukan retur.');
+  if (PAYMENT.bankName && PAYMENT.accountNumber) {
+    parts.push(`- Transfer: Bank ${PAYMENT.bankName} - ${PAYMENT.accountNumber} a/n ${PAYMENT.accountName}`);
+  }
+  parts.push('');
+
+  // ── Response style ───────────────────────────────────────────────
+  parts.push('=== GAYA BALASAN ===');
+  parts.push('- Singkat dan langsung ke inti. Maksimal 2-3 kalimat kecuali sedang rekap pesanan.');
+  parts.push('- MAKSIMAL 1 pertanyaan per balasan. Selalu akhiri dengan 1 pertanyaan yang mengarah ke closing.');
+  parts.push('- Emoji sesekali saja, tidak perlu setiap kalimat.');
+  parts.push('- Pisahkan paragraf dengan baris baru.');
+  parts.push('- Jangan pakai tanda petik di awal/akhir pesan.');
+  parts.push('- Kata "No"/"nomer"/"nomor" dalam bahasa Indonesia BERARTI "Nomor", bukan "tidak".');
   parts.push(isFirstMessage
-    ? '- Ini kemungkinan pesan PERTAMA pelanggan: boleh jelaskan 1-2 keunggulan utama produk secara singkat, maksimal 3-4 kalimat total'
-    : '- Ini BUKAN pesan pertama (sudah ada riwayat chat): JANGAN ulangi penjelasan keunggulan produk yang sudah dijelaskan sebelumnya.');
-  parts.push('- JANGAN sebut nama produk berulang kali. Kalau produk sudah disebut sebelumnya, cukup referensikan dengan "produknya", "pesanan", atau langsung ke inti');
-  parts.push('- SINGKAT dan langsung ke inti — sesuaikan dengan intent dari THINKER CONTEXT.');
-  parts.push('');
-  parts.push('=== ATURAN CTA (PENTING) ===');
-  parts.push('- SETIAP balasan product_inquiry/data_provided/confirmation WAJIB diakhiri dengan 1 pertanyaan CTA.');
-  parts.push('- Untuk escalation: SINGKAT + ESCALATE — TIDAK perlu CTA.');
-  parts.push('- MAKSIMAL 1 pertanyaan per balasan.');
-  parts.push('');
-  parts.push('=== ATURAN DATA PEMESANAN (Thinker-driven) ===');
-  parts.push('- Ikuti THINKER CONTEXT untuk cara menangani data customer (acknowledge dulu, lalu tanya field berikutnya).');
-  parts.push('- Tanya nomor HP dengan natural: "Boleh pakai nomor Kakak yang ini? Atau ada nomor lain ya Kak?" — JANGAN tanya "nomor HP yang aktif" (terdengar kaku).');
-  parts.push('- HATI-HATI KATA AMBIGU: Kata "No", "no", "nomer", "nomor" dalam chat bahasa Indonesia SERING berarti "Nomor", BUKAN berarti "tidak/batal".');
-  parts.push('- Begitu SEMUA data sudah lengkap terkumpul: rekap pesanan dan minta konfirmasi eksplisit');
-  parts.push('- Order baru dianggap FINAL setelah pelanggan membalas mengonfirmasi. BARU pada balasan konfirmasi tersebut kamu sisipkan [ORDER_DATA]');
-  parts.push('- Kalau pesanan berisi LEBIH DARI 1 produk, jumlahkan semua ke dalam total harga saat merekap');
-  parts.push('Format blok data:');
-  parts.push('[ORDER_DATA]{"nama": "Nama Lengkap", "hp": "No HP, atau SAMA_DENGAN_WA", "produk": "Nama Produk", "alamat": "Alamat lengkap", "pembayaran": "COD atau Transfer"}[/ORDER_DATA]');
-  parts.push('PENTING: Jangan menyertakan blok ini jika pelanggan hanya tanya-tanya, belum pasti memesan.');
-  parts.push('- WAJIB VERIFIKASI SEBELUM REKAP: cek data SUDAH pernah disebutkan EKSPLISIT oleh customer');
-  parts.push('- DILARANG KERAS menyisipkan [ORDER_DATA] jika nama penerima atau alamat detail BELUM pernah dikirimkan oleh customer.');
-  parts.push('');
-  parts.push('=== KALIMAT PENUTUP KHUSUS UNTUK PRODUK COD (PENTING) ===');
-  parts.push('- Cek INFORMASI PRODUK & BISNIS: kalau produk bisa COD, pada balasan konfirmasi order final WAJIB tambahkan kalimat tentang menitipkan uang ke keluarga jika sering di luar rumah');
-  parts.push('- Kalimat ini HANYA untuk produk yang statusnya bisa COD.');
-  parts.push('');
-  parts.push('=== ATURAN ESKALASI KE ADMIN (SANGAT PENTING — JANGAN MENGARANG) ===');
-  parts.push('- Kalau ada pertanyaan yang jawabannya TIDAK tertulis eksplisit di KB — JANGAN PERNAH mengarang atau menebak jawaban');
-  parts.push('- Sisipkan tag [ESCALATE:Nama Produk]pertanyaan singkat untuk admin[/ESCALATE]');
-  parts.push('- Kalau SELURUH balasan hanya berisi tag [ESCALATE], JANGAN tambahkan basa-basi');
-  parts.push('- Kalau sebagian BISA dijawab dan sebagian TIDAK, jawab dulu yang bisa, lalu tambahkan tag [ESCALATE]');
-  parts.push('');
-  parts.push('=== ANTI-HALLUCINATION: INFO YANG BOLEH vs TIDAK BOLEH (SANGAT PENTING) ===');
-  parts.push('- INFO YANG BOLEH: nama produk, harga, varian/warna, manfaat/kegunaan, cara pakai');
-  parts.push('- INFO YANG TIDAK BOLEH: tanggal/hari pengiriman, estimasi waktu sampai, status stok, nama kurir, lokasi toko, kebijakan yang tidak disebutkan');
-  parts.push('- Gunakan tag [ESCALATE] untuk pertanyaan di luar KB');
-  parts.push('');
-  parts.push('=== ATURAN SPLIT BUBBLE (PENTING) ===');
-  parts.push('- Ketika customer menyebut nama produk untuk PERTAMA KALI, WAJIB pisahkan balasan menjadi 2 bagian menggunakan tag [SPLIT]');
-  parts.push('    Bagian 1: konfirmasi nama produk (1 kalimat)');
-  parts.push('    Bagian 2: isi jawaban lengkap (harga, varian, detail, CTA)');
-  parts.push('- JANGAN gunakan [SPLIT] kalau produk sudah pernah dikonfirmasi di history');
-  parts.push('- JANGAN gunakan [SPLIT] untuk balasan non-produk');
-  parts.push('- JANGAN gunakan [SPLIT] lebih dari 1 kali dalam 1 percakapan untuk produk yang sama.');
+    ? '- Pesan PERTAMA: boleh sebutkan 1-2 keunggulan utama produk secara singkat.'
+    : '- Sudah ada riwayat chat: JANGAN ulangi penjelasan yang sudah pernah diberikan.');
   parts.push('');
 
-  // Image rules
-  const productsWithImages = Object.keys(settings.productImages || {}).filter(k => settings.productImages[k] && settings.productImages[k].some(img => img));
+  // ── Special tags ─────────────────────────────────────────────────
+  parts.push('=== TAG KHUSUS ===');
+
+  // Image tags
+  const productsWithImages = Object.keys(settings.productImages || {}).filter(k => settings.productImages[k]?.some(img => img));
   if (productsWithImages.length > 0) {
     const alreadyImaged = productsWithImages.filter(p => sentImagesForFrom?.has(p));
-    const notYetImaged = productsWithImages.filter(p => !sentImagesForFrom?.has(p));
-    parts.push('=== ATURAN GAMBAR (PENTING) ===');
-    parts.push(`Produk berikut memiliki gambar yang siap dikirim: ${productsWithImages.join(', ')}.`);
-    parts.push('- Begitu kamu SUDAH menjelaskan produk, WAJIB tambahkan: [KIRIM_GAMBAR:Nama Produk]');
-    parts.push('- Gambar HANYA dikirim SEKALI per produk dalam 1 percakapan.');
-    if (alreadyImaged.length) parts.push(`- Produk yang GAMBARNYA SUDAH dikirim: ${alreadyImaged.join(', ')}.`);
-    if (notYetImaged.length) parts.push(`- Produk yang gambarnya BELUM dikirim: ${notYetImaged.join(', ')}.`);
-    parts.push('');
+    const notYetImaged  = productsWithImages.filter(p => !sentImagesForFrom?.has(p));
+    if (notYetImaged.length > 0) {
+      parts.push(`- Setelah menjelaskan produk (${notYetImaged.join(', ')}): tambahkan [KIRIM_GAMBAR:NamaProduk]`);
+      parts.push('- Gambar hanya dikirim SEKALI per produk per percakapan.');
+    }
+    if (alreadyImaged.length > 0) {
+      parts.push(`- Gambar SUDAH dikirim (jangan kirim lagi): ${alreadyImaged.join(', ')}`);
+    }
   }
 
-  parts.push('=== MENANGANI PESAN DENGAN BEBERAPA MAKSUD SEKALIGUS (PENTING) ===');
-  parts.push('- Satu pesan pelanggan bisa berisi BEBERAPA maksud/intent sekaligus');
-  parts.push('- Baca SELURUH isi pesan pelanggan sebelum menjawab');
-  parts.push('- Kalau pelanggan menyebut nama produk DAN sekaligus minta harga, anggap produk sudah terkonfirmasi dan langsung jawab harga/info-nya');
+  parts.push('- Produk disebut PERTAMA KALI: pisah jadi 2 pesan dengan [SPLIT] (baris 1: konfirmasi produk | baris 2: penjelasan detail+harga). Jangan [SPLIT] kalau produk sudah pernah dibahas.');
+  parts.push('- Jika ada pertanyaan TIDAK ADA di KB (estimasi kirim, stok, tracking): jawab singkat dulu lalu sisipkan [ESCALATE:NamaProduk]pertanyaan untuk admin[/ESCALATE]');
+  parts.push('- Jangan mengarang jawaban untuk hal yang tidak ada di KB.');
+  parts.push('- Jika menerima pesan suara (audio): dengarkan isinya dan balas berdasarkan konten suara.');
+  parts.push('');
 
   return parts.join('\n');
 }
@@ -619,14 +383,13 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
 // ═══════════════════════════════════════════════════════════════════
 // 11. callGeminiDirect — full Gemini API call with multimodal support
 // ═══════════════════════════════════════════════════════════════════
-async function callGeminiDirect(key, keySlot, message, name, history, signal, from, imagePath, audioPath, thinkerData) {
+async function callGeminiDirect(key, keySlot, message, name, history, signal, from, imagePath, audioPath) {
   const startTime = Date.now();
   const settings = store.settings;
-  const orderStates = store.orderStates;
   const model = settings.modelName || config.DEFAULT_MODEL;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
-  // Build contents from history
+  // Build contents from history — kirim SEMUA history agar AI bisa baca konteks lengkap
   const contents = [];
   if (history?.length) {
     for (const h of history) {
@@ -635,8 +398,7 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal, fr
       contents.push({ role: 'user', parts: [{ text: h.body }] });
       // B4: Skip cancelled/held replies so internal strings don't leak to Gemini context
       if (h.aiReply && !h.cancelledEntry && !h.heldReply) {
-        const cleanedReply = cleanFieldQuestions(h.aiReply, orderStates.get(from));
-        contents.push({ role: 'model', parts: [{ text: cleanedReply }] });
+        contents.push({ role: 'model', parts: [{ text: h.aiReply }] });
       }
     }
   }
@@ -676,7 +438,7 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal, fr
   const relevantKB = getRelevantKnowledge(message, history);
   const isFirstMessage = !history?.length;
   const sentImagesForFrom = store.sentProductImages.get(from) || null;
-  let systemPromptText = buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesForFrom, thinkerData);
+  let systemPromptText = buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesForFrom);
 
   // Append summary from old conversations to system prompt
   const summaryEntry = history?.find(h => h._summary);
@@ -845,7 +607,7 @@ async function callGeminiRaw(systemPrompt, userText) {
 // ═══════════════════════════════════════════════════════════════════
 // 13. aiReply — retry loop with key rotation
 // ═══════════════════════════════════════════════════════════════════
-async function aiReply(message, name, history, signal, from, imagePath, audioPath, thinkerData) {
+async function aiReply(message, name, history, signal, from, imagePath, audioPath) {
   if (getValidKeys().length === 0) {
     console.error('Tidak ada API key yang valid di .env');
     return null;
@@ -870,7 +632,7 @@ async function aiReply(message, name, history, signal, from, imagePath, audioPat
     emitKeyStatuses();
     console.log(`Mencoba Key ${picked.slot + 1}...`);
 
-    const result = await callGeminiDirect(picked.key, picked.slot, message, name, history, signal, from, imagePath, audioPath, thinkerData);
+    const result = await callGeminiDirect(picked.key, picked.slot, message, name, history, signal, from, imagePath, audioPath);
 
     if (result.ok) {
       emitKeyStatuses();

@@ -21,7 +21,7 @@ const config  = require('./config');
 const store   = require('./state-store');
 const db      = require('./db');
 const { getApiKeys, computeKeyStatuses, emitKeyStatuses, getAvailableKey, markKeyLimited, callGeminiDirect } = require('./gemini-service');
-const { sendWhatsAppText, sendWhatsAppImageByPath, uploadWhatsAppMediaBuffer, waConfigured } = require('./whatsapp-api');
+const { sendWhatsAppText, sendWhatsAppImageByPath, uploadWhatsAppMediaBuffer, sendWhatsAppMediaById, waConfigured } = require('./whatsapp-api');
 const { processCustomerMessage, retryFailedMessages } = require('./message-processor');
 const { processOrderAddressAI } = require('./address-ai');
 
