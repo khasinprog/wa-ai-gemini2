@@ -123,6 +123,8 @@ header{display:flex;justify-content:space-between;align-items:center;padding:12p
 .status-pill.connected .dot{background:var(--green)}
 .main-cols{flex:1;display:flex;overflow:hidden;padding:16px;gap:16px}
 .col{background:var(--s1);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;width:320px;box-shadow:0 1px 3px rgba(0,0,0,0.05)}
+.col-chat-sim{width:380px;min-width:320px;flex-shrink:0;display:flex;flex-direction:column;background:var(--s1);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.05)}
+@media (max-width:1250px){#view-settings .main-cols{flex-wrap:wrap;overflow-y:auto}.col-chat-sim{width:100%!important;min-height:420px}}
 .col-inner{padding:16px;overflow-y:auto;flex:1}
 .col-title{font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}
 
@@ -1083,6 +1085,51 @@ Garansi: 6 bulan"></textarea>
     </div>
     </div> <!-- tutup wrapper tab-content -->
   </div>
+
+  <!-- Panel Kanan: Sandbox Simulasi Chat AI (Murni Gemini, Tanpa Kirim WA) -->
+  <div class="col col-chat-sim">
+    <!-- Header -->
+    <div style="padding:12px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:var(--s2); flex-shrink:0">
+      <div>
+        <div style="font-weight:700; font-size:0.88rem; color:var(--text); display:flex; align-items:center; gap:6px">
+          💬 Sandbox Simulasi Chat
+        </div>
+        <div style="font-size:0.72rem; color:var(--muted)">Uji respon Gemini langsung (Tanpa kirim WA)</div>
+      </div>
+      <button type="button" class="btn" onclick="simResetChat()" style="font-size:0.72rem; padding:4px 8px; background:var(--s1); border:1px solid var(--border); color:var(--text); cursor:pointer" title="Hapus percakapan simulasi">
+        🔄 Reset
+      </button>
+    </div>
+
+    <!-- Phone Simulator Info -->
+    <div style="padding:6px 12px; background:#eff6ff; border-bottom:1px solid #dbeafe; font-size:0.72rem; color:#1e40af; display:flex; justify-content:space-between; align-items:center; flex-shrink:0">
+      <span>📱 Nomor Customer: <b>0812-3335-0792</b></span>
+      <span style="font-size:0.65rem; background:#2563eb; color:#fff; padding:1px 6px; border-radius:8px">Sandbox Mode</span>
+    </div>
+
+    <!-- Messages Container -->
+    <div id="simChatMessages" style="flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:10px; background:var(--s2); min-height:280px">
+      <div id="simEmptyHint" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:30px 10px; color:var(--muted); margin:auto">
+        <div style="font-size:2rem; margin-bottom:6px">🧪</div>
+        <div style="font-weight:600; font-size:0.85rem; margin-bottom:4px">Ruang Uji Coba Chat AI</div>
+        <div style="font-size:0.75rem; line-height:1.5; max-width:240px">Ketik chat seperti customer di bawah untuk mencoba respon prompt & alur closing secara instan.</div>
+      </div>
+    </div>
+
+    <!-- Input Footer -->
+    <div style="padding:10px 12px; background:var(--s1); border-top:1px solid var(--border); flex-shrink:0">
+      <div style="display:flex; gap:6px; align-items:center">
+        <input type="text" id="simChatInput" placeholder="Ketik pesan customer test... [Enter]" style="flex:1; padding:8px 10px; font-size:0.82rem; border-radius:6px; border:1px solid var(--border); background:var(--s2); color:var(--text)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();simSendMessage();}" />
+        <button id="simSendBtn" type="button" class="btn btn-green" onclick="simSendMessage()" style="padding:8px 12px; font-weight:600; font-size:0.82rem; cursor:pointer">
+          Kirim ↵
+        </button>
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px">
+        <span style="font-size:0.67rem; color:var(--muted)">⚡ Respon instan (tanpa delay ketik)</span>
+        <span id="simDurationBadge" style="font-size:0.67rem; color:var(--muted)"></span>
+      </div>
+    </div>
+  </div>
       
       </div>
     </div>
@@ -1733,6 +1780,121 @@ async function resetDefaultPrompt(){
     }
   } catch(e) {
     alert('Gagal mengambil prompt default: ' + e.message);
+  }
+}
+
+// ── Sandbox Simulasi Chat AI (Murni Gemini) ──
+let simHistory = [];
+
+function simResetChat() {
+  simHistory = [];
+  const area = document.getElementById('simChatMessages');
+  if (area) {
+    area.innerHTML = `
+      <div id="simEmptyHint" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:30px 10px; color:var(--muted); margin:auto">
+        <div style="font-size:2rem; margin-bottom:6px">🧪</div>
+        <div style="font-weight:600; font-size:0.85rem; margin-bottom:4px">Ruang Uji Coba Chat AI</div>
+        <div style="font-size:0.75rem; line-height:1.5; max-width:240px">Ketik chat seperti customer di bawah untuk mencoba respon prompt & alur closing secara instan.</div>
+      </div>
+    `;
+  }
+  const badge = document.getElementById('simDurationBadge');
+  if (badge) badge.textContent = '';
+  const input = document.getElementById('simChatInput');
+  if (input) input.focus();
+}
+
+async function simSendMessage() {
+  const input = document.getElementById('simChatInput');
+  const text = (input ? input.value : '').trim();
+  if (!text) return;
+  input.value = '';
+
+  const area = document.getElementById('simChatMessages');
+  if (!area) return;
+  const emptyHint = document.getElementById('simEmptyHint');
+  if (emptyHint) emptyHint.remove();
+
+  // 1. Tampilkan bubble customer (hijau di kanan)
+  const userBubbleWrap = document.createElement('div');
+  userBubbleWrap.style.cssText = 'align-self:flex-end; max-width:85%; display:flex; flex-direction:column; align-items:flex-end; gap:2px;';
+  
+  const userBubble = document.createElement('div');
+  userBubble.style.cssText = 'background:#dcf8c6; color:#111827; padding:8px 12px; border-radius:12px 12px 2px 12px; font-size:0.84rem; line-height:1.45; word-break:break-word; box-shadow:0 1px 1px rgba(0,0,0,0.08); white-space:pre-wrap;';
+  userBubble.textContent = text;
+
+  const userTime = document.createElement('div');
+  userTime.style.cssText = 'font-size:0.68rem; color:var(--muted); margin-right:4px;';
+  userTime.textContent = 'Anda (Customer)';
+
+  userBubbleWrap.appendChild(userBubble);
+  userBubbleWrap.appendChild(userTime);
+  area.appendChild(userBubbleWrap);
+  area.scrollTop = area.scrollHeight;
+
+  // 2. Tampilkan bubble loading
+  const loadingBubble = document.createElement('div');
+  loadingBubble.id = 'simLoadingBubble';
+  loadingBubble.style.cssText = 'background:#ffffff; color:var(--muted); padding:8px 12px; border-radius:12px 12px 12px 2px; max-width:85%; font-size:0.8rem; font-style:italic; align-self:flex-start; border:1px solid var(--border);';
+  loadingBubble.textContent = '🤖 Gemini sedang mengetik respon...';
+  area.appendChild(loadingBubble);
+  area.scrollTop = area.scrollHeight;
+
+  const sendBtn = document.getElementById('simSendBtn');
+  if (sendBtn) sendBtn.disabled = true;
+  const badge = document.getElementById('simDurationBadge');
+  if (badge) badge.textContent = '⏳ Memproses...';
+
+  try {
+    const res = await fetch('/api/test/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: text,
+        history: simHistory,
+        senderPhone: '6281233350792',
+        senderName: 'Customer Test',
+      }),
+    });
+    const data = await res.json();
+    loadingBubble.remove();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Server error');
+    }
+
+    // 3. Tampilkan bubble respon AI (putih di kiri)
+    const aiBubbleWrap = document.createElement('div');
+    aiBubbleWrap.style.cssText = 'align-self:flex-start; max-width:85%; display:flex; flex-direction:column; gap:2px;';
+    
+    const aiBubble = document.createElement('div');
+    aiBubble.style.cssText = 'background:#ffffff; color:#111827; padding:8px 12px; border-radius:12px 12px 12px 2px; font-size:0.84rem; line-height:1.45; word-break:break-word; box-shadow:0 1px 1px rgba(0,0,0,0.08); border:1px solid var(--border); white-space:pre-wrap;';
+    aiBubble.textContent = data.reply;
+    
+    const aiMeta = document.createElement('div');
+    aiMeta.style.cssText = 'font-size:0.68rem; color:var(--muted); margin-left:4px;';
+    aiMeta.textContent = `✨ AI Hafa · ${((data.duration || 0)/1000).toFixed(1)}s`;
+
+    aiBubbleWrap.appendChild(aiBubble);
+    aiBubbleWrap.appendChild(aiMeta);
+    area.appendChild(aiBubbleWrap);
+
+    // Simpan ke history sesi simulasi
+    simHistory.push({ role: 'user', text });
+    simHistory.push({ role: 'model', text: data.reply });
+
+    if (badge) badge.textContent = `⚡ Respon: ${((data.duration || 0)/1000).toFixed(1)} detik`;
+  } catch (err) {
+    if (loadingBubble) loadingBubble.remove();
+    const errBubble = document.createElement('div');
+    errBubble.style.cssText = 'background:#fee2e2; color:#991b1b; padding:8px 12px; border-radius:8px; font-size:0.8rem; align-self:flex-start;';
+    errBubble.textContent = '❌ Error: ' + err.message;
+    area.appendChild(errBubble);
+    if (badge) badge.textContent = '❌ Gagal';
+  } finally {
+    if (sendBtn) sendBtn.disabled = false;
+    area.scrollTop = area.scrollHeight;
+    if (input) input.focus();
   }
 }
 

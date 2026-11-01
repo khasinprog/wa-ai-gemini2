@@ -20,7 +20,7 @@ const multer = require('multer');
 const config  = require('./config');
 const store   = require('./state-store');
 const db      = require('./db');
-const { getApiKeys, computeKeyStatuses, emitKeyStatuses, getAvailableKey, markKeyLimited, callGeminiDirect } = require('./gemini-service');
+const { getApiKeys, computeKeyStatuses, emitKeyStatuses, getAvailableKey, markKeyLimited, callGeminiDirect, aiReply } = require('./gemini-service');
 const { sendWhatsAppText, sendWhatsAppImageByPath, uploadWhatsAppMediaBuffer, sendWhatsAppMediaById, waConfigured } = require('./whatsapp-api');
 const { processCustomerMessage, retryFailedMessages } = require('./message-processor');
 const { processOrderAddressAI } = require('./address-ai');
@@ -838,6 +838,47 @@ Jika ada informasi yang tidak tersedia dalam teks, isi dengan string kosong. Jan
     try { fs.writeFileSync(store.PATHS.RAW_CAP_FILE, '[]'); } catch(e) {}
     console.log('[Internal Test] State di-reset');
     res.json({ ok: true });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // SANDBOX SIMULASI CHAT (Direct AI Test murni tanpa kirim ke WA)
+  // ═══════════════════════════════════════════════════════════════════
+
+  app.post('/api/test/chat', async (req, res) => {
+    try {
+      const { message, history, senderPhone, senderName } = req.body || {};
+      if (!message || !message.trim()) {
+        return res.status(400).json({ error: 'Pesan tidak boleh kosong' });
+      }
+
+      const phone = senderPhone || '6281233350792';
+      const name = senderName || 'Customer Test';
+
+      // Format riwayat chat dari { role: 'user'|'model', text: '...' }
+      // ke format yang dipahami gemini-service { body, aiReply, heldReply }
+      const formattedHistory = Array.isArray(history) ? history.map(item => ({
+        body: item.role === 'user' ? (item.text || item.body || '') : '',
+        aiReply: (item.role === 'model' || item.role === 'assistant') ? (item.text || item.aiReply || '') : '',
+        heldReply: false,
+      })) : [];
+
+      const startTime = Date.now();
+      const reply = await aiReply(message.trim(), name, formattedHistory, null, phone);
+      const duration = Date.now() - startTime;
+
+      if (!reply) {
+        return res.status(500).json({ error: 'Tidak ada respon dari Gemini. Periksa status API key atau kuota.' });
+      }
+
+      res.json({
+        ok: true,
+        reply,
+        duration,
+      });
+    } catch (err) {
+      console.error('[Sandbox Test Chat] Error:', err);
+      res.status(500).json({ error: err.message || 'Internal Server Error' });
+    }
   });
 
   app.get('/api/test/internal/turns', (req, res) => {
