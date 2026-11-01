@@ -286,6 +286,15 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
 
   const parts = [masterPrompt];
 
+  // Sisipkan info nomor WhatsApp customer untuk konteks nomor HP kurir
+  const rawPhone = (from || '').split('@')[0].replace(/[^0-9]/g, '');
+  const customerPhone08 = rawPhone.startsWith('62') ? '0' + rawPhone.slice(2) : rawPhone;
+  if (customerPhone08 && !customerPhone08.startsWith('0000')) {
+    parts.push(`\n=== DATA KONTAK NOMOR WA CUSTOMER ===`);
+    parts.push(`Nomor WhatsApp customer saat ini: ${customerPhone08}`);
+    parts.push(`Saat menanyakan nomor HP kurir atau menampilkan rekap pesanan, SELALU tampilkan nomor HP dalam format angka asli ${customerPhone08} (bukan kata "Nomor WA ini") agar customer bisa mengecek ulang nomornya.`);
+  }
+
   // Sisipkan Knowledge Base produk di bawah Master Prompt
   if (relevantKB?.trim()) {
     parts.push('\n\n=== INFORMASI PRODUK (KNOWLEDGE BASE) ===');

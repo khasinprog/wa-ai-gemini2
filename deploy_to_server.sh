@@ -49,7 +49,7 @@ if [ -n "$GITHUB_TOKEN" ] && [ -n "$GITHUB_REPO" ]; then
   echo "📦 [1/4] Push ke GitHub..."
   cd "$SCRIPT_DIR"
   git remote set-url origin "https://${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git"
-  if git push origin main 2>&1; then
+  if GIT_TERMINAL_PROMPT=0 git push origin main 2>&1; then
     echo "✅ GitHub push berhasil!"
     # Reset remote URL (hapus token dari URL setelah push)
     git remote set-url origin "https://github.com/${GITHUB_REPO}.git"
