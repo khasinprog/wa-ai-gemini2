@@ -123,8 +123,8 @@ header{display:flex;justify-content:space-between;align-items:center;padding:12p
 .status-pill.connected .dot{background:var(--green)}
 .main-cols{flex:1;display:flex;overflow:hidden;padding:16px;gap:16px}
 .col{background:var(--s1);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;width:320px;box-shadow:0 1px 3px rgba(0,0,0,0.05)}
-.col-chat-sim{width:380px;min-width:320px;flex-shrink:0;display:flex;flex-direction:column;background:var(--s1);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.05)}
-@media (max-width:1250px){#view-settings .main-cols{flex-wrap:wrap;overflow-y:auto}.col-chat-sim{width:100%!important;min-height:420px}}
+#tab-inttest.active{display:flex!important;flex-direction:column;height:100%;overflow:hidden}
+@media (max-width:900px){.sim-side-panel{display:none!important}}
 .col-inner{padding:16px;overflow-y:auto;flex:1}
 .col-title{font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}
 
@@ -879,10 +879,10 @@ input:checked+.slider:before{transform:translateX(18px)}
     <div class="tabs">
       <div class="tab active" onclick="switchTab('ai')"><div style="font-size:1.2rem">🤖</div>AI</div>
       <div class="tab" onclick="switchTab('kb')"><div style="font-size:1.2rem">📚</div>Data</div>
+      <div class="tab" onclick="switchTab('inttest')"><div style="font-size:1.2rem">💬</div>Test Chat</div>
       <div class="tab" onclick="switchTab('send')"><div style="font-size:1.2rem">🚚</div>Cek Resi</div>
       <div class="tab" onclick="switchTab('key')"><div style="font-size:1.2rem">🔑</div>Key</div>
       <div class="tab" onclick="switchTab('aitest')"><div style="font-size:1.2rem">🧪</div>AI Test</div>
-      <div class="tab" onclick="switchTab('inttest')"><div style="font-size:1.2rem">🔬</div>Test Internal</div>
       <div class="tab" onclick="switchTab('manual-send')"><div style="font-size:1.2rem">📤</div>Kirim</div>
     </div>
     <div style="flex:1; overflow-y:auto; display:flex; flex-direction:column; background:var(--s1)">
@@ -939,7 +939,10 @@ input:checked+.slider:before{transform:translateX(18px)}
         <div class="fg">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
             <label class="lbl" style="margin-bottom:0">🎯 System Prompt & Prosedur CS (Instruksi Utama)</label>
-            <button type="button" class="btn" onclick="resetDefaultPrompt()" style="font-size:0.75rem;padding:4px 8px;background:var(--s2);border:1px solid var(--border);color:var(--text);cursor:pointer">🔄 Reset ke Default</button>
+            <div style="display:flex;gap:6px">
+              <button type="button" class="btn btn-blue" onclick="switchTab('inttest')" style="font-size:0.75rem;padding:4px 10px;cursor:pointer">💬 Buka Test Chat AI</button>
+              <button type="button" class="btn" onclick="resetDefaultPrompt()" style="font-size:0.75rem;padding:4px 8px;background:var(--s2);border:1px solid var(--border);color:var(--text);cursor:pointer">🔄 Reset ke Default</button>
+            </div>
           </div>
           <textarea id="systemPrompt" rows="15" style="font-family:monospace;font-size:0.85rem;line-height:1.5" placeholder="Instruksi utama CS..."></textarea>
           <div class="ts" style="margin-top:6px;line-height:1.6">💡 <b>All-in-One Master Prompt:</b> Mengatur persona CS, formula 2 langkah (jawab + arahkan beli), pengumpulan data order bertahap, aturan COD/Transfer, dan eskalasi Telegram. Murni digerakkan oleh AI seperti Gemini Chat tanpa alur kode kaku.</div>
@@ -1081,58 +1084,157 @@ Garansi: 6 bulan"></textarea>
           </div>
         </div>
       </div>
-
     </div>
+
+    <!-- TAB: Test Chat AI Sandbox (Murni Gemini, Tanpa Kirim WA) -->
+    <div class="tab-content" id="tab-inttest" style="flex:1">
+      <!-- Header Sandbox Chat -->
+      <div style="padding:12px 18px; border-bottom:1px solid var(--border); background:var(--s1); display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
+        <div>
+          <div style="font-weight:700; font-size:0.95rem; color:var(--text); display:flex; align-items:center; gap:8px;">
+            <span>💬 Sandbox Simulasi Chat AI</span>
+            <span style="font-size:0.68rem; background:#10b981; color:#fff; padding:2px 8px; border-radius:10px; font-weight:600;">⚡ Respon Instan</span>
+            <span style="font-size:0.68rem; background:#2563eb; color:#fff; padding:2px 8px; border-radius:10px; font-weight:600;">🔒 Tanpa Kirim WA</span>
+          </div>
+          <div style="font-size:0.75rem; color:var(--muted); margin-top:2px;">
+            Uji respon Gemini secara interaktif berdasarkan System Prompt &amp; KB produk toko Anda.
+          </div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button type="button" class="btn" onclick="simResetChat()" style="font-size:0.75rem; padding:5px 10px; background:var(--s2); border:1px solid var(--border); color:var(--text); cursor:pointer; font-weight:600; display:flex; align-items:center; gap:4px;" title="Hapus riwayat chat">
+            🔄 Reset Chat
+          </button>
+        </div>
+      </div>
+
+      <!-- Body Content: 2 Kolom (Kiri: Chat simulator, Kanan: Info & Panduan) -->
+      <div class="sim-container" style="flex:1; display:flex; overflow:hidden; background:var(--bg);">
+        <!-- Kolom Kiri: Chat UI -->
+        <div style="flex:1; min-width:0; display:flex; flex-direction:column; height:100%; border-right:1px solid var(--border); background:var(--s1);">
+          
+          <!-- Customer Info Bar -->
+          <div style="padding:7px 14px; background:#eff6ff; border-bottom:1px solid #dbeafe; font-size:0.74rem; color:#1e40af; display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
+            <span>📱 Customer Virtual: <b>0812-3335-0792</b> (Customer Test)</span>
+            <span id="simDurationBadge" style="font-size:0.72rem; color:#2563eb; font-weight:600;"></span>
+          </div>
+
+          <!-- Quick Message Chips -->
+          <div style="padding:6px 12px; background:var(--s2); border-bottom:1px solid var(--border); display:flex; gap:6px; overflow-x:auto; flex-shrink:0;">
+            <span style="font-size:0.7rem; color:var(--muted); align-self:center; font-weight:600; white-space:nowrap;">💡 Klik Cepat:</span>
+            <button type="button" class="btn" onclick="simSendQuick('Halo kak, mau tanya baby walking assistant?')" style="font-size:0.7rem; padding:3px 8px; background:var(--s1); border:1px solid var(--border); border-radius:12px; cursor:pointer; white-space:nowrap;">Tanya Produk</button>
+            <button type="button" class="btn" onclick="simSendQuick('Ini harganya berapa ya kak? Bisa COD?')" style="font-size:0.7rem; padding:3px 8px; background:var(--s1); border:1px solid var(--border); border-radius:12px; cursor:pointer; white-space:nowrap;">Harga &amp; COD</button>
+            <button type="button" class="btn" onclick="simSendQuick('Perumahan dalem taman tirto C3, rukeman, tamantirto, kasihan, bantul')" style="font-size:0.7rem; padding:3px 8px; background:var(--s1); border:1px solid var(--border); border-radius:12px; cursor:pointer; white-space:nowrap;">Kirim Alamat</button>
+            <button type="button" class="btn" onclick="simSendQuick('Dekat indomaret, nomor yang ini aja')" style="font-size:0.7rem; padding:3px 8px; background:var(--s1); border:1px solid var(--border); border-radius:12px; cursor:pointer; white-space:nowrap;">Patokan &amp; HP</button>
+            <button type="button" class="btn" onclick="simSendQuick('Iya sudah benar semua kak, boleh diproses ya')" style="font-size:0.7rem; padding:3px 8px; background:var(--s1); border:1px solid var(--border); border-radius:12px; cursor:pointer; white-space:nowrap;">Konfirmasi Rekap</button>
+          </div>
+
+          <!-- Messages List -->
+          <div id="simChatMessages" style="flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:10px; background:#f8fafc;">
+            <div id="simEmptyHint" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:40px 15px; color:var(--muted); margin:auto;">
+              <div style="font-size:2.2rem; margin-bottom:6px;">💬</div>
+              <div style="font-weight:700; font-size:0.92rem; color:var(--text); margin-bottom:4px;">Sandbox Simulasi Chat AI Siap Digunakan</div>
+              <div style="font-size:0.78rem; line-height:1.5; max-width:340px;">Ketik pesan customer di kolom bawah atau klik tombol cepat di atas untuk melihat respon Gemini secara real-time.</div>
+            </div>
+          </div>
+
+          <!-- Input Footer -->
+          <div style="padding:10px 14px; background:var(--s1); border-top:1px solid var(--border); flex-shrink:0;">
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="text" id="simChatInput" placeholder="Ketik pesan customer test... (Tekan Enter untuk kirim)" style="flex:1; padding:9px 12px; font-size:0.85rem; border-radius:8px; border:1px solid var(--border); background:var(--s2); color:var(--text); outline:none;" onkeydown="if(event.key==='Enter'&amp;&amp;!event.shiftKey){event.preventDefault();simSendMessage();}" />
+              <button id="simSendBtn" type="button" class="btn btn-green" onclick="simSendMessage()" style="padding:9px 16px; font-weight:700; font-size:0.85rem; cursor:pointer; border-radius:8px;">
+                Kirim ↵
+              </button>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Kolom Kanan: Panduan & WABA Validator (Side Panel) -->
+        <div class="sim-side-panel" style="width:280px; display:flex; flex-direction:column; overflow-y:auto; padding:14px; gap:12px; background:var(--s2); flex-shrink:0;">
+          <!-- Card Info -->
+          <div style="background:var(--s1); border:1px solid var(--border); border-radius:8px; padding:12px;">
+            <div style="font-size:0.72rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">ℹ️ Fitur Sandbox</div>
+            <div style="font-size:0.76rem; line-height:1.5; color:var(--text);">
+              • <b>Multi-turn memory:</b> Alur dari tanya varian s/d rekap tersimpan otomatis.<br/>
+              • <b>Bypass WA Meta:</b> Aman, tidak menyentuh WhatsApp API nyata.<br/>
+              • <b>Bypass delay:</b> Menjawab instan 1–2 detik tanpa timer tunggu 25–35 detik.
+            </div>
+          </div>
+
+          <!-- Quick Edit Card -->
+          <div style="background:var(--s1); border:1px solid var(--border); border-radius:8px; padding:12px; display:flex; flex-direction:column; gap:6px;">
+            <div style="font-size:0.72rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px;">⚙️ Edit Prompt &amp; KB</div>
+            <div style="font-size:0.74rem; color:var(--muted); line-height:1.4;">
+              Ubah instruksi CS atau data produk di tab Data, simpan, lalu langsung test hasilnya di sini.
+            </div>
+            <button type="button" class="btn btn-blue" onclick="switchTab('kb')" style="font-size:0.75rem; padding:6px 10px; cursor:pointer; margin-top:4px;">
+              📚 Buka Tab Data &amp; Prompt
+            </button>
+          </div>
+
+          <!-- Accordion: WABA Mock Validator -->
+          <details style="background:var(--s1); border:1px solid var(--border); border-radius:8px; padding:10px; font-size:0.76rem;">
+            <summary style="font-weight:600; cursor:pointer; color:var(--text);">🔬 Mode Tabel Turn WABA</summary>
+            <div style="margin-top:10px;">
+              <div style="font-size:0.7rem; color:var(--muted); margin-bottom:8px;">
+                Simulasi lewat pipeline server.js (phone <code>test_internal_0000</code>).
+              </div>
+              <div style="display:flex; gap:4px; margin-bottom:8px;">
+                <input id="itInput" type="text" placeholder="Pesan test WABA..." style="flex:1; padding:6px 8px; font-size:0.72rem; border:1px solid var(--border); border-radius:4px; background:var(--s2); color:var(--text);" />
+                <button class="btn btn-green" style="font-size:0.7rem; padding:6px 8px;" onclick="itSend()">↵</button>
+              </div>
+              <button class="btn" style="background:#ef4444; color:#fff; font-size:0.68rem; padding:3px 8px; border:none; border-radius:4px; margin-bottom:8px;" onclick="itReset()">🗑 Reset WABA History</button>
+              <div style="overflow-x:auto; max-height:180px;">
+                <table class="itest-table" style="font-size:0.68rem;">
+                  <thead>
+                    <tr>
+                      <th>Input</th>
+                      <th>Output</th>
+                      <th>Validasi</th>
+                    </tr>
+                  </thead>
+                  <tbody id="itTbody">
+                    <tr><td colspan="3" class="itest-empty">Belum ada turn WABA.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </details>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- TAB: AI-to-AI Test Session -->
+    <div class="tab-content" id="tab-aitest" style="flex:1">
+      <div class="tab-panel">
+        <div class="col-title" style="margin-bottom:4px">🧪 AI-to-AI Test Session</div>
+        <div class="ts" style="margin-bottom:16px;line-height:1.7">3 persona customer palsu dari log chat nyata akan tanya ke bot produksimu secara langsung. Tidak ada pesan yang dikirim ke WhatsApp — aman dijalankan kapan saja.</div>
+
+        <div style="display:flex;gap:10px;margin-bottom:20px;align-items:center;flex-wrap:wrap">
+          <button id="btnStartTest" class="btn btn-green" onclick="startAITest()">▶️ Jalankan Test</button>
+          <button id="btnStopTest" class="btn" onclick="stopAITest()" style="display:none;background:#ef4444;color:white;border:none">⏹ Stop</button>
+          <span id="aiTestStatus" style="font-size:0.8rem;color:var(--muted)">Belum dijalankan</span>
+        </div>
+
+        <!-- 3 kolom persona -->
+        <div id="aiTestGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">
+          <!-- diisi JS -->
+        </div>
+
+        <!-- Scorecard akhir -->
+        <div id="aiTestScorecard" style="display:none;margin-top:20px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px">
+          <div class="col-title" style="margin-bottom:10px">📊 Scorecard Akhir</div>
+          <div id="aiTestScorecardContent"></div>
+        </div>
+      </div>
+    </div>
+
     </div> <!-- tutup wrapper tab-content -->
   </div>
 
-  <!-- Panel Kanan: Sandbox Simulasi Chat AI (Murni Gemini, Tanpa Kirim WA) -->
-  <div class="col col-chat-sim">
-    <!-- Header -->
-    <div style="padding:12px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:var(--s2); flex-shrink:0">
-      <div>
-        <div style="font-weight:700; font-size:0.88rem; color:var(--text); display:flex; align-items:center; gap:6px">
-          💬 Sandbox Simulasi Chat
-        </div>
-        <div style="font-size:0.72rem; color:var(--muted)">Uji respon Gemini langsung (Tanpa kirim WA)</div>
-      </div>
-      <button type="button" class="btn" onclick="simResetChat()" style="font-size:0.72rem; padding:4px 8px; background:var(--s1); border:1px solid var(--border); color:var(--text); cursor:pointer" title="Hapus percakapan simulasi">
-        🔄 Reset
-      </button>
-    </div>
-
-    <!-- Phone Simulator Info -->
-    <div style="padding:6px 12px; background:#eff6ff; border-bottom:1px solid #dbeafe; font-size:0.72rem; color:#1e40af; display:flex; justify-content:space-between; align-items:center; flex-shrink:0">
-      <span>📱 Nomor Customer: <b>0812-3335-0792</b></span>
-      <span style="font-size:0.65rem; background:#2563eb; color:#fff; padding:1px 6px; border-radius:8px">Sandbox Mode</span>
-    </div>
-
-    <!-- Messages Container -->
-    <div id="simChatMessages" style="flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:10px; background:var(--s2); min-height:280px">
-      <div id="simEmptyHint" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:30px 10px; color:var(--muted); margin:auto">
-        <div style="font-size:2rem; margin-bottom:6px">🧪</div>
-        <div style="font-weight:600; font-size:0.85rem; margin-bottom:4px">Ruang Uji Coba Chat AI</div>
-        <div style="font-size:0.75rem; line-height:1.5; max-width:240px">Ketik chat seperti customer di bawah untuk mencoba respon prompt & alur closing secara instan.</div>
-      </div>
-    </div>
-
-    <!-- Input Footer -->
-    <div style="padding:10px 12px; background:var(--s1); border-top:1px solid var(--border); flex-shrink:0">
-      <div style="display:flex; gap:6px; align-items:center">
-        <input type="text" id="simChatInput" placeholder="Ketik pesan customer test... [Enter]" style="flex:1; padding:8px 10px; font-size:0.82rem; border-radius:6px; border:1px solid var(--border); background:var(--s2); color:var(--text)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();simSendMessage();}" />
-        <button id="simSendBtn" type="button" class="btn btn-green" onclick="simSendMessage()" style="padding:8px 12px; font-weight:600; font-size:0.82rem; cursor:pointer">
-          Kirim ↵
-        </button>
-      </div>
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px">
-        <span style="font-size:0.67rem; color:var(--muted)">⚡ Respon instan (tanpa delay ketik)</span>
-        <span id="simDurationBadge" style="font-size:0.67rem; color:var(--muted)"></span>
-      </div>
-    </div>
-  </div>
-      
-      </div>
-    </div>
+  </div> <!-- tutup main-cols -->
+</div> <!-- tutup view-settings -->
 
     <!-- VIEW GAMBAR -->
     <div id="view-gambar" class="view">
@@ -1791,10 +1893,10 @@ function simResetChat() {
   const area = document.getElementById('simChatMessages');
   if (area) {
     area.innerHTML = `
-      <div id="simEmptyHint" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:30px 10px; color:var(--muted); margin:auto">
-        <div style="font-size:2rem; margin-bottom:6px">🧪</div>
-        <div style="font-weight:600; font-size:0.85rem; margin-bottom:4px">Ruang Uji Coba Chat AI</div>
-        <div style="font-size:0.75rem; line-height:1.5; max-width:240px">Ketik chat seperti customer di bawah untuk mencoba respon prompt & alur closing secara instan.</div>
+      <div id="simEmptyHint" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:40px 15px; color:var(--muted); margin:auto;">
+        <div style="font-size:2.2rem; margin-bottom:6px;">💬</div>
+        <div style="font-weight:700; font-size:0.92rem; color:var(--text); margin-bottom:4px;">Sandbox Simulasi Chat AI Siap Digunakan</div>
+        <div style="font-size:0.78rem; line-height:1.5; max-width:340px;">Ketik pesan customer di kolom bawah atau klik tombol cepat di atas untuk melihat respon Gemini secara real-time.</div>
       </div>
     `;
   }
@@ -1802,6 +1904,14 @@ function simResetChat() {
   if (badge) badge.textContent = '';
   const input = document.getElementById('simChatInput');
   if (input) input.focus();
+}
+
+function simSendQuick(text) {
+  const input = document.getElementById('simChatInput');
+  if (input) {
+    input.value = text;
+    simSendMessage();
+  }
 }
 
 async function simSendMessage() {
@@ -2051,9 +2161,14 @@ function switchTab(name){
   if(activeTab) activeTab.classList.add('active');
   
   document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
-  document.getElementById('tab-'+name).classList.add('active');
+  const target = document.getElementById('tab-'+name);
+  if(target) target.classList.add('active');
   
   if(name==='key')loadKeyStatus();
+  if(name==='inttest'){
+    const inp = document.getElementById('simChatInput');
+    if(inp) setTimeout(() => inp.focus(), 60);
+  }
 }
 
 function parseProductBlocksClient(kb) {
@@ -2749,64 +2864,6 @@ async function doManualCekAlamat() {
   }
 }
 </script>
-
-
-<div class="tab-content" id="tab-inttest" style="flex:1">
-  <div class="itest-wrap">
-    <div class="itest-header">
-      <span class="itest-title">🔬 Internal Test Mode</span>
-      <span class="itest-badge">TIDAK dikirim ke WABA</span>
-      <span style="font-size:.75rem;color:var(--muted)">Phone virtual: <code>test_internal_0000</code></span>
-      <button class="btn" style="margin-left:auto;background:#c0392b;color:#fff;padding:6px 14px;font-size:.8rem" onclick="itReset()">🗑 Reset Session</button>
-    </div>
-
-    <div class="itest-input-row">
-      <input id="itInput" type="text" placeholder="Ketik pesan test... (Enter untuk kirim)" autocomplete="off" />
-      <button class="btn btn-green" style="padding:10px 20px;font-weight:600" onclick="itSend()">Kirim ↵</button>
-    </div>
-
-    <div style="overflow-x:auto">
-      <table class="itest-table">
-        <thead>
-          <tr>
-            <th class="itest-col-input">🔵 Input (dari WABA)</th>
-            <th class="itest-col-output">🟢 Output ke WABA</th>
-            <th class="itest-col-req">🟡 Gemini REQUEST</th>
-            <th class="itest-col-res">🟣 Gemini RESPONSE (raw)</th>
-            <th class="itest-col-val">✅ Validasi</th>
-          </tr>
-        </thead>
-        <tbody id="itTbody">
-          <tr><td colspan="5" class="itest-empty">Belum ada percakapan test.<br>Ketik pesan di atas untuk mulai.</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
-
-<div class="tab-content" id="tab-aitest" style="flex:1">
-  <div class="tab-panel">
-    <div class="col-title" style="margin-bottom:4px">🧪 AI-to-AI Test Session</div>
-    <div class="ts" style="margin-bottom:16px;line-height:1.7">3 persona customer palsu dari log chat nyata akan tanya ke bot produksimu secara langsung. Tidak ada pesan yang dikirim ke WhatsApp — aman dijalankan kapan saja.</div>
-
-    <div style="display:flex;gap:10px;margin-bottom:20px;align-items:center;flex-wrap:wrap">
-      <button id="btnStartTest" class="btn btn-green" onclick="startAITest()">▶️ Jalankan Test</button>
-      <button id="btnStopTest" class="btn" onclick="stopAITest()" style="display:none;background:#ef4444;color:white;border:none">⏹ Stop</button>
-      <span id="aiTestStatus" style="font-size:0.8rem;color:var(--muted)">Belum dijalankan</span>
-    </div>
-
-    <!-- 3 kolom persona -->
-    <div id="aiTestGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">
-      <!-- diisi JS -->
-    </div>
-
-    <!-- Scorecard akhir -->
-    <div id="aiTestScorecard" style="display:none;margin-top:20px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px">
-      <div class="col-title" style="margin-bottom:10px">📊 Scorecard Akhir</div>
-      <div id="aiTestScorecardContent"></div>
-    </div>
-  </div>
-</div>
 
 <script>
 // ── AI Test Tab Logic ────────────────────────────────────────────────────────

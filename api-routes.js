@@ -805,8 +805,10 @@ Jika ada informasi yang tidak tersedia dalam teks, isi dengan string kosong. Jan
   // ═══════════════════════════════════════════════════════════════════
 
   app.post('/api/test/internal/send', async (req, res) => {
-    const { sender, message, senderName } = req.body || {};
-    if (!sender || !message) return res.status(400).json({ error: 'Isi sender dan message' });
+    const message = req.body?.message;
+    const sender = req.body?.sender || 'test_internal_0000';
+    const senderName = req.body?.senderName || 'Internal Tester';
+    if (!message) return res.status(400).json({ error: 'Isi message' });
 
     const from = sender.replace(/\D/g, '');
     const name = senderName || sender;
