@@ -44,7 +44,8 @@ function parseShippingDestination(text) {
 // Return: { mongoId, code, name, city, province }
 async function searchLocationId(keyword) {
   try {
-    const url = `${MENGANTAR_BASE}/api/public/dummykey/address/search?keyword=${encodeURIComponent(keyword)}`;
+    const apiKey = (process.env.MENGANTAR_API_KEY || '').trim() || 'API-A44O3OQUZLDNWZNJ';
+    const url = `${MENGANTAR_BASE}/api/public/${apiKey}/address/search?keyword=${encodeURIComponent(keyword)}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
@@ -200,10 +201,40 @@ async function processCekOngkirTag(tagContent, itemValue) {
   };
 }
 
+// ── 6. Helper: Ganti semua tag [CEK_ONGKIR:...] dalam teks balasan AI ──
+async function resolveOngkirTags(replyText, itemValue = 100000) {
+  if (!replyText || typeof replyText !== 'string' || !replyText.includes('[CEK_ONGKIR:')) {
+    return replyText;
+  }
+
+  const regex = /\[CEK_ONGKIR:([^\]]+)\]/gi;
+  const matches = [...replyText.matchAll(regex)];
+  if (!matches.length) return replyText;
+
+  let resolved = replyText;
+  for (const m of matches) {
+    const fullTag = m[0];
+    const loc = m[1].trim();
+    try {
+      const res = await processCekOngkirTag(loc, itemValue);
+      if (res?.formatted) {
+        resolved = resolved.replace(fullTag, res.formatted);
+      } else {
+        resolved = resolved.replace(fullTag, `(Untuk estimasi ongkir ke ${loc} sedang kami konfirmasi ke admin ya Kak)`);
+      }
+    } catch (e) {
+      console.warn('[resolveOngkirTags] Error:', e.message);
+      resolved = resolved.replace(fullTag, '');
+    }
+  }
+  return resolved;
+}
+
 module.exports = {
   parseShippingDestination,
   searchLocationId,
   estimateOngkir,
   formatOngkirForCustomer,
   processCekOngkirTag,
+  resolveOngkirTags,
 };

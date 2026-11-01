@@ -865,7 +865,11 @@ Jika ada informasi yang tidak tersedia dalam teks, isi dengan string kosong. Jan
       })) : [];
 
       const startTime = Date.now();
-      const reply = await aiReply(message.trim(), name, formattedHistory, null, phone);
+      let reply = await aiReply(message.trim(), name, formattedHistory, null, phone);
+      if (reply && reply.includes('[CEK_ONGKIR:')) {
+        const { resolveOngkirTags } = require('./ongkir-helper');
+        reply = await resolveOngkirTags(reply);
+      }
       const duration = Date.now() - startTime;
 
       if (!reply) {

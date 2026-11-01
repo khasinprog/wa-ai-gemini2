@@ -94,8 +94,13 @@ PENTING: Hanya setelah customer membalas KONFIRMASI (misal: "ya", "betul", "oke"
   [ESCALATE:NamaProduk]pertanyaan customer[/ESCALATE]
 - Pertanyaan tersebut akan otomatis diteruskan ke Telegram admin toko untuk dijawab.
 
-=== ATURAN BISNIS ===
-- Harga SUDAH termasuk ongkir — jangan bilang ongkir belum termasuk.
+=== ATURAN BISNIS & CEK ONGKIR ===
+- Cek Biaya Ongkir Otomatis (Mengantar API):
+  * Jika customer menanyakan ongkir ("ongkir ke ... berapa?", "cek ongkir dong", dll):
+    - Jika nama kecamatan & kabupaten/kota tujuan SUDAH diketahui: SELALU gunakan tag [CEK_ONGKIR:NamaKecamatan, NamaKabupaten] agar sistem otomatis mengambil tarif ongkir real-time multi-kurir (J&T, JNE, SiCepat) via Mengantar.
+      Contoh: "Untuk ongkir ke Kasihan, Bantul rinciannya seperti ini ya Kak:\n[CEK_ONGKIR:Kasihan, Bantul]\nMau ambil warna apa nih Kak?"
+    - Jika nama kecamatan & kota tujuan BELUM diketahui: Tanyakan terlebih dahulu: "Boleh tahu nama kecamatan dan kabupaten/kota tujuannya Kak, biar kami cekkan tarif ongkirnya?"
+  * Jika produk di Informasi Produk tertulis GRATIS ONGKIR / SUDAH TERMASUK ONGKIR: Sebutkan bahwa produk sedang promo gratis ongkir. Namun jika customer tetap menanyakan perbandingan tarif kurir normal ke wilayahnya, gunakan tag [CEK_ONGKIR:Kecamatan, Kabupaten].
 - Nego: boleh beri diskon MAKSIMAL Rp10.000, tolak sopan jika minta lebih.
 - COD: paket tidak bisa dibuka sebelum dibayar ke kurir. Berikan jaminan retur jika cacat/tidak sesuai agar customer tenang.
 - Transfer: Bank Mandiri - 1240011135580 a/n Khasin Khafabi.
@@ -105,6 +110,7 @@ PENTING: Hanya setelah customer membalas KONFIRMASI (misal: "ya", "betul", "oke"
 - Singkat dan to-the-point (maksimal 2–3 kalimat kecuali saat menampilkan rekap).
 - Maksimal 1 pertanyaan per balasan di bagian akhir.
 - Kata "No/nomer/nomor" berarti "Nomor", bukan "tidak/batal".
+- Tag [CEK_ONGKIR:Kecamatan, Kabupaten]: Panggil tag ini saat customer tanya tarif ongkir ke lokasi tertentu. Sistem akan otomatis mengganti tag ini dengan tarif resmi Mengantar.
 - Tag [KIRIM_GAMBAR:NamaProduk]: Tambahkan di akhir pesan ketika pertama kali menjelaskan produk agar sistem mengirim foto produk.
 - Tag [SPLIT]: Pisahkan pesan jadi 2 bubble ketika produk pertama kali disebut.`;
 
@@ -143,7 +149,7 @@ try {
     settings = { ...DEF, ...JSON.parse(fs.readFileSync(SET_FILE, 'utf8')) };
   }
 } catch(e) {}
-if (!settings.systemPrompt || settings.systemPrompt.length <= 6000 || settings.systemPrompt.includes('nama jalan/perumahan, nomor rumah, RT/RW, desa/kelurahan, kecamatan, kabupaten/kota.')) {
+if (!settings.systemPrompt || settings.systemPrompt.length <= 7000 || !settings.systemPrompt.includes('CEK_ONGKIR:NamaKecamatan')) {
   settings.systemPrompt = DEFAULT_SYSTEM_PROMPT;
   try { fs.writeFileSync(SET_FILE, JSON.stringify(settings, null, 2)); } catch(e) {}
 }

@@ -105,6 +105,12 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
       // ── AI REPLY: kirim full history + system prompt, biarkan AI baca sendiri ──
       let reply = await aiReply(combinedBody, senderName, history, controller.signal, from, imagePath, audioPathForAI);
 
+      // P2-C: Proses tag [CEK_ONGKIR:kecamatan, kabupaten] via Mengantar API
+      if (reply && reply.includes('[CEK_ONGKIR:')) {
+        const { resolveOngkirTags } = require('./ongkir-helper');
+        reply = await resolveOngkirTags(reply);
+      }
+
       // Track apakah reply original berisi [ORDER_DATA] (untuk draft logic)
       const _replyHadOrderData = !!(reply && reply.includes('[ORDER_DATA]'));
 
@@ -462,6 +468,11 @@ async function retryFailedMessages() {
       entry.retryCount = (entry.retryCount || 0) + 1;
 
       let reply = await aiReply(entry.body, entry.senderName, history, null, entry.from);
+
+      if (reply && reply.includes('[CEK_ONGKIR:')) {
+        const { resolveOngkirTags } = require('./ongkir-helper');
+        reply = await resolveOngkirTags(reply);
+      }
 
       if (reply) {
         reply = extractOrder(reply, entry.from);
