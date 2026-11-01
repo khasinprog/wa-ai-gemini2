@@ -304,20 +304,6 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal, fr
   const model = settings.modelName || config.DEFAULT_MODEL;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
-  // Build contents from history — kirim SEMUA history agar AI bisa baca konteks lengkap
-  const contents = [];
-  if (history?.length) {
-    for (const h of history) {
-      // Skip summary entries — they are appended to system prompt, not contents
-      if (h._summary) continue;
-      contents.push({ role: 'user', parts: [{ text: h.body }] });
-      // B4: Skip cancelled/held replies so internal strings don't leak to Gemini context
-      if (h.aiReply && !h.cancelledEntry && !h.heldReply) {
-        contents.push({ role: 'model', parts: [{ text: h.aiReply }] });
-      }
-    }
-  }
-
   // P2-B: Include image as multimodal inline_data
   const userParts = [];
   if (imagePath && fs.existsSync(imagePath)) {
@@ -347,7 +333,65 @@ async function callGeminiDirect(key, keySlot, message, name, history, signal, fr
   }
 
   userParts.push({ text: message || '[customer mengirim pesan suara]' });
-  contents.push({ role: 'user', parts: userParts });
+
+  // Build contents from history and current message — pastikan strictly alternating user/model
+  const contents = [];
+
+  function appendUserPart(part) {
+    if (!part) return;
+    const last = contents[contents.length - 1];
+    if (last && last.role === 'user') {
+      if (part.text && last.parts.length > 0 && last.parts[last.parts.length - 1].text) {
+        last.parts[last.parts.length - 1].text += '\n' + part.text;
+      } else {
+        last.parts.push(part);
+      }
+    } else {
+      contents.push({ role: 'user', parts: [part] });
+    }
+  }
+
+  function appendModelReply(text) {
+    if (!text?.trim()) return;
+    const cleanText = text.trim();
+    const last = contents[contents.length - 1];
+    if (last && last.role === 'model') {
+      if (last.parts.length > 0 && last.parts[last.parts.length - 1].text) {
+        last.parts[last.parts.length - 1].text += '\n' + cleanText;
+      } else {
+        last.parts.push({ text: cleanText });
+      }
+    } else {
+      contents.push({ role: 'model', parts: [{ text: cleanText }] });
+    }
+  }
+
+  if (history?.length) {
+    for (const h of history) {
+      if (h._summary) continue;
+      if (h.body?.trim()) {
+        appendUserPart({ text: h.body.trim() });
+      }
+      // Only include model reply if it was actually delivered to customer (not cancelled, not held)
+      if (h.aiReply?.trim() && !h.cancelledEntry && !h.heldReply) {
+        appendModelReply(h.aiReply.trim());
+      }
+    }
+  }
+
+  // Current message parts (including image/audio multimodal)
+  for (const p of userParts) {
+    appendUserPart(p);
+  }
+
+  // Ensure conversation starts with user turn
+  while (contents.length > 0 && contents[0].role !== 'user') {
+    contents.shift();
+  }
+  // Ensure conversation ends with user turn (the current message)
+  if (contents.length === 0 || contents[contents.length - 1].role !== 'user') {
+    contents.push({ role: 'user', parts: userParts.length ? userParts : [{ text: message || '' }] });
+  }
 
   // Get relevant KB and build system prompt
   const relevantKB = getRelevantKnowledge(message, history);

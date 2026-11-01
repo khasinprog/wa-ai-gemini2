@@ -35,7 +35,7 @@ async function buildHistory(from, currentEntryId, maxEntries = 30) {
   // ── Fallback: baca dari in-memory JSON ──
   console.warn('[History] DB tidak aktif atau error — fallback ke JSON');
   const relevantMessages = store.messages
-    .filter(m => m.from === from && m.id !== currentEntryId && !m.cancelledEntry && m.aiReply)
+    .filter(m => m.from === from && m.id !== currentEntryId && !m.cancelledEntry)
     .sort((a, b) => a.id - b.id);
 
   if (relevantMessages.length <= maxEntries) return relevantMessages;

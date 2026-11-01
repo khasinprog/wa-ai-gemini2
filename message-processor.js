@@ -121,6 +121,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
           entry.heldReply = true;
           store.save(store.PATHS.MSG_FILE, store.messages);
           store.persistMessageToDB(entry);
+          store.io?.emit('message_updated', entry);
           return;
         }
 
@@ -215,6 +216,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
           if (controller.signal.aborted) {
             entry.replied = true; entry.aiReply = reply; entry.heldReply = true;
             store.save(store.PATHS.MSG_FILE, store.messages); store.persistMessageToDB(entry);
+            store.io?.emit('message_updated', entry);
             return;
           }
         }
@@ -234,6 +236,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
           entry.heldReply = true;
           store.save(store.PATHS.MSG_FILE, store.messages);
           store.persistMessageToDB(entry);
+          store.io?.emit('message_updated', entry);
           return;
         }
 
@@ -247,6 +250,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
           entry.heldReply = true;
           store.save(store.PATHS.MSG_FILE, store.messages);
           store.persistMessageToDB(entry);
+          store.io?.emit('message_updated', entry);
           return;
         }
 

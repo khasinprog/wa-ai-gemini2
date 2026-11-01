@@ -116,6 +116,7 @@ async function initDB() {
     // Draft mode: tambah kolom ai_reply_draft & draft_status jika belum ada
     await client.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS ai_reply_draft TEXT`);
     await client.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS draft_status VARCHAR(20) DEFAULT NULL`);
+    await client.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS held_reply BOOLEAN DEFAULT FALSE`);
     console.log('✅ [DB] Migration draft columns applied');
 
     // Cleanup old processed_wamids (older than 7 days) — non-fatal
@@ -137,11 +138,11 @@ async function saveMessage(msg) {
     INSERT INTO messages
       (waba_message_id, wa_id, sender_name, direction, sender_type, message_type,
        body, ai_reply, ai_reply_draft, draft_status,
-       replied, manual, cancelled_entry, retry_count,
+       replied, manual, cancelled_entry, held_reply, retry_count,
        media_url, media_mime_type, media_filename,
        link_url, link_title, link_description, link_thumbnail, link_domain,
        source, ad_id, raw_payload, timestamp)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
     ON CONFLICT (waba_message_id) DO UPDATE SET
       ai_reply = EXCLUDED.ai_reply,
       ai_reply_draft = EXCLUDED.ai_reply_draft,
@@ -149,6 +150,7 @@ async function saveMessage(msg) {
       replied = EXCLUDED.replied,
       manual = EXCLUDED.manual,
       cancelled_entry = EXCLUDED.cancelled_entry,
+      held_reply = EXCLUDED.held_reply,
       retry_count = EXCLUDED.retry_count
     RETURNING *
   `;
@@ -166,6 +168,7 @@ async function saveMessage(msg) {
     msg.replied || false,
     msg.manual || false,
     msg.cancelled_entry || msg.cancelledEntry || false,
+    msg.held_reply || msg.heldReply || false,
     msg.retry_count || msg.retryCount || 0,
     msg.media_url || msg.mediaUrl || null,
     msg.media_mime_type || msg.mediaMimeType || null,
@@ -249,6 +252,8 @@ function dbRowToMsg(row) {
     manual: row.manual,
     cancelledEntry: row.cancelled_entry,
     cancelled_entry: row.cancelled_entry,
+    heldReply: row.held_reply || false,
+    held_reply: row.held_reply || false,
     retryCount: row.retry_count,
     retry_count: row.retry_count,
     mediaUrl: row.media_url,
@@ -284,12 +289,11 @@ async function getHistoryForAI(waId, limit = 30, excludeId = null) {
   try {
     const res = await pool.query(`
       SELECT id, wa_id, body, ai_reply, ai_reply_draft, draft_status,
-             cancelled_entry, replied, timestamp
+             cancelled_entry, held_reply, replied, timestamp
       FROM messages
       WHERE wa_id = $1
         AND direction = 'inbound'
         AND cancelled_entry = false
-        AND ai_reply IS NOT NULL
         AND ($2::bigint IS NULL OR id != $2)
       ORDER BY timestamp ASC
       LIMIT $3
@@ -303,6 +307,7 @@ async function getHistoryForAI(waId, limit = 30, excludeId = null) {
       aiReplyDraft:  row.ai_reply_draft,
       draftStatus:   row.draft_status,
       cancelledEntry: row.cancelled_entry,
+      heldReply:     row.held_reply || false,
       replied:       row.replied,
       timestamp:     row.timestamp,
     }));

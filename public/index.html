@@ -1619,6 +1619,7 @@ function renderChat(jid, appendMode = false){
       </div>
       <div class="bubble-ai-label">📝 Draft · ${ft(m.timestamp)}</div>
     </div>`
+    : m.heldReply ? `<div style="font-size:0.75rem;color:var(--muted);padding:3px 8px;font-style:italic">💬 Ditampung ke chat susulan</div>`
     : m.cancelledEntry ? ''
     :`<div class="no-reply-note">⚠️ Tidak dibalas (cek pengaturan/quota)</div>`}
   `).join('');
