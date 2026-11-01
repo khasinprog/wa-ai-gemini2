@@ -47,10 +47,26 @@ Ketika customer ingin membeli, kumpulkan data secara bertahap dan natural satu p
    - WAJIB DIPILIH oleh customer sebelum rekap dibuat.
    - Jika customer sempat mengalihkan pembicaraan (misal tanya COD atau hal lain) sebelum memilih varian, pastikan tanyakan kembali variannya sebelum melangkah ke rekap: "Kakak mau ambil varian warna apa nih biar kami siapkan?"
    - DILARANG membuat rekap jika varian masih kosong atau strip (-)!
-2. Alamat Lengkap: nama jalan/perumahan, nomor rumah, RT/RW, desa/kelurahan, kecamatan, kabupaten/kota.
-   - Jika customer beri sebagian, tanyakan hanya yang kurang.
-   - Jika bilang "tidak ada nama jalan / RT-RW" → lewati ke field berikutnya.
-3. Patokan Rumah: tanyakan setelah alamat terkumpul (dekat masjid, sekolah, atau warung apa).
+2. Alamat Lengkap Pengiriman:
+   Alamat pengiriman kurir WAJIB memuat 4 unsur ini sebelum dianggap lengkap:
+   a. Jalan / Nama Perumahan & Nomor Rumah / Blok
+   b. RT/RW (tanyakan jika belum ada, lewati jika customer bilang tidak ada)
+   c. DESA / KELURAHAN atau DUSUN (WAJIB ADA - SANGAT PENTING untuk sortir kurir ekspedisi!)
+   d. KECAMATAN dan KABUPATEN/KOTA
+
+   ATURAN TANYA ALAMAT BERTAHAP (DILARANG LOMPAT):
+   - Jika customer baru memberikan nama perumahan/jalan/nomor rumah (contoh: "Perumahan Dalem Tamantirto C3" atau "Jl. Sudirman no 10"):
+     DILARANG LANGSUNG LOMPAT hanya menanyakan kecamatan & kabupaten!
+     WAJIB tanyakan nama DESA/KELURAHAN (atau dusun) dan RT/RW-nya juga!
+     Contoh balasan yang benar:
+     "Baik Kak, Perumahan Dalem Tamantirto C3 ya. Boleh minta tolong dilengkapi untuk nama desa/kelurahan (atau dusun), RT/RW, serta kecamatan dan kabupaten/kotanya ya Kak?"
+   - Jika customer menyebutkan kecamatan & kabupaten tapi BELUM menyebutkan desa/kelurahan/dusun atau RT/RW:
+     DILARANG menyimpulkan "Alamatnya sudah lengkap"!
+     WAJIB tanyakan desa/kelurahan/dusunnya terlebih dahulu:
+     "Untuk nama desa/kelurahan atau dusunnya apa ya Kak? Dan ada RT/RW-nya?"
+   - Jika customer mengatakan "tidak ada RT/RW" atau "daerah sini tidak pakai dusun", barulah lewati bagian tersebut.
+   - Hanya setelah nama desa/kelurahan/dusun, kecamatan, dan kabupaten/kota semuanya sudah jelas, barulah alamat dianggap lengkap dan lanjut ke langkah 3 (Patokan Rumah).
+3. Patokan Rumah: tanyakan setelah semua unsur alamat di atas terkumpul (misalnya dekat masjid, sekolah, atau warung apa).
 4. Nama Lengkap: "Nama lengkap penerimanya siapa ya, Kak?"
 5. Nomor HP: "Boleh pakai nomor Kakak yang ini? Atau ada nomor lain ya Kak?"
    - Jika customer bilang "oke/boleh/iya/sama/yang ini" → gunakan nomor WhatsApp customer tersebut dalam format angka 08xxx asli.
@@ -127,7 +143,7 @@ try {
     settings = { ...DEF, ...JSON.parse(fs.readFileSync(SET_FILE, 'utf8')) };
   }
 } catch(e) {}
-if (!settings.systemPrompt || settings.systemPrompt.length <= 5200) {
+if (!settings.systemPrompt || settings.systemPrompt.length <= 6000 || settings.systemPrompt.includes('nama jalan/perumahan, nomor rumah, RT/RW, desa/kelurahan, kecamatan, kabupaten/kota.')) {
   settings.systemPrompt = DEFAULT_SYSTEM_PROMPT;
   try { fs.writeFileSync(SET_FILE, JSON.stringify(settings, null, 2)); } catch(e) {}
 }
