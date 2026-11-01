@@ -935,8 +935,16 @@ input:checked+.slider:before{transform:translateX(18px)}
     <div class="tab-content" id="tab-kb" style="flex:1">
       <div class="tab-panel">
         <div class="fg">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <label class="lbl" style="margin-bottom:0">🎯 System Prompt & Prosedur CS (Instruksi Utama)</label>
+            <button type="button" class="btn" onclick="resetDefaultPrompt()" style="font-size:0.75rem;padding:4px 8px;background:var(--s2);border:1px solid var(--border);color:var(--text);cursor:pointer">🔄 Reset ke Default</button>
+          </div>
+          <textarea id="systemPrompt" rows="15" style="font-family:monospace;font-size:0.85rem;line-height:1.5" placeholder="Instruksi utama CS..."></textarea>
+          <div class="ts" style="margin-top:6px;line-height:1.6">💡 <b>All-in-One Master Prompt:</b> Mengatur persona CS, formula 2 langkah (jawab + arahkan beli), pengumpulan data order bertahap, aturan COD/Transfer, dan eskalasi Telegram. Murni digerakkan oleh AI seperti Gemini Chat tanpa alur kode kaku.</div>
+        </div>
+        <div class="fg">
           <label class="lbl">📦 Informasi Produk & Bisnis (1-5 produk)</label>
-          <textarea id="knowledgeBase" rows="12" placeholder="=== PRODUK: Baby Walking Assistant ===
+          <textarea id="knowledgeBase" rows="10" placeholder="=== PRODUK: Baby Walking Assistant ===
 Harga: Rp 150.000
 Warna: Merah, Biru, Kuning
 Stok: Tersedia
@@ -950,21 +958,15 @@ Keunggulan: Kedap udara, tahan lama
 Garansi: 6 bulan"></textarea>
           <div class="ts" style="margin-top:6px;line-height:1.6">💡 Tulis tiap produk diawali <b>=== PRODUK: Nama Produk ===</b> lalu pisahkan antar produk dengan baris <b>---</b>. Format ini membuat AI otomatis fokus ke produk yang ditanya pelanggan (lebih hemat & akurat).</div>
         </div>
-        <div class="fg">
-          <label class="lbl">🎯 Panduan Follow Up & Closing</label>
-          <textarea id="followUp" rows="7" placeholder="Tulis panduan closing. Contoh:
-
-1. Sapa pelanggan dengan ramah
-2. Tanyakan kebutuhan spesifik
-3. Jelaskan keunggulan produk yang relevan
-4. Jika tanya harga, sebutkan harga + garansi
-5. Tanya alamat untuk cek ongkir
-6. Dorong order hari ini: stok terbatas
-7. Jika ragu, tawarkan garansi uang kembali 7 hari"></textarea>
-        </div>
-        <div style="display:flex;gap:10px;align-items:center;">
-          <button class="btn btn-green" onclick="saveKB()">💾 Simpan Manual (Biasa)</button>
-          <button id="btnAiFormat" class="btn btn-primary" onclick="formatAndSaveKB()" style="background:linear-gradient(135deg, #8b5cf6, #3b82f6);color:white;border:none;border-radius:6px;font-weight:600;display:flex;align-items:center;gap:6px;">✨ Rapikan dengan AI & Simpan</button>
+        <details style="margin-bottom:14px">
+          <summary style="cursor:pointer;font-size:0.85rem;color:var(--muted)">⚙️ Catatan / Prosedur Tambahan (Opsional)</summary>
+          <div class="fg" style="margin-top:8px">
+            <textarea id="followUp" rows="4" placeholder="Catatan prosedur tambahan bila ada..."></textarea>
+          </div>
+        </details>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-green" onclick="saveKB()">💾 Simpan (Prompt & Produk)</button>
+          <button id="btnAiFormat" class="btn btn-primary" onclick="formatAndSaveKB()" style="background:linear-gradient(135deg, #8b5cf6, #3b82f6);color:white;border:none;border-radius:6px;font-weight:600;display:flex;align-items:center;gap:6px;">✨ Rapikan Produk dengan AI & Simpan</button>
         </div>
         <div class="save-ok" id="kbOk"></div>
       </div>
@@ -1404,6 +1406,7 @@ function applySettings(s){
   document.getElementById('tempVal').textContent=s.temperature??0.7;
   document.getElementById('wl').value=(s.whitelist||[]).join('\n');
   document.getElementById('adminNumber').value=s.adminNumber||'';
+  if(document.getElementById('systemPrompt')) document.getElementById('systemPrompt').value=s.systemPrompt||'';
   document.getElementById('knowledgeBase').value=s.knowledgeBase||'';
   document.getElementById('followUp').value=s.followUp||'';
   document.getElementById('debounceSeconds').value=s.debounceSeconds??6;
@@ -1707,11 +1710,29 @@ async function saveShippingConfig(){
 }
 
 async function saveKB(){
+  const systemPrompt = document.getElementById('systemPrompt') ? document.getElementById('systemPrompt').value : '';
+  const knowledgeBase = document.getElementById('knowledgeBase') ? document.getElementById('knowledgeBase').value : '';
+  const followUp = document.getElementById('followUp') ? document.getElementById('followUp').value : '';
   await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-    knowledgeBase:document.getElementById('knowledgeBase').value,
-    followUp:document.getElementById('followUp').value,
+    systemPrompt,
+    knowledgeBase,
+    followUp,
   })});
-  flash('kbOk','✅ Training disimpan secara manual!');
+  flash('kbOk','✅ System Prompt & Produk berhasil disimpan!');
+}
+
+async function resetDefaultPrompt(){
+  if(!confirm('Kembalikan System Prompt ke template default standar (Sapaan, formula 2-step arahkan beli, format rekap, eskalasi)?')) return;
+  try {
+    const res = await fetch('/api/default-system-prompt');
+    const data = await res.json();
+    if (data.defaultSystemPrompt) {
+      document.getElementById('systemPrompt').value = data.defaultSystemPrompt;
+      flash('kbOk','🔄 Prompt di-reset ke default! Klik "Simpan" untuk menerapkan.');
+    }
+  } catch(e) {
+    alert('Gagal mengambil prompt default: ' + e.message);
+  }
 }
 
 async function formatAndSaveKB(){

@@ -278,104 +278,19 @@ function logGeminiRequest(direction, data) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// BUILD SYSTEM PROMPT (inline for now)
+// BUILD SYSTEM PROMPT (All-in-One Master Prompt + Knowledge Base)
 // ═══════════════════════════════════════════════════════════════════
 function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesForFrom) {
   const settings = store.settings;
-  const orderStates = store.orderStates;
+  const masterPrompt = (settings.systemPrompt || store.DEFAULT_SYSTEM_PROMPT || '').trim();
 
-  const parts = [
-    `Kamu adalah ${settings.persona || 'admin customer service toko online'}.`,
-    `Balas pesan WhatsApp customer dengan bahasa percakapan yang hangat dan natural — seperti admin toko sungguhan, bukan robot.`,
-    `Panggil customer "Kak". Perkenalkan diri sebagai "kami" atau "admin toko", JANGAN sebut nama persona dan JANGAN akui kamu AI kecuali ditanya langsung.`,
-    `Bahasa: ${settings.language || 'Indonesia sehari-hari'} | Tone: ${settings.tone || 'ramah dan santai'}`,
-    '',
-  ];
+  const parts = [masterPrompt];
 
-  // Knowledge Base
+  // Sisipkan Knowledge Base produk di bawah Master Prompt
   if (relevantKB?.trim()) {
-    parts.push('=== INFO PRODUK & TOKO ===');
+    parts.push('\n\n=== INFORMASI PRODUK (KNOWLEDGE BASE) ===');
     parts.push(relevantKB.trim());
-    parts.push('');
   }
-
-  // Custom procedures from settings
-  if (settings.followUp?.trim()) {
-    parts.push('=== PROSEDUR KHUSUS ===');
-    parts.push(settings.followUp.trim());
-    parts.push('');
-  }
-
-  // ── CORE: How to serve customer ──────────────────────────────────
-  parts.push('=== CARA MELAYANI ===');
-  parts.push('⚡ ATURAN PALING PENTING: BACA SELURUH RIWAYAT CHAT sebelum menjawab.');
-  parts.push('Jangan PERNAH menanyakan informasi yang sudah diberikan customer di pesan sebelumnya.');
-  parts.push('');
-  parts.push('Ketika customer ingin membeli, kumpulkan data berikut secara natural — satu per satu, sesuai konteks chat:');
-  parts.push('  1. Nama lengkap penerima');
-  parts.push('  2. Alamat: nama jalan/gang/perumahan + nomor rumah');
-  parts.push('  3. RT/RW (jika tidak ada RT/RW, tidak apa-apa)');
-  parts.push('  4. Desa / kelurahan');
-  parts.push('  5. Kecamatan');
-  parts.push('  6. Kota / kabupaten');
-  parts.push('  7. Patokan rumah (dekat masjid/sekolah/toko/dll)');
-  parts.push('  8. Nomor HP untuk kurir (tawarkan: "Boleh pakai nomor WA ini Kak, atau ada nomor lain?")');
-  parts.push('  9. Metode bayar: COD atau Transfer');
-  parts.push('');
-  parts.push('Setelah SEMUA data di atas sudah ada di chat history, tampilkan rekap pesanan dan minta konfirmasi customer.');
-  parts.push('Setelah customer KONFIRMASI rekap (bukan saat rekap ditampilkan), sisipkan blok ini di akhir balasan:');
-  parts.push('[ORDER_DATA]{"nama":"Nama Lengkap","hp":"Nomor HP atau SAMA_DENGAN_WA","produk":"Nama Produk","alamat":"Alamat lengkap satu baris","pembayaran":"COD atau Transfer"}[/ORDER_DATA]');
-  parts.push('PENTING: Jangan sisipkan [ORDER_DATA] sebelum customer konfirmasi rekap!');
-  parts.push('');
-
-  // ── Business rules ───────────────────────────────────────────────
-  parts.push('=== ATURAN BISNIS ===');
-  parts.push('- Harga SUDAH termasuk ongkir — jangan bilang ongkir belum termasuk');
-  parts.push('- Nego: boleh kasih diskon MAKSIMAL Rp10.000, tolak kalau minta lebih');
-  parts.push('- Harga reseller/grosir: TOLAK sopan, harga tetap sama');
-  parts.push('- Customer batal: terima sopan, jangan tawarkan alternatif apapun');
-  parts.push('- Customer marah/sarkas: tetap balas sopan dan normal');
-  parts.push('- COD: paket tidak bisa dibuka sebelum dibayar. Jika tidak sesuai bisa ajukan retur.');
-  if (PAYMENT.bankName && PAYMENT.accountNumber) {
-    parts.push(`- Transfer: Bank ${PAYMENT.bankName} - ${PAYMENT.accountNumber} a/n ${PAYMENT.accountName}`);
-  }
-  parts.push('');
-
-  // ── Response style ───────────────────────────────────────────────
-  parts.push('=== GAYA BALASAN ===');
-  parts.push('- Singkat dan langsung ke inti. Maksimal 2-3 kalimat kecuali sedang rekap pesanan.');
-  parts.push('- MAKSIMAL 1 pertanyaan per balasan. Selalu akhiri dengan 1 pertanyaan yang mengarah ke closing.');
-  parts.push('- Emoji sesekali saja, tidak perlu setiap kalimat.');
-  parts.push('- Pisahkan paragraf dengan baris baru.');
-  parts.push('- Jangan pakai tanda petik di awal/akhir pesan.');
-  parts.push('- Kata "No"/"nomer"/"nomor" dalam bahasa Indonesia BERARTI "Nomor", bukan "tidak".');
-  parts.push(isFirstMessage
-    ? '- Pesan PERTAMA: boleh sebutkan 1-2 keunggulan utama produk secara singkat.'
-    : '- Sudah ada riwayat chat: JANGAN ulangi penjelasan yang sudah pernah diberikan.');
-  parts.push('');
-
-  // ── Special tags ─────────────────────────────────────────────────
-  parts.push('=== TAG KHUSUS ===');
-
-  // Image tags
-  const productsWithImages = Object.keys(settings.productImages || {}).filter(k => settings.productImages[k]?.some(img => img));
-  if (productsWithImages.length > 0) {
-    const alreadyImaged = productsWithImages.filter(p => sentImagesForFrom?.has(p));
-    const notYetImaged  = productsWithImages.filter(p => !sentImagesForFrom?.has(p));
-    if (notYetImaged.length > 0) {
-      parts.push(`- Setelah menjelaskan produk (${notYetImaged.join(', ')}): tambahkan [KIRIM_GAMBAR:NamaProduk]`);
-      parts.push('- Gambar hanya dikirim SEKALI per produk per percakapan.');
-    }
-    if (alreadyImaged.length > 0) {
-      parts.push(`- Gambar SUDAH dikirim (jangan kirim lagi): ${alreadyImaged.join(', ')}`);
-    }
-  }
-
-  parts.push('- Produk disebut PERTAMA KALI: pisah jadi 2 pesan dengan [SPLIT] (baris 1: konfirmasi produk | baris 2: penjelasan detail+harga). Jangan [SPLIT] kalau produk sudah pernah dibahas.');
-  parts.push('- Jika ada pertanyaan TIDAK ADA di KB (estimasi kirim, stok, tracking): jawab singkat dulu lalu sisipkan [ESCALATE:NamaProduk]pertanyaan untuk admin[/ESCALATE]');
-  parts.push('- Jangan mengarang jawaban untuk hal yang tidak ada di KB.');
-  parts.push('- Jika menerima pesan suara (audio): dengarkan isinya dan balas berdasarkan konten suara.');
-  parts.push('');
 
   return parts.join('\n');
 }

@@ -130,6 +130,7 @@ function registerApiRoutes(app, io) {
   app.get('/api/messages', (_, res) => res.json(store.messages.slice(0, 2000)));
 
   app.get('/api/settings', (_, res) => res.json(store.settings));
+  app.get('/api/default-system-prompt', (_, res) => res.json({ defaultSystemPrompt: store.DEFAULT_SYSTEM_PROMPT }));
 
   // ═══════════════════════════════════════════════════════════════════
   // PWA PUSH NOTIFICATION

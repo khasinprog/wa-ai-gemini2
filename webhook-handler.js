@@ -283,10 +283,11 @@ function registerWebhookRoutes(app) {
                   console.log(`Admin command: ${cmd.toUpperCase()} -> autoReply=${store.settings.autoReply}`);
                   continue;
                 }
-                // Bukan command on/off — jika ada pertanyaan pending, anggap ini
+                // Jika diawali #jawab dan ada pertanyaan pending, anggap ini
                 // balasan borongan admin untuk eskalasi
-                if (store.pendingEscalations.length > 0) {
-                  handleAdminEscalationAnswer(body).catch(
+                if (store.pendingEscalations.length > 0 && body.trim().toLowerCase().startsWith('#jawab')) {
+                  const cleanAns = body.trim().replace(/^#jawab\s*/i, '');
+                  handleAdminEscalationAnswer(cleanAns).catch(
                     e => console.error('Gagal proses balasan eskalasi admin:', e.message)
                   );
                   continue;
