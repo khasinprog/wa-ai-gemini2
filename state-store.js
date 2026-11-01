@@ -97,10 +97,11 @@ PENTING: Hanya setelah customer membalas KONFIRMASI (misal: "ya", "betul", "oke"
 === ATURAN BISNIS & CEK ONGKIR ===
 - Cek Biaya Ongkir Otomatis (Mengantar API):
   * Jika customer menanyakan ongkir ("ongkir ke ... berapa?", "cek ongkir dong", dll):
-    - Jika nama kecamatan & kabupaten/kota tujuan SUDAH diketahui: SELALU gunakan tag [CEK_ONGKIR:NamaKecamatan, NamaKabupaten] agar sistem otomatis mengambil tarif ongkir real-time multi-kurir (J&T, JNE, SiCepat) via Mengantar.
-      Contoh: "Untuk ongkir ke Kasihan, Bantul rinciannya seperti ini ya Kak:\n[CEK_ONGKIR:Kasihan, Bantul]\nMau ambil warna apa nih Kak?"
-    - Jika nama kecamatan & kota tujuan BELUM diketahui: Tanyakan terlebih dahulu: "Boleh tahu nama kecamatan dan kabupaten/kota tujuannya Kak, biar kami cekkan tarif ongkirnya?"
-  * Jika produk di Informasi Produk tertulis GRATIS ONGKIR / SUDAH TERMASUK ONGKIR: Sebutkan bahwa produk sedang promo gratis ongkir. Namun jika customer tetap menanyakan perbandingan tarif kurir normal ke wilayahnya, gunakan tag [CEK_ONGKIR:Kecamatan, Kabupaten].
+    - Jika nama desa/kecamatan & kabupaten/kota tujuan SUDAH diketahui: SELALU gunakan tag [CEK_ONGKIR:NamaDesa, NamaKecamatan, NamaKabupaten] atau [CEK_ONGKIR:NamaKecamatan, NamaKabupaten] agar sistem otomatis mengambil tarif ongkir real-time multi-kurir (J&T, JNE, SiCepat) via Mengantar.
+      Sangat dianjurkan menyertakan nama DESA/KELURAHAN jika customer menyebutkannya (contoh: [CEK_ONGKIR:Tamantirto, Kasihan, Bantul]) agar tarif dan jangkauan kurir Mengantar 100% presisi per kelurahan!
+      Contoh balasan: "Untuk ongkir ke Tamantirto, Kasihan, Bantul rinciannya seperti ini ya Kak:\n[CEK_ONGKIR:Tamantirto, Kasihan, Bantul]\nMau ambil warna apa nih Kak?"
+    - Jika nama desa/kecamatan & kota tujuan BELUM diketahui: Tanyakan terlebih dahulu: "Boleh tahu nama desa/kelurahan, kecamatan dan kabupaten/kota tujuannya Kak, biar kami cekkan tarif ongkirnya?"
+  * Jika produk di Informasi Produk tertulis GRATIS ONGKIR / SUDAH TERMASUK ONGKIR: Sebutkan bahwa produk sedang promo gratis ongkir. Namun jika customer tetap menanyakan perbandingan tarif kurir normal ke wilayahnya, gunakan tag [CEK_ONGKIR:Desa, Kecamatan, Kabupaten].
 - Nego: boleh beri diskon MAKSIMAL Rp10.000, tolak sopan jika minta lebih.
 - COD: paket tidak bisa dibuka sebelum dibayar ke kurir. Berikan jaminan retur jika cacat/tidak sesuai agar customer tenang.
 - Transfer: Bank Mandiri - 1240011135580 a/n Khasin Khafabi.
@@ -149,7 +150,7 @@ try {
     settings = { ...DEF, ...JSON.parse(fs.readFileSync(SET_FILE, 'utf8')) };
   }
 } catch(e) {}
-if (!settings.systemPrompt || settings.systemPrompt.length <= 7000 || !settings.systemPrompt.includes('CEK_ONGKIR:NamaKecamatan')) {
+if (!settings.systemPrompt || settings.systemPrompt.length <= 7000 || !settings.systemPrompt.includes('Tamantirto, Kasihan, Bantul')) {
   settings.systemPrompt = DEFAULT_SYSTEM_PROMPT;
   try { fs.writeFileSync(SET_FILE, JSON.stringify(settings, null, 2)); } catch(e) {}
 }

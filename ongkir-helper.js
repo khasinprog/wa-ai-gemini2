@@ -53,17 +53,22 @@ async function searchLocationId(keyword) {
     const results = data?.data || [];
     if (!results.length) return null;
 
-    // Pilih hasil terbaik: prioritaskan DISTRICT_NAME cocok kata pertama keyword
-    const kw0 = keyword.toLowerCase().split(' ')[0];
+    // Pilih hasil terbaik: prioritaskan SUBDISTRICT_NAME (desa) atau DISTRICT_NAME (kecamatan)
+    const kwLower = keyword.toLowerCase();
+    const kwWords = kwLower.split(/[\s,]+/).filter(Boolean);
     const best =
-      results.find(r => (r.DISTRICT_NAME || '').toLowerCase().includes(kw0)) ||
-      results.find(r => (r.SUBDISTRICT_NAME || '').toLowerCase().includes(kw0)) ||
+      results.find(r => kwWords.some(w => (r.SUBDISTRICT_NAME || '').toLowerCase() === w)) ||
+      results.find(r => kwWords.some(w => (r.DISTRICT_NAME || '').toLowerCase() === w)) ||
+      results.find(r => (r.SUBDISTRICT_NAME || '').toLowerCase().includes(kwWords[0])) ||
+      results.find(r => (r.DISTRICT_NAME || '').toLowerCase().includes(kwWords[0])) ||
       results[0];
+
+    const fullName = [best.SUBDISTRICT_NAME, best.DISTRICT_NAME, best.CITY_NAME].filter(Boolean).join(', ');
 
     return {
       mongoId: best._id,
       code:    best.DESTINATION_CODE,
-      name:    `${best.DISTRICT_NAME}, ${best.CITY_NAME}`,
+      name:    fullName,
       city:    best.CITY_NAME,
       province: best.PROVINCE_NAME,
     };
