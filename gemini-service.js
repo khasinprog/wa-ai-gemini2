@@ -295,6 +295,34 @@ function buildSystemPrompt(name, relevantKB, isFirstMessage, from, sentImagesFor
     parts.push(`Saat menanyakan nomor HP kurir atau menampilkan rekap pesanan, SELALU tampilkan nomor HP dalam format angka asli ${customerPhone08} (bukan kata "Nomor WA ini") agar customer bisa mengecek ulang nomornya.`);
   }
 
+  // Sisipkan Informasi Pesanan & Status Pengiriman (Resi / Tracking) Customer
+  if (store.orders && store.orders.length > 0) {
+    const customerOrders = store.orders.filter(o => {
+      const matchJid = from && (o.jid === from || o.wa_id === from);
+      const cleanOPhone = (o.hp || '').replace(/\D/g, '');
+      const cleanCust = customerPhone08.replace(/\D/g, '');
+      const matchPhone = cleanCust && cleanOPhone && (cleanCust.endsWith(cleanOPhone.slice(-8)) || cleanOPhone.endsWith(cleanCust.slice(-8)));
+      return matchJid || matchPhone;
+    });
+
+    if (customerOrders.length > 0) {
+      const latestOrder = customerOrders[0];
+      parts.push(`\n=== DATA PESANAN & STATUS PENGIRIMAN CUSTOMER INI ===`);
+      parts.push(`Customer ini tercatat sudah memiliki pesanan:`);
+      parts.push(`- ID Pesanan: ORD-${latestOrder.id.slice(-6)}`);
+      parts.push(`- Produk: ${latestOrder.produk}`);
+      parts.push(`- Ekspedisi: ${latestOrder.courier || 'SPX'}`);
+      parts.push(`- Metode: ${latestOrder.metode_pengiriman || latestOrder.payment_method || 'COD'}`);
+      parts.push(`- Nomor Resi: ${latestOrder.no_resi || '(Belum terbit / Sedang disiapkan kurir)'}`);
+      parts.push(`- Status Paket Terkini ("Sampai Mana"): ${latestOrder.tracking_status || (latestOrder.no_resi ? 'Paket dalam perjalanan kurir' : 'Pesanan sedang diproses dan menunggu penjemputan kurir')}`);
+      if (latestOrder.tracking_date) {
+        parts.push(`- Waktu Update Terakhir: ${latestOrder.tracking_date}`);
+      }
+      parts.push(`INSTRUKSI PENTING CS UNTUK RESI & TRACKING:`);
+      parts.push(`Jika customer bertanya tentang nomor resi, pesanan sudah dikirim belum, atau paketnya sampai mana, JAWAB LANGSUNG menggunakan data di atas secara ramah, sopan, dan jelas.`);
+    }
+  }
+
   // Sisipkan Knowledge Base produk di bawah Master Prompt
   if (relevantKB?.trim()) {
     parts.push('\n\n=== INFORMASI PRODUK (KNOWLEDGE BASE) ===');
