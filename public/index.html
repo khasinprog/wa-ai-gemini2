@@ -144,6 +144,14 @@ header{display:flex;justify-content:space-between;align-items:center;padding:12p
 .badge-retur{background:#fee2e2;color:#991b1b;}
 .badge-batal{background:#f1f5f9;color:#475569;}
 
+/* Grouping & Minimize styles */
+.order-group-btn{padding:5px 12px;border-radius:6px;font-size:0.75rem;font-weight:600;cursor:pointer;border:1px solid transparent;background:transparent;color:var(--muted);transition:all .15s}
+.order-group-btn:hover{color:var(--text);background:rgba(0,0,0,0.04)}
+.order-group-btn.active{background:var(--blue);color:#fff;border-color:var(--blue);box-shadow:0 1px 3px rgba(37,99,235,0.25)}
+.order-group-header-row{cursor:pointer;user-select:none;background:#f8fafc;border-top:2px solid #e2e8f0;border-bottom:1px solid #cbd5e1;transition:background .15s}
+.order-group-header-row:hover td{background:#f1f5f9!important}
+.order-group-chevron{display:inline-block;font-size:0.75rem;width:14px;text-align:center;transition:transform .2s;color:var(--muted)}
+
 select.badge-select { border:none; appearance:none; font-family:inherit; cursor:pointer; font-weight:600; outline:none; }
 
 .btn{padding:8px 14px;border:none;border-radius:6px;font-size:.8rem;font-weight:600;cursor:pointer;transition:background .2s}
@@ -1253,11 +1261,48 @@ Garansi: 6 bulan"></textarea>
     <!-- VIEW DATA ORDER -->
     <div id="view-data" class="view">
       <div class="data-container">
-        <div class="data-header">
-          <div class="data-title">Data Order (Ticket Log)</div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <button id="btnAiAutoCek" class="btn" onclick="aiAutoCekAlamat()" style="background:linear-gradient(135deg,#10b981,#0d9488);color:white;border:none;border-radius:6px;font-weight:600;display:flex;align-items:center;gap:6px;">✨ AI Auto Cek</button>
-            <button class="btn btn-blue" onclick="downloadExcel()">📥 Download Excel</button>
+        <div class="data-header" style="display:flex; flex-direction:column; gap:12px; padding:16px 20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; width:100%; flex-wrap:wrap; gap:10px;">
+            <div>
+              <div class="data-title" style="display:flex; align-items:center; gap:8px;">
+                <span>📦 Data Order (Ticket Log)</span>
+                <span id="orderTotalBadge" style="background:#dbeafe; color:#1e40af; font-size:0.75rem; padding:3px 10px; border-radius:20px; font-weight:700;">0 Pesanan</span>
+              </div>
+              <div style="font-size:0.75rem; color:var(--muted); margin-top:2px;">Rekapitulasi pesanan otomatis dari percakapan WhatsApp & AI</div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <button id="btnAiAutoCek" class="btn" onclick="aiAutoCekAlamat()" style="background:linear-gradient(135deg,#10b981,#0d9488);color:white;border:none;border-radius:6px;font-weight:600;display:flex;align-items:center;gap:6px;">✨ AI Auto Cek</button>
+              <button class="btn btn-blue" onclick="downloadExcel()">📥 Download Excel</button>
+            </div>
+          </div>
+
+          <!-- Toolbar Grouping & Filter -->
+          <div style="display:flex; justify-content:space-between; align-items:center; width:100%; flex-wrap:wrap; gap:10px; padding-top:10px; border-top:1px solid var(--border);">
+            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+              <span style="font-size:0.75rem; font-weight:700; color:var(--muted);">Kelompokkan:</span>
+              <div style="display:inline-flex; background:var(--s2); border:1px solid var(--border); border-radius:8px; padding:2px; gap:2px;">
+                <button type="button" class="order-group-btn active" id="btnGroupDay" onclick="setOrderGrouping('day')">📅 Per Hari</button>
+                <button type="button" class="order-group-btn" id="btnGroupWeek" onclick="setOrderGrouping('week')">📆 Per Minggu</button>
+                <button type="button" class="order-group-btn" id="btnGroupMonth" onclick="setOrderGrouping('month')">🗓️ Per Bulan</button>
+                <button type="button" class="order-group-btn" id="btnGroupNone" onclick="setOrderGrouping('none')">📋 Semua</button>
+              </div>
+              <button type="button" onclick="toggleAllOrderGroups()" id="btnToggleAllGroups" class="btn" style="background:var(--s2); border:1px solid var(--border); font-size:0.7rem; padding:4px 10px; border-radius:6px; color:var(--text); cursor:pointer;">
+                🔽 Minimize Semua
+              </button>
+            </div>
+
+            <!-- Search & Filter Status -->
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <input type="text" id="orderSearchInput" oninput="renderOrders()" placeholder="🔍 Cari order..." style="padding:6px 12px; border:1px solid var(--border); border-radius:6px; font-size:0.75rem; background:var(--s2); color:var(--text); width:180px; outline:none;">
+              <select id="orderStatusFilter" onchange="renderOrders()" style="padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-size:0.75rem; background:var(--s2); color:var(--text); cursor:pointer; outline:none;">
+                <option value="">Semua Status</option>
+                <option value="order">Baru (Order)</option>
+                <option value="diproses">Proses</option>
+                <option value="terkirim">Solved</option>
+                <option value="retur">Retur</option>
+                <option value="batal">Batal</option>
+              </select>
+            </div>
           </div>
         </div>
         <div class="table-wrapper">
@@ -2276,65 +2321,314 @@ async function deleteImage(productName, slot) {
   }
 }
 
+let orderGroupingMode = 'day'; // 'day' | 'week' | 'month' | 'none'
+let orderCollapsedGroups = new Set();
+window._currentOrderGroupKeys = [];
+
+function setOrderGrouping(mode) {
+  orderGroupingMode = mode;
+  ['day', 'week', 'month', 'none'].forEach(m => {
+    const btnId = 'btnGroup' + (m === 'none' ? 'None' : m.charAt(0).toUpperCase() + m.slice(1));
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      if (m === mode) btn.classList.add('active');
+      else btn.classList.remove('active');
+    }
+  });
+  renderOrders();
+}
+
+function toggleOrderGroup(groupKey) {
+  if (orderCollapsedGroups.has(groupKey)) {
+    orderCollapsedGroups.delete(groupKey);
+  } else {
+    orderCollapsedGroups.add(groupKey);
+  }
+  renderOrders();
+}
+
+function toggleAllOrderGroups() {
+  const currentKeys = window._currentOrderGroupKeys || [];
+  if (!currentKeys.length) return;
+  const allCollapsed = currentKeys.every(k => orderCollapsedGroups.has(k));
+  if (allCollapsed) {
+    orderCollapsedGroups.clear();
+  } else {
+    currentKeys.forEach(k => orderCollapsedGroups.add(k));
+  }
+  renderOrders();
+}
+
+function parseOrderDate(o) {
+  const ts = o.created_at || o.timestamp;
+  if (!ts) return new Date(0);
+  const d = new Date(ts);
+  return isNaN(d.getTime()) ? new Date(0) : d;
+}
+
+function getOrderDayKey(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function getOrderDayTitle(date) {
+  const now = new Date();
+  const todayKey = getOrderDayKey(now);
+  const dateKey = getOrderDayKey(date);
+
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yestKey = getOrderDayKey(yesterday);
+
+  if (dateKey === todayKey) {
+    return 'Hari Ini — ' + date.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+  } else if (dateKey === yestKey) {
+    return 'Kemarin — ' + date.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+  } else {
+    return date.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+  }
+}
+
+function getOrderWeekKey(date) {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(d.setDate(diff));
+  return getOrderDayKey(monday);
+}
+
+function getOrderWeekTitle(date) {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(d.setDate(diff));
+  const sunday = new Date(monday);
+  sunday.setDate(sunday.getDate() + 6);
+
+  const now = new Date();
+  const currentMonKey = getOrderWeekKey(now);
+  const targetMonKey = getOrderDayKey(monday);
+
+  const formatShort = dt => dt.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+  const formatFull = dt => dt.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+
+  let prefix = '';
+  if (targetMonKey === currentMonKey) {
+    prefix = 'Minggu Ini — ';
+  } else {
+    const lastWeek = new Date(now);
+    lastWeek.setDate(lastWeek.getDate() - 7);
+    if (targetMonKey === getOrderWeekKey(lastWeek)) {
+      prefix = 'Minggu Lalu — ';
+    }
+  }
+
+  return `${prefix}Minggu (${formatShort(monday)} - ${formatFull(sunday)})`;
+}
+
+function getOrderMonthKey(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
+}
+
+function getOrderMonthTitle(date) {
+  return date.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+}
+
+function renderSingleOrderRow(o, isCollapsed) {
+  let badgeClass = 'badge-order';
+  let badgeText = 'BARU (ORDER)';
+  const st = (o.status || '').toLowerCase();
+  if (st === 'diproses') { badgeClass = 'badge-diproses'; badgeText = 'ESCALATED - PROSES'; }
+  else if (st === 'terkirim') { badgeClass = 'badge-terkirim'; badgeText = 'SOLVED / TERKIRIM'; }
+  else if (st === 'retur') { badgeClass = 'badge-retur'; badgeText = 'RETUR'; }
+  else if (st === 'batal') { badgeClass = 'badge-batal'; badgeText = 'BATAL'; }
+
+  const statusVal = (st === 'baru' ? 'order' : st) || 'order';
+
+  return `
+  <tr style="${isCollapsed ? 'display:none;' : ''}">
+    <td>
+      <div style="font-weight:600;color:var(--blue);margin-bottom:4px">ORD-${o.id.substring(o.id.length-6)}</div>
+      <div style="font-size:0.7rem;color:var(--muted)">${ft(o.created_at || o.timestamp)}</div>
+    </td>
+    <td>
+      <div style="font-weight:600;margin-bottom:4px">${x(o.nama)}</div>
+      <div style="font-size:0.75rem;color:var(--muted)">${o.hp}</div>
+    </td>
+    <td><div style="font-size:0.8rem;font-weight:500">${x(o.produk)}</div></td>
+    <td>
+      <div style="font-size:0.75rem;line-height:1.5;max-width:250px">${x(o.alamat)}</div>
+      ${o.ai_alamat ? `
+      <div style="margin-top:8px; padding-top:8px; border-top:1px dashed #e2e8f0;">
+        <div style="font-size:10px; font-weight:700; color:#10b981; letter-spacing:0.5px; margin-bottom:4px;">✨ VERSI AI</div>
+        <div style="font-size:0.75rem; line-height:1.4; color:#0f172a; margin-bottom:6px;">${x(o.ai_alamat)}</div>
+        ${o.ai_cod ? `<div style="display:inline-block; font-size:10px; font-weight:700; padding:4px 6px; border-radius:4px; ${o.ai_cod.includes('✅') ? 'background:#dcfce7; color:#166534; border:1px solid #bbf7d0;' : o.ai_cod.includes('⚠️') ? 'background:#fef3c7; color:#92400e; border:1px solid #fde68a;' : 'background:#fee2e2; color:#991b1b; border:1px solid #fecaca;'}">${x(o.ai_cod)}</div>` : ''}
+        <button onclick="recheckOrderAI('${o.id}',this)" title="Cek Ulang ID Express COD" style="margin-left:6px;font-size:10px;padding:3px 7px;border-radius:4px;border:1px solid #cbd5e1;background:#f8fafc;color:#475569;cursor:pointer;vertical-align:middle;">&#x21bb; Cek Ulang</button>
+      </div>
+      ` : `<div style="margin-top:6px;"><button onclick="recheckOrderAI('${o.id}',this)" title="Cek AI Alamat & ID Express COD" style="font-size:10px;padding:3px 7px;border-radius:4px;border:1px solid #cbd5e1;background:#f8fafc;color:#475569;cursor:pointer;">&#x21bb; Cek AI</button></div>`}
+    </td>
+    <td>
+      <select class="badge ${badgeClass} badge-select" onchange="updateOrderStatus('${o.id}',this.value)">
+        <option value="order" ${statusVal==='order'?'selected':''}>NEW TICKET</option>
+        <option value="diproses" ${statusVal==='diproses'?'selected':''}>PROSES</option>
+        <option value="terkirim" ${statusVal==='terkirim'?'selected':''}>SOLVED</option>
+        <option value="retur" ${statusVal==='retur'?'selected':''}>RETUR</option>
+        <option value="batal" ${statusVal==='batal'?'selected':''}>BATAL</option>
+      </select>
+    </td>
+    <td>
+      <button class="btn-red" onclick="deleteOrder('${o.id}')">Hapus</button>
+    </td>
+  </tr>
+  `;
+}
+
 function renderOrders(){
   const list=document.getElementById('orderListTable');
+  if (!list) return;
+
+  const totalBadge = document.getElementById('orderTotalBadge');
+  if (totalBadge) totalBadge.innerText = orders.length + ' Pesanan';
+
   if(!orders.length){
     list.innerHTML='<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--muted)">Belum ada data order</td></tr>';
     return;
   }
-  
-  const getWeight = s => ({'order':1,'diproses':2,'terkirim':3,'retur':4,'batal':5}[s]||99);
-  const sorted = [...orders].sort((a,b) => {
-    const wa = getWeight(a.status), wb = getWeight(b.status);
-    if(wa!==wb) return wa-wb;
-    // FIX #4: DB menggunakan created_at, bukan timestamp
-    return new Date(b.created_at || b.timestamp) - new Date(a.created_at || a.timestamp);
-  });
 
-  list.innerHTML = sorted.map(o => {
-    let badgeClass = 'badge-order';
-    let badgeText = 'BARU (ORDER)';
-    if(o.status === 'diproses') { badgeClass = 'badge-diproses'; badgeText = 'ESCALATED - PROSES'; }
-    if(o.status === 'terkirim') { badgeClass = 'badge-terkirim'; badgeText = 'SOLVED / TERKIRIM'; }
-    if(o.status === 'retur') { badgeClass = 'badge-retur'; badgeText = 'RETUR'; }
-    if(o.status === 'batal') { badgeClass = 'badge-batal'; badgeText = 'BATAL'; }
+  // Filter Search & Status
+  const query = (document.getElementById('orderSearchInput')?.value || '').trim().toLowerCase();
+  const stFilter = (document.getElementById('orderStatusFilter')?.value || '').trim().toLowerCase();
 
-    return `
-    <tr>
-      <td>
-        <div style="font-weight:600;color:var(--blue);margin-bottom:4px">ORD-${o.id.substring(o.id.length-6)}</div>
-        <div style="font-size:0.7rem;color:var(--muted)">${ft(o.created_at || o.timestamp)}</div>
-      </td>
-      <td>
-        <div style="font-weight:600;margin-bottom:4px">${x(o.nama)}</div>
-        <div style="font-size:0.75rem;color:var(--muted)">${o.hp}</div>
-      </td>
-      <td><div style="font-size:0.8rem;font-weight:500">${x(o.produk)}</div></td>
-      <td>
-        <div style="font-size:0.75rem;line-height:1.5;max-width:250px">${x(o.alamat)}</div>
-        ${o.ai_alamat ? `
-        <div style="margin-top:8px; padding-top:8px; border-top:1px dashed #e2e8f0;">
-          <div style="font-size:10px; font-weight:700; color:#10b981; letter-spacing:0.5px; margin-bottom:4px;">✨ VERSI AI</div>
-          <div style="font-size:0.75rem; line-height:1.4; color:#0f172a; margin-bottom:6px;">${x(o.ai_alamat)}</div>
-          ${o.ai_cod ? `<div style="display:inline-block; font-size:10px; font-weight:700; padding:4px 6px; border-radius:4px; ${o.ai_cod.includes('✅') ? 'background:#dcfce7; color:#166534; border:1px solid #bbf7d0;' : o.ai_cod.includes('⚠️') ? 'background:#fef3c7; color:#92400e; border:1px solid #fde68a;' : 'background:#fee2e2; color:#991b1b; border:1px solid #fecaca;'}">${x(o.ai_cod)}</div>` : ''}
-          <button onclick="recheckOrderAI('${o.id}',this)" title="Cek Ulang ID Express COD" style="margin-left:6px;font-size:10px;padding:3px 7px;border-radius:4px;border:1px solid #cbd5e1;background:#f8fafc;color:#475569;cursor:pointer;vertical-align:middle;">&#x21bb; Cek Ulang</button>
+  let filtered = [...orders];
+  if (query) {
+    filtered = filtered.filter(o =>
+      (o.nama || '').toLowerCase().includes(query) ||
+      (o.hp || '').toLowerCase().includes(query) ||
+      (o.produk || '').toLowerCase().includes(query) ||
+      (o.alamat || '').toLowerCase().includes(query) ||
+      (o.ai_alamat || '').toLowerCase().includes(query) ||
+      (o.id || '').includes(query)
+    );
+  }
+  if (stFilter) {
+    filtered = filtered.filter(o => {
+      const st = (o.status || '').toLowerCase();
+      if (stFilter === 'order') return st === 'order' || st === 'baru';
+      return st === stFilter;
+    });
+  }
+
+  if (!filtered.length) {
+    list.innerHTML='<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--muted)">Tidak ada pesanan yang sesuai filter pencarian</td></tr>';
+    return;
+  }
+
+  if (totalBadge && filtered.length !== orders.length) {
+    totalBadge.innerText = `${filtered.length} dari ${orders.length} Pesanan`;
+  }
+
+  // 1. Mode Flat (Tanpa Grouping)
+  if (orderGroupingMode === 'none') {
+    window._currentOrderGroupKeys = [];
+    const getWeight = s => ({'order':1,'baru':1,'diproses':2,'terkirim':3,'retur':4,'batal':5}[s]||99);
+    const sorted = filtered.sort((a,b) => {
+      const wa = getWeight((a.status||'').toLowerCase()), wb = getWeight((b.status||'').toLowerCase());
+      if(wa!==wb) return wa-wb;
+      return parseOrderDate(b) - parseOrderDate(a);
+    });
+    list.innerHTML = sorted.map(o => renderSingleOrderRow(o, false)).join('');
+    return;
+  }
+
+  // 2. Mode Grouping (Day, Week, Month)
+  const groupsMap = new Map();
+  for (const o of filtered) {
+    const d = parseOrderDate(o);
+    let key, title;
+    if (orderGroupingMode === 'day') {
+      key = getOrderDayKey(d);
+      title = getOrderDayTitle(d);
+    } else if (orderGroupingMode === 'week') {
+      key = getOrderWeekKey(d);
+      title = getOrderWeekTitle(d);
+    } else { // 'month'
+      key = getOrderMonthKey(d);
+      title = getOrderMonthTitle(d);
+    }
+
+    if (!groupsMap.has(key)) {
+      groupsMap.set(key, { key, title, items: [] });
+    }
+    groupsMap.get(key).items.push(o);
+  }
+
+  // Urutkan grup secara descending (terbaru di paling atas)
+  const sortedGroups = Array.from(groupsMap.values()).sort((a, b) => b.key.localeCompare(a.key));
+  window._currentOrderGroupKeys = sortedGroups.map(g => g.key);
+
+  // Update text tombol toggle all
+  const btnToggle = document.getElementById('btnToggleAllGroups');
+  if (btnToggle) {
+    const allCollapsed = sortedGroups.length > 0 && sortedGroups.every(g => orderCollapsedGroups.has(g.key));
+    btnToggle.innerHTML = allCollapsed ? '🔼 Buka Semua' : '🔽 Minimize Semua';
+  }
+
+  let html = '';
+  for (const g of sortedGroups) {
+    // Urutkan item dalam grup berdasarkan tanggal terbaru
+    g.items.sort((a, b) => parseOrderDate(b) - parseOrderDate(a));
+
+    const isCollapsed = orderCollapsedGroups.has(g.key);
+
+    // Hitung status di dalam grup untuk badge ringkasan
+    let cOrder = 0, cDiproses = 0, cTerkirim = 0, cRetur = 0, cBatal = 0;
+    for (const item of g.items) {
+      const st = (item.status || '').toLowerCase();
+      if (st === 'order' || st === 'baru') cOrder++;
+      else if (st === 'diproses') cDiproses++;
+      else if (st === 'terkirim') cTerkirim++;
+      else if (st === 'retur') cRetur++;
+      else if (st === 'batal') cBatal++;
+      else cOrder++;
+    }
+
+    let summaryBadges = '';
+    if (cOrder > 0) summaryBadges += `<span class="badge badge-order" style="font-size:0.65rem;padding:2px 7px;">${cOrder} Baru</span> `;
+    if (cDiproses > 0) summaryBadges += `<span class="badge badge-diproses" style="font-size:0.65rem;padding:2px 7px;">${cDiproses} Proses</span> `;
+    if (cTerkirim > 0) summaryBadges += `<span class="badge badge-terkirim" style="font-size:0.65rem;padding:2px 7px;">${cTerkirim} Solved</span> `;
+    if (cRetur > 0) summaryBadges += `<span class="badge badge-retur" style="font-size:0.65rem;padding:2px 7px;">${cRetur} Retur</span> `;
+    if (cBatal > 0) summaryBadges += `<span class="badge badge-batal" style="font-size:0.65rem;padding:2px 7px;">${cBatal} Batal</span> `;
+
+    // Header baris grup yang bisa di-klik untuk minimize/expand
+    html += `
+    <tr class="order-group-header-row" onclick="toggleOrderGroup('${g.key}')" title="Klik untuk minimize/expand grup ini">
+      <td colspan="6" style="padding:10px 16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <div style="display:flex; align-items:center; gap:8px; font-weight:700; color:#1e293b; font-size:0.85rem;">
+            <span class="order-group-chevron">${isCollapsed ? '▶' : '▼'}</span>
+            <span>${g.title}</span>
+            <span style="background:#e2e8f0; color:#475569; padding:2px 8px; border-radius:12px; font-size:0.7rem; font-weight:700;">${g.items.length} Pesanan</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            ${summaryBadges}
+            <span style="font-size:0.68rem; color:var(--muted); margin-left:4px;">${isCollapsed ? 'klik buka 🔽' : 'klik minimize 🔼'}</span>
+          </div>
         </div>
-        ` : `<div style="margin-top:6px;"><button onclick="recheckOrderAI('${o.id}',this)" title="Cek AI Alamat & ID Express COD" style="font-size:10px;padding:3px 7px;border-radius:4px;border:1px solid #cbd5e1;background:#f8fafc;color:#475569;cursor:pointer;">&#x21bb; Cek AI</button></div>`}
-      </td>
-      <td>
-        <select class="badge ${badgeClass} badge-select" onchange="updateOrderStatus('${o.id}',this.value)">
-          <option value="order" ${o.status==='order'?'selected':''}>NEW TICKET</option>
-          <option value="diproses" ${o.status==='diproses'?'selected':''}>PROSES</option>
-          <option value="terkirim" ${o.status==='terkirim'?'selected':''}>SOLVED</option>
-          <option value="retur" ${o.status==='retur'?'selected':''}>RETUR</option>
-          <option value="batal" ${o.status==='batal'?'selected':''}>BATAL</option>
-        </select>
-      </td>
-      <td>
-        <button class="btn-red" onclick="deleteOrder('${o.id}')">Hapus</button>
       </td>
     </tr>
-  `}).join('');
+    `;
+
+    // Baris pesanan dalam grup
+    for (const item of g.items) {
+      html += renderSingleOrderRow(item, isCollapsed);
+    }
+  }
+
+  list.innerHTML = html;
 }
 
 async function updateOrderStatus(id, status){
@@ -2372,17 +2666,19 @@ async function recheckOrderAI(id, btn) {
 
 function downloadExcel() {
   if (!orders.length) return alert('Belum ada data order untuk didownload');
-  const headers = ['Tanggal', 'Status', 'Nama Pelanggan', 'No HP', 'Produk', 'Alamat Lengkap'];
+  const headers = ['Tanggal', 'Status', 'Nama Pelanggan', 'No HP', 'Produk', 'Alamat Lengkap', 'Alamat AI', 'Status COD'];
   const rows = orders.map(o => {
     // Escape quote dengan double quote agar CSV tidak rusak jika ada koma di alamat
-    const escapeCSV = (str) => '"' + String(str).replace(/"/g, '""') + '"';
+    const escapeCSV = (str) => '"' + String(str || '').replace(/"/g, '""') + '"';
     return [
-      escapeCSV(ft(o.timestamp)), 
+      escapeCSV(ft(o.created_at || o.timestamp)), 
       escapeCSV(o.status), 
       escapeCSV(o.nama), 
       escapeCSV(o.hp), 
       escapeCSV(o.produk), 
-      escapeCSV(o.alamat)
+      escapeCSV(o.alamat),
+      escapeCSV(o.ai_alamat || ''),
+      escapeCSV(o.ai_cod || '')
     ];
   });
   
@@ -2390,7 +2686,8 @@ function downloadExcel() {
   const encodedUri = encodeURI(csvContent);
   const link = document.createElement("a");
   link.setAttribute("href", encodedUri);
-  link.setAttribute("download", "Data_Order_WhatsApp_AI.csv");
+  const dateStr = new Date().toISOString().slice(0, 10);
+  link.setAttribute("download", `Data_Order_WhatsApp_AI_${dateStr}.csv`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

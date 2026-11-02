@@ -94,10 +94,11 @@ function extractOrder(replyText, fromJid) {
   if (match) {
     try {
       const data = JSON.parse(match[1].trim());
-      let hpValue = data.hp || '';
+      let hpValue = (data.hp || '').trim();
       if (/SAMA_DENGAN_WA/i.test(hpValue)) {
         hpValue = (fromJid || '').split('@')[0];
       }
+      hpValue = hpValue.replace(/[^\d+]/g, '');
       const order = {
         id: Date.now().toString() + Math.floor(Math.random() * 1000),
         jid: fromJid,
@@ -124,7 +125,7 @@ function extractOrder(replyText, fromJid) {
       const isDuplicate = store.orders.some(o =>
         o.jid === fromJid &&
         o.produk === order.produk &&
-        (Date.now() - new Date(o.timestamp).getTime() < config.ORDER_DEDUP_WINDOW_MS)
+        (Date.now() - new Date(o.created_at || o.timestamp).getTime() < config.ORDER_DEDUP_WINDOW_MS)
       );
 
       if (!isDuplicate) {

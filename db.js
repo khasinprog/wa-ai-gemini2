@@ -342,7 +342,7 @@ async function saveOrder(order) {
       ai_cod = EXCLUDED.ai_cod,
       payment_method = EXCLUDED.payment_method,
       status = EXCLUDED.status
-  `, [order.id, order.jid || order.wa_id, order.nama, order.hp, order.produk, order.alamat, order.ai_alamat || null, order.ai_cod || null, order.payment_method || null, order.status || 'baru']);
+  `, [order.id, order.jid || order.wa_id, order.nama, order.hp, order.produk, order.alamat, order.ai_alamat || null, order.ai_cod || null, order.payment_method || null, order.status || 'order']);
 }
 
 async function getOrders() {

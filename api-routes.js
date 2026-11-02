@@ -353,7 +353,17 @@ Aturan Wajib:
   // ORDERS
   // ═══════════════════════════════════════════════════════════════════
 
-  app.get('/api/orders', (_, res) => res.json(store.orders));
+  app.get('/api/orders', async (_, res) => {
+    try {
+      if (db.pool) {
+        const dbOrders = await db.getOrders();
+        if (dbOrders && dbOrders.length > 0) {
+          store.orders = dbOrders;
+        }
+      }
+    } catch(e) {}
+    res.json(store.orders);
+  });
 
   app.post('/api/orders/:id/status', (req, res) => {
     const { status } = req.body;

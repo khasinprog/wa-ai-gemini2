@@ -322,7 +322,16 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, async () => {
   console.log('\n==========================================');
   console.log('  WA AI Assistant (Cloud API + MacroDroid) berjalan!');
-  try { await db.initDB(); } catch(e) { console.error('Failed to init DB:', e.message); }
+  try {
+    await db.initDB();
+    if (db.pool) {
+      const dbOrders = await db.getOrders();
+      if (dbOrders && dbOrders.length > 0) {
+        store.orders = dbOrders;
+        console.log(`📦 [DB] Berhasil memuat ${dbOrders.length} pesanan dari PostgreSQL`);
+      }
+    }
+  } catch(e) { console.error('Failed to init DB:', e.message); }
   loadOrderStates();
   startCleanupInterval();
   console.log(`  Buka browser: http://localhost:${PORT}`);
