@@ -352,6 +352,9 @@ server.listen(PORT, async () => {
 
   setInterval(retryFailedMessages, 5 * 60 * 1000);
 
+  // Auto-sync status pesanan & resi Mengantar setiap hari jam 07:00 WIB
+  scheduleDailyMengantarSync();
+
   // P2-D: Telegram bot polling untuk eskalasi
   if (tg.isConfigured()) {
     tg.startPolling().then(ok => {
@@ -383,3 +386,40 @@ server.listen(PORT, async () => {
     console.log('ℹ️ [P2-D] Telegram bot tidak aktif (TELEGRAM_BOT_TOKEN/TELEGRAM_ADMIN_CHAT_ID belum diisi)');
   }
 });
+
+// ── Auto-Sync Mengantar Harian (Setiap 07:00 WIB) ──────────────────────
+function scheduleDailyMengantarSync() {
+  function getMsUntilNext7AM() {
+    const now = new Date();
+    const next7 = new Date(now);
+    next7.setHours(7, 0, 0, 0);
+    if (now.getTime() >= next7.getTime()) {
+      next7.setDate(next7.getDate() + 1);
+    }
+    return next7.getTime() - now.getTime();
+  }
+
+  async function triggerDailySync() {
+    console.log('[Auto-Sync Mengantar] ⏰ Menjalankan auto-sync harian jam 07:00 WIB...');
+    try {
+      const { syncOrdersWithMengantar } = require('./mengantar-service');
+      const { syncedCount } = await syncOrdersWithMengantar(store.orders);
+      if (syncedCount > 0) {
+        store.save(store.PATHS.ORDER_FILE, store.orders);
+        for (const o of store.orders) {
+          store.persistOrderToDB(o);
+        }
+        io.emit('orders', store.orders);
+      }
+      console.log(`[Auto-Sync Mengantar] ✅ Selesai sync jam 07:00 WIB (${syncedCount} pesanan diperbarui).`);
+    } catch (e) {
+      console.warn('[Auto-Sync Mengantar] Gagal sync jam 07:00 WIB:', e.message);
+    }
+    setTimeout(triggerDailySync, getMsUntilNext7AM());
+  }
+
+  const initialDelay = getMsUntilNext7AM();
+  const hours = (initialDelay / (1000 * 60 * 60)).toFixed(1);
+  console.log(`⏰ [Auto-Sync Mengantar] Terjadwal setiap hari jam 07:00 WIB (eksekusi berikutnya dalam ${hours} jam).`);
+  setTimeout(triggerDailySync, initialDelay);
+}
