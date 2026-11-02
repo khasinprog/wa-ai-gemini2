@@ -21,23 +21,16 @@ const MENGANTAR_ORIGIN_MONGO_ID = process.env.MENGANTAR_ORIGIN_MONGO_ID || '5fc6
 // ── 1. Parse lokasi tujuan dari isi tag [CEK_ONGKIR:...] ──────────
 function parseShippingDestination(text) {
   if (!text) return null;
-  const clean = text.trim();
 
-  // Pola 1: "X,Y" dari tag langsung
-  const commaMatch = clean.match(/^([^,]+),\s*(.+)$/);
-  if (commaMatch) {
-    return { kecamatan: commaMatch[1].trim(), kabupaten: commaMatch[2].trim() };
-  }
+  // Bersihkan prefiks administratif seperti Desa, Kelurahan, Kec, Kab, Kota dsb
+  const stripped = text
+    .replace(/\b(desa|kelurahan|kel|ds|kecamatan|kec|kabupaten|kab|kota)\b\.?/gi, ' ')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 
-  // Pola 2: "kecamatan X kabupaten Y"
-  const verboseMatch = clean.match(
-    /kec(?:amatan)?\s+([a-zA-Z\s]+?)\s+(?:kab(?:upaten)?|kota)\s+([a-zA-Z\s]+?)(?:[,.\n]|$)/i
-  );
-  if (verboseMatch) {
-    return { kecamatan: verboseMatch[1].trim(), kabupaten: verboseMatch[2].trim() };
-  }
-
-  return null;
+  if (!stripped) return null;
+  return { query: stripped, raw: text.trim() };
 }
 
 // ── 2. Cari _id MongoDB lokasi dari keyword ───────────────────────
@@ -130,59 +123,95 @@ async function estimateOngkir({ originMongoId, destMongoId, weight, itemValue, d
 
 // Mapping nama kurir API → nama tampil customer
 const COURIER_DISPLAY_NAMES = {
-  'JT': 'J&T',
-  'iDexpress': 'ID Express',
-  'iDlite': 'ID Express Lite',
-  'JNE': 'JNE',
-  'SiCepat': 'SiCepat',
+  'spx': 'SPX',
+  'SPX': 'SPX',
   'SAP': 'SAP',
   'SAPLite': 'SAP Lite',
+  'SiCepat': 'SiCepat',
+  'JNE': 'JNE',
+  'JT': 'J&T',
   'anteraja': 'Anteraja',
   'lion': 'Lion',
   'Ninja': 'Ninja',
   'pos': 'POS',
+  'iDexpress': 'ID Express',
+  'iDlite': 'ID Express Lite',
 };
 
+// Urutan prioritas tampilan ekspedisi:
+// 1. SPX (Shopee Express)
+// 2. SAP / SAP Lite (ambil yang termurah jika keduanya tersedia)
+// 3. Ekspedisi termurah di luar SPX dan SAP
+function selectPriorityCouriers(allCouriers) {
+  if (!allCouriers || !allCouriers.length) return [];
+
+  const selected = [];
+  const used = new Set();
+
+  // 1. Prioritas 1: SPX
+  const spx = allCouriers.find(c => /^spx$/i.test(c.courier));
+  if (spx) {
+    selected.push(spx);
+    used.add(spx.courier.toLowerCase());
+  }
+
+  // 2. Prioritas 2: SAP / SAP Lite (ambil termurah jika keduanya ada)
+  const sapCandidates = allCouriers
+    .filter(c => /^sap/i.test(c.courier) && !used.has(c.courier.toLowerCase()))
+    .sort((a, b) => a.price - b.price);
+  if (sapCandidates.length > 0) {
+    selected.push(sapCandidates[0]);
+    used.add(sapCandidates[0].courier.toLowerCase());
+  }
+
+  // 3. Prioritas 3: Ekspedisi termurah di luar SPX dan SAP
+  const others = allCouriers
+    .filter(c => !/^spx/i.test(c.courier) && !/^sap/i.test(c.courier) && !used.has(c.courier.toLowerCase()))
+    .sort((a, b) => a.price - b.price);
+
+  if (others.length > 0) {
+    selected.push(others[0]);
+    used.add(others[0].courier.toLowerCase());
+  }
+
+  // Fallback: Jika SPX atau SAP tidak tersedia di tujuan ini
+  if (selected.length === 0) {
+    const sorted = [...allCouriers].sort((a, b) => a.price - b.price);
+    return sorted.slice(0, 3);
+  }
+
+  return selected;
+}
+
 function formatOngkirForCustomer(result, destName) {
-  if (!result || !result.price) {
+  if (!result || (!result.price && (!result.allCouriers || !result.allCouriers.length))) {
     return `Maaf Kak, tarif ke ${destName || 'lokasi tersebut'} belum bisa dicek otomatis saat ini. Hubungi admin ya untuk info ongkir 🙏`;
   }
 
-  const courierName = COURIER_DISPLAY_NAMES[result.courier] || result.courier;
-  const harga = `Rp ${Number(result.price).toLocaleString('id-ID')}`;
-  const etd = result.etd ? ` (${result.etd})` : '';
-  const discount = result.discount > 0
-    ? ` *(sudah diskon Rp ${Number(result.discount).toLocaleString('id-ID')})*` : '';
+  const couriersToShow = selectPriorityCouriers(result.allCouriers || [result]);
 
-  let msg = `Ongkir ke ${destName || 'lokasi kamu'} 📦\n`;
-  msg += `• ${courierName}: ${harga}${etd}${discount}`;
-
-  // Tampilkan kurir lain (max 2 tambahan) sebagai alternatif
-  if (result.allCouriers?.length > 1) {
-    const others = result.allCouriers
-      .filter(c => c.courier !== result.courier)
-      .slice(0, 2);
-    if (others.length) {
-      msg += '\nAlternatif:';
-      others.forEach(c => {
-        const cName = COURIER_DISPLAY_NAMES[c.courier] || c.courier;
-        msg += `\n• ${cName}: Rp ${Number(c.price).toLocaleString('id-ID')}`;
-      });
-    }
+  let msg = `Ongkir ke ${destName || 'lokasi kamu'} 📦`;
+  for (const c of couriersToShow) {
+    const cName = COURIER_DISPLAY_NAMES[c.courier] || c.courier.toUpperCase();
+    const harga = Number(c.price).toLocaleString('id-ID');
+    const codFee = (c.codFee && c.codFee > 0) ? c.codFee : 4000;
+    const codFeeStr = Number(codFee).toLocaleString('id-ID');
+    const etd = c.etd ? ` (${c.etd})` : '';
+    msg += `\n• Sebesar Rp ${harga} (${cName}), biaya COD Rp ${codFeeStr}${etd}`;
   }
 
   return msg;
 }
 
-// ── 5. Flow utama: dari tag content "kecamatan,kabupaten" ─────────
+// ── 5. Flow utama: dari tag content "desa, kecamatan, kabupaten" ───
 async function processCekOngkirTag(tagContent, itemValue) {
   const dest = parseShippingDestination(tagContent);
-  if (!dest) {
+  if (!dest || !dest.query) {
     console.warn('[Ongkir] Tidak bisa parse tujuan dari:', tagContent);
     return null;
   }
 
-  const keyword = `${dest.kecamatan} ${dest.kabupaten}`.trim();
+  const keyword = dest.query;
   console.log(`[Ongkir] Search lokasi tujuan: "${keyword}"`);
 
   const destLoc = await searchLocationId(keyword);
