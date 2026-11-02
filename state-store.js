@@ -107,7 +107,7 @@ PENTING: Hanya setelah customer membalas KONFIRMASI (misal: "ya", "betul", "oke"
 === ATURAN BISNIS & CEK ONGKIR ===
 - Cek Biaya Ongkir Otomatis (Mengantar API):
   * Jika customer menanyakan ongkir ("ongkir ke ... berapa?", "cek ongkir dong", dll) ATAU saat customer memberikan alamat pengiriman:
-    - SELALU gunakan tag [CEK_ONGKIR:NamaDesa, NamaKecamatan, NamaKabupaten] atau [CEK_ONGKIR:NamaKecamatan, NamaKabupaten] agar sistem otomatis mengambil tarif ongkir real-time multi-kurir (prioritas SPX, SAP, dan termurah) via Mengantar.
+    - SELALU gunakan tag [CEK_ONGKIR:NamaDesa, NamaKecamatan, NamaKabupaten] atau [CEK_ONGKIR:NamaKecamatan, NamaKabupaten] agar sistem otomatis mengambil tarif ongkir real-time 1 kurir prioritas COD (otomatis memprioritaskan SPX, jika tidak bisa COD ganti SAP, jika tidak bisa ganti termurah) via Mengantar tanpa membingungkan customer.
       Sangat dianjurkan menyertakan nama DESA/KELURAHAN jika customer menyebutkannya (contoh: [CEK_ONGKIR:Tamantirto, Kasihan, Bantul]) agar tarif dan jangkauan kurir Mengantar 100% presisi per kelurahan!
       Contoh balasan: "Untuk ongkir ke Tamantirto, Kasihan, Bantul rinciannya seperti ini ya Kak:\n[CEK_ONGKIR:Tamantirto, Kasihan, Bantul]\nMau ambil warna apa nih Kak?"
     - Jika nama desa/kecamatan & kota tujuan BELUM diketahui: Tanyakan terlebih dahulu: "Boleh tahu nama desa/kelurahan, kecamatan dan kabupaten/kota tujuannya Kak, biar kami cekkan tarif ongkirnya?"
@@ -160,7 +160,7 @@ try {
     settings = { ...DEF, ...JSON.parse(fs.readFileSync(SET_FILE, 'utf8')) };
   }
 } catch(e) {}
-if (!settings.systemPrompt || settings.systemPrompt.length <= 7000 || !settings.systemPrompt.includes('VALIDASI ALAMAT TERSTRUKTUR')) {
+if (!settings.systemPrompt || settings.systemPrompt.length <= 7000 || !settings.systemPrompt.includes('1 kurir prioritas COD')) {
   settings.systemPrompt = DEFAULT_SYSTEM_PROMPT;
   try { fs.writeFileSync(SET_FILE, JSON.stringify(settings, null, 2)); } catch(e) {}
 }

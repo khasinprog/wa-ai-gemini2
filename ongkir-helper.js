@@ -101,6 +101,7 @@ async function estimateOngkir({ originMongoId, destMongoId, weight, itemValue, d
         discount: info.discount || 0,
         etd: info.estimatedDate || info.estimate_delivery || null,
         codFee: info.codFee || 0,
+        unsupportedCod: info.unsupported_cod === true || info.coverage_cod === false || info.unsupportedOriginSpx === true,
       }));
 
     if (!available.length) return null;
@@ -138,49 +139,45 @@ const COURIER_DISPLAY_NAMES = {
   'iDlite': 'ID Express Lite',
 };
 
-// Urutan prioritas tampilan ekspedisi:
-// 1. SPX (Shopee Express)
-// 2. SAP / SAP Lite (ambil yang termurah jika keduanya tersedia)
-// 3. Ekspedisi termurah di luar SPX dan SAP
-function selectPriorityCouriers(allCouriers) {
-  if (!allCouriers || !allCouriers.length) return [];
+// Memilih 1 kurir tunggal terbaik berdasarkan kaskade prioritas COD:
+// Prioritas 1: SPX (jika mendukung COD)
+// Prioritas 2: SAP / SAP Lite (jika SPX tidak bisa COD, tapi SAP bisa COD)
+// Prioritas 3: Ekspedisi termurah di luar SPX dan SAP yang mendukung COD
+// Fallback: Ekspedisi termurah yang tersedia jika tidak ada yang meng-cover COD
+function pickPriorityCourier(allCouriers) {
+  if (!allCouriers || !allCouriers.length) return null;
 
-  const selected = [];
-  const used = new Set();
+  // Filter kurir yang aktif dan mendukung pengiriman COD
+  const codCouriers = allCouriers.filter(c => c.price > 0 && !c.unsupportedCod);
 
   // 1. Prioritas 1: SPX
-  const spx = allCouriers.find(c => /^spx$/i.test(c.courier));
-  if (spx) {
-    selected.push(spx);
-    used.add(spx.courier.toLowerCase());
-  }
+  const spx = codCouriers.find(c => /^spx$/i.test(c.courier));
+  if (spx) return spx;
 
-  // 2. Prioritas 2: SAP / SAP Lite (ambil termurah jika keduanya ada)
-  const sapCandidates = allCouriers
-    .filter(c => /^sap/i.test(c.courier) && !used.has(c.courier.toLowerCase()))
+  // 2. Prioritas 2: SAP / SAP Lite (jika ada SAP & SAPLite, pilih yang paling murah)
+  const sapCandidates = codCouriers
+    .filter(c => /^sap/i.test(c.courier))
     .sort((a, b) => a.price - b.price);
-  if (sapCandidates.length > 0) {
-    selected.push(sapCandidates[0]);
-    used.add(sapCandidates[0].courier.toLowerCase());
-  }
+  if (sapCandidates.length > 0) return sapCandidates[0];
 
-  // 3. Prioritas 3: Ekspedisi termurah di luar SPX dan SAP
-  const others = allCouriers
-    .filter(c => !/^spx/i.test(c.courier) && !/^sap/i.test(c.courier) && !used.has(c.courier.toLowerCase()))
+  // 3. Prioritas 3: Ekspedisi termurah di luar SPX dan SAP yang mendukung COD
+  const otherCod = codCouriers
+    .filter(c => !/^spx/i.test(c.courier) && !/^sap/i.test(c.courier))
     .sort((a, b) => a.price - b.price);
+  if (otherCod.length > 0) return otherCod[0];
 
-  if (others.length > 0) {
-    selected.push(others[0]);
-    used.add(others[0].courier.toLowerCase());
-  }
+  // Fallback 1: Jika tidak ada yang mendukung COD, cek apakah SPX/SAP tersedia non-COD
+  const spxAny = allCouriers.find(c => /^spx$/i.test(c.courier) && c.price > 0);
+  if (spxAny) return spxAny;
 
-  // Fallback: Jika SPX atau SAP tidak tersedia di tujuan ini
-  if (selected.length === 0) {
-    const sorted = [...allCouriers].sort((a, b) => a.price - b.price);
-    return sorted.slice(0, 3);
-  }
+  const sapAny = allCouriers
+    .filter(c => /^sap/i.test(c.courier) && c.price > 0)
+    .sort((a, b) => a.price - b.price);
+  if (sapAny.length > 0) return sapAny[0];
 
-  return selected;
+  // Fallback 2: Kurir termurah apapun yang ada
+  const sortedAny = [...allCouriers].filter(c => c.price > 0).sort((a, b) => a.price - b.price);
+  return sortedAny[0] || allCouriers[0];
 }
 
 function formatOngkirForCustomer(result, destName) {
@@ -188,17 +185,20 @@ function formatOngkirForCustomer(result, destName) {
     return `Maaf Kak, tarif ke ${destName || 'lokasi tersebut'} belum bisa dicek otomatis saat ini. Hubungi admin ya untuk info ongkir 🙏`;
   }
 
-  const couriersToShow = selectPriorityCouriers(result.allCouriers || [result]);
-
-  let msg = `Ongkir ke ${destName || 'lokasi kamu'} 📦`;
-  for (const c of couriersToShow) {
-    const cName = COURIER_DISPLAY_NAMES[c.courier] || c.courier.toUpperCase();
-    const harga = Number(c.price).toLocaleString('id-ID');
-    const codFee = (c.codFee && c.codFee > 0) ? c.codFee : 4000;
-    const codFeeStr = Number(codFee).toLocaleString('id-ID');
-    const etd = c.etd ? ` (${c.etd})` : '';
-    msg += `\n• Sebesar Rp ${harga} (${cName}), biaya COD Rp ${codFeeStr}${etd}`;
+  // Pilih 1 kurir tunggal sesuai kaskade prioritas COD (SPX -> SAP -> Termurah)
+  const selected = pickPriorityCourier(result.allCouriers || [result]);
+  if (!selected) {
+    return `Maaf Kak, tarif ke ${destName || 'lokasi tersebut'} belum bisa dicek otomatis saat ini. Hubungi admin ya untuk info ongkir 🙏`;
   }
+
+  const cName = COURIER_DISPLAY_NAMES[selected.courier] || selected.courier.toUpperCase();
+  const harga = Number(selected.price).toLocaleString('id-ID');
+  const codFee = (selected.codFee && selected.codFee > 0) ? selected.codFee : 4000;
+  const codFeeStr = Number(codFee).toLocaleString('id-ID');
+  const etd = selected.etd ? ` (${selected.etd})` : '';
+
+  let msg = `Ongkir ke ${destName || 'lokasi kamu'} 📦\n`;
+  msg += `• Sebesar Rp ${harga} (${cName}), biaya COD Rp ${codFeeStr}${etd}`;
 
   return msg;
 }
@@ -268,6 +268,7 @@ module.exports = {
   parseShippingDestination,
   searchLocationId,
   estimateOngkir,
+  pickPriorityCourier,
   formatOngkirForCustomer,
   processCekOngkirTag,
   resolveOngkirTags,
