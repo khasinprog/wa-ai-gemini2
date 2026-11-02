@@ -108,6 +108,9 @@ function extractOrder(replyText, fromJid) {
         alamat: data.alamat || '',
         payment_method: (data.pembayaran || '').toUpperCase().includes('TRANSFER') ? 'Transfer'
                       : (data.pembayaran || '').toUpperCase().includes('COD') ? 'COD' : null,
+        courier: 'SPX',
+        metode_pengiriman: (data.pembayaran || '').toUpperCase().includes('TRANSFER') ? 'Transfer' : 'COD',
+        pickup_status: 'belum_pickup',
         status: 'order',
         timestamp: new Date().toISOString()
       };

@@ -216,8 +216,18 @@ app.get('/api/haskey', (_, res) => {
 
 // ── Auth middleware for ALL /api/* routes after this ────────────────
 app.use('/api', (req, res, next) => {
+  // Allow preview label cetak thermal to be opened in new tab
+  if (req.path && req.path.includes('/preview-label')) {
+    return next();
+  }
+
   const authHeader = req.headers.authorization;
-  if (!authHeader || authHeader !== `Bearer ${SERVER_AUTH_TOKEN}`) {
+  const queryToken = req.query.token;
+  const token = (authHeader && authHeader.startsWith('Bearer '))
+    ? authHeader.slice(7)
+    : (authHeader || queryToken);
+
+  if (!token || token !== SERVER_AUTH_TOKEN) {
     return res.status(401).json({ error: 'Unauthorized: Invalid token' });
   }
   next();

@@ -87,6 +87,7 @@ zip -r "$LOCAL_ZIP" \
   address-ai.js \
   knowledge-base.js \
   ongkir-helper.js \
+  mengantar-service.js \
   telegram-service.js \
   followup-scheduler.js \
   routes/ \

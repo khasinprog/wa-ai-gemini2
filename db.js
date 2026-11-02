@@ -76,8 +76,26 @@ async function initDB() {
         payment_method VARCHAR(30) DEFAULT NULL,
         cold_lead BOOLEAN DEFAULT FALSE,
         status VARCHAR(30) DEFAULT 'baru',
+        courier VARCHAR(50) DEFAULT 'SPX',
+        metode_pengiriman VARCHAR(30) DEFAULT 'COD',
+        no_resi VARCHAR(100) DEFAULT NULL,
+        tracking_status TEXT DEFAULT NULL,
+        tracking_date VARCHAR(50) DEFAULT NULL,
+        mengantar_order_id VARCHAR(100) DEFAULT NULL,
+        pdf_label_url TEXT DEFAULT NULL,
+        pickup_status VARCHAR(50) DEFAULT 'belum_pickup',
         created_at TIMESTAMP DEFAULT NOW()
       );
+
+      -- Migration: Pastikan kolom operasional pengiriman & Mengantar tersedia
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS courier VARCHAR(50) DEFAULT 'SPX';
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS metode_pengiriman VARCHAR(30) DEFAULT 'COD';
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS no_resi VARCHAR(100) DEFAULT NULL;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_status TEXT DEFAULT NULL;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_date VARCHAR(50) DEFAULT NULL;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS mengantar_order_id VARCHAR(100) DEFAULT NULL;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS pdf_label_url TEXT DEFAULT NULL;
+      ALTER TABLE orders ADD COLUMN IF NOT EXISTS pickup_status VARCHAR(50) DEFAULT 'belum_pickup';
 
       CREATE TABLE IF NOT EXISTS settings_store (
         key VARCHAR(50) PRIMARY KEY,
@@ -335,14 +353,36 @@ async function upsertContact(waId, name) {
 async function saveOrder(order) {
   if (!DB_ENABLED) return;
   await pool.query(`
-    INSERT INTO orders (id, wa_id, nama, hp, produk, alamat, ai_alamat, ai_cod, payment_method, status)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+    INSERT INTO orders (
+      id, wa_id, nama, hp, produk, alamat, ai_alamat, ai_cod, payment_method, status,
+      courier, metode_pengiriman, no_resi, tracking_status, tracking_date, mengantar_order_id, pdf_label_url, pickup_status
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
     ON CONFLICT (id) DO UPDATE SET
-      ai_alamat = EXCLUDED.ai_alamat,
-      ai_cod = EXCLUDED.ai_cod,
-      payment_method = EXCLUDED.payment_method,
-      status = EXCLUDED.status
-  `, [order.id, order.jid || order.wa_id, order.nama, order.hp, order.produk, order.alamat, order.ai_alamat || null, order.ai_cod || null, order.payment_method || null, order.status || 'order']);
+      ai_alamat = COALESCE(EXCLUDED.ai_alamat, orders.ai_alamat),
+      ai_cod = COALESCE(EXCLUDED.ai_cod, orders.ai_cod),
+      payment_method = COALESCE(EXCLUDED.payment_method, orders.payment_method),
+      status = COALESCE(EXCLUDED.status, orders.status),
+      courier = COALESCE(EXCLUDED.courier, orders.courier),
+      metode_pengiriman = COALESCE(EXCLUDED.metode_pengiriman, orders.metode_pengiriman),
+      no_resi = COALESCE(EXCLUDED.no_resi, orders.no_resi),
+      tracking_status = COALESCE(EXCLUDED.tracking_status, orders.tracking_status),
+      tracking_date = COALESCE(EXCLUDED.tracking_date, orders.tracking_date),
+      mengantar_order_id = COALESCE(EXCLUDED.mengantar_order_id, orders.mengantar_order_id),
+      pdf_label_url = COALESCE(EXCLUDED.pdf_label_url, orders.pdf_label_url),
+      pickup_status = COALESCE(EXCLUDED.pickup_status, orders.pickup_status)
+  `, [
+    order.id, order.jid || order.wa_id, order.nama, order.hp, order.produk, order.alamat,
+    order.ai_alamat || null, order.ai_cod || null, order.payment_method || null, order.status || 'order',
+    order.courier || order.expedisi || 'SPX',
+    order.metode_pengiriman || order.payment_method || 'COD',
+    order.no_resi || null,
+    order.tracking_status || null,
+    order.tracking_date || null,
+    order.mengantar_order_id || null,
+    order.pdf_label_url || null,
+    order.pickup_status || 'belum_pickup'
+  ]);
 }
 
 async function getOrders() {
@@ -355,12 +395,24 @@ async function getOrders() {
     payment_method: r.payment_method || null,
     cold_lead: r.cold_lead || false,
     status: r.status, created_at: r.created_at,
+    courier: r.courier || 'SPX',
+    metode_pengiriman: r.metode_pengiriman || r.payment_method || 'COD',
+    no_resi: r.no_resi || null,
+    tracking_status: r.tracking_status || null,
+    tracking_date: r.tracking_date || null,
+    mengantar_order_id: r.mengantar_order_id || null,
+    pdf_label_url: r.pdf_label_url || null,
+    pickup_status: r.pickup_status || 'belum_pickup',
   }));
 }
 
 async function updateOrder(id, fields) {
   if (!DB_ENABLED) return;
-  const allowed = ['ai_alamat','ai_cod','payment_method','cold_lead','status'];
+  const allowed = [
+    'ai_alamat','ai_cod','payment_method','cold_lead','status',
+    'courier','metode_pengiriman','no_resi','tracking_status','tracking_date',
+    'mengantar_order_id','pdf_label_url','pickup_status'
+  ];
   const sets = [], vals = [];
   let i = 1;
   for (const [k, v] of Object.entries(fields)) {

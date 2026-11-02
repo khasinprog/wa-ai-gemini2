@@ -1289,6 +1289,14 @@ Garansi: 6 bulan"></textarea>
               <button type="button" onclick="toggleAllOrderGroups()" id="btnToggleAllGroups" class="btn" style="background:var(--s2); border:1px solid var(--border); font-size:0.7rem; padding:4px 10px; border-radius:6px; color:var(--text); cursor:pointer;">
                 🔽 Minimize Semua
               </button>
+
+              <!-- Tombol Integrasi Mengantar & Mode Testing -->
+              <button type="button" id="btnSyncMengantar" onclick="syncOrdersWithMengantarUi(this)" class="btn" style="background:#f0fdf4; border:1px solid #86efac; color:#166534; font-size:0.7rem; font-weight:700; padding:4px 10px; border-radius:6px; cursor:pointer;" title="Sinkronkan nomor resi & tracking terkini dari akun Mengantar">
+                🔄 Sync Mengantar
+              </button>
+              <button type="button" id="btnToggleTestingPickup" onclick="toggleTestingMode()" class="btn" style="background:#fef3c7; border:1px solid #fde68a; color:#92400e; font-size:0.7rem; font-weight:700; padding:4px 10px; border-radius:6px; cursor:pointer;" title="Klik untuk beralih antara Mode Testing (Draft) dan Mode Live">
+                🧪 Mode: Testing (Draft)
+              </button>
             </div>
 
             <!-- Search & Filter Status -->
@@ -1313,6 +1321,10 @@ Garansi: 6 bulan"></textarea>
                 <th>CUSTOMER</th>
                 <th>PRODUK</th>
                 <th>ALAMAT LENGKAP</th>
+                <th>EKSPEDISI & METODE</th>
+                <th>NOMOR RESI</th>
+                <th>SAMPAI MANA (TRACKING)</th>
+                <th>PDF RESI</th>
                 <th>STATUS</th>
                 <th>AKSI</th>
               </tr>
@@ -2438,6 +2450,149 @@ function getOrderMonthTitle(date) {
   return date.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
 }
 
+// ── MENGANTAR PICKUP & TRACKING UI ──────────────────────────────────
+window.isTestingPickupMode = true; // Default: Mode Testing (Draft) aktif agar aman
+
+function toggleTestingMode() {
+  window.isTestingPickupMode = !window.isTestingPickupMode;
+  const btn = document.getElementById('btnToggleTestingPickup');
+  if (btn) {
+    if (window.isTestingPickupMode) {
+      btn.innerHTML = '🧪 Mode: Testing (Draft)';
+      btn.style.background = '#fef3c7';
+      btn.style.borderColor = '#fde68a';
+      btn.style.color = '#92400e';
+      btn.title = 'Mode Testing AKTIF: Order akan disimpan sebagai draft/simulasi tanpa memanggil kurir fisik';
+    } else {
+      btn.innerHTML = '⚡ Mode: Live (Mengantar)';
+      btn.style.background = '#dbeafe';
+      btn.style.borderColor = '#93c5fd';
+      btn.style.color = '#1e40af';
+      btn.title = 'Mode Live AKTIF: Tombol pickup akan langsung memesan ke Mengantar & memanggil kurir';
+    }
+  }
+  renderOrders();
+}
+
+function copyResiText(resi, btn) {
+  if (!resi) return;
+  navigator.clipboard.writeText(resi).then(() => {
+    const orig = btn.innerHTML;
+    btn.innerHTML = '✅';
+    setTimeout(() => { btn.innerHTML = orig; }, 1500);
+  });
+}
+
+async function requestPickupMengantar(id, isDraft, btn) {
+  const origText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '⏳ Memproses...';
+  try {
+    const res = await fetch(`/api/orders/${id}/pickup-mengantar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isTestingDraft: !!isDraft })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      const idx = orders.findIndex(o => o.id === id);
+      if (idx !== -1 && data.order) orders[idx] = data.order;
+      renderOrders();
+      alert(data.message || 'Pickup berhasil diproses!');
+    } else {
+      alert('Gagal request pickup: ' + (data.error || 'Terjadi kesalahan'));
+      btn.disabled = false;
+      btn.innerHTML = origText;
+    }
+  } catch (e) {
+    alert('Koneksi gagal: ' + e.message);
+    btn.disabled = false;
+    btn.innerHTML = origText;
+  }
+}
+
+async function cancelPickupMengantar(id, btn) {
+  if (!confirm('Batalkan draft/pickup pesanan ini?')) return;
+  const origText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '⏳...';
+  try {
+    const res = await fetch(`/api/orders/${id}/cancel-pickup`, { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) {
+      const order = orders.find(o => o.id === id);
+      if (order) {
+        order.pickup_status = 'belum_pickup';
+        order.no_resi = null;
+        order.tracking_status = null;
+        order.pdf_label_url = null;
+      }
+      renderOrders();
+    } else {
+      alert('Gagal membatalkan: ' + (data.error || 'Error'));
+      btn.disabled = false;
+      btn.innerHTML = origText;
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+    btn.disabled = false;
+    btn.innerHTML = origText;
+  }
+}
+
+async function syncOrdersWithMengantarUi(btn) {
+  const origText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '⏳ Sinkronisasi...';
+  try {
+    const res = await fetch('/api/orders/sync-mengantar', { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) {
+      // Refresh order list dari server
+      const rOrders = await fetch('/api/orders');
+      orders = await rOrders.json();
+      renderOrders();
+      alert(`✅ Sinkronisasi berhasil!\n${data.syncedCount} pesanan diperbarui dari total ${data.mengantarTotal || 0} order di akun Mengantar.`);
+    } else {
+      alert('Gagal sinkronisasi: ' + (data.error || 'Unknown error'));
+    }
+  } catch (e) {
+    alert('Koneksi gagal: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = origText;
+  }
+}
+
+async function openEditResiModal(id) {
+  const order = orders.find(o => o.id === id);
+  if (!order) return;
+  const newResi = prompt('Masukkan Nomor Resi / AWB untuk ORD-' + id.slice(-6) + ':', order.no_resi || '');
+  if (newResi === null) return;
+  const newCourier = prompt('Masukkan Nama Ekspedisi (SPX / SAP / J&T / JNE / SiCepat):', order.courier || 'SPX');
+  if (newCourier === null) return;
+
+  try {
+    const res = await fetch(`/api/orders/${id}/resi`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        no_resi: newResi.trim() || null,
+        courier: newCourier.trim() || 'SPX',
+        tracking_status: newResi.trim() ? 'Resi diinput manual' : null
+      })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      const idx = orders.findIndex(o => o.id === id);
+      if (idx !== -1 && data.order) orders[idx] = data.order;
+      renderOrders();
+    }
+  } catch (e) {
+    alert('Gagal update resi: ' + e.message);
+  }
+}
+
 function renderSingleOrderRow(o, isCollapsed) {
   let badgeClass = 'badge-order';
   let badgeText = 'BARU (ORDER)';
@@ -2448,20 +2603,29 @@ function renderSingleOrderRow(o, isCollapsed) {
   else if (st === 'batal') { badgeClass = 'badge-batal'; badgeText = 'BATAL'; }
 
   const statusVal = (st === 'baru' ? 'order' : st) || 'order';
+  const isCOD = (o.metode_pengiriman || o.payment_method || 'COD').toUpperCase().includes('COD');
+  const courierName = (o.courier || 'SPX').toUpperCase();
 
   return `
   <tr style="${isCollapsed ? 'display:none;' : ''}">
+    <!-- 1. NO. TIKET / TGL -->
     <td>
       <div style="font-weight:600;color:var(--blue);margin-bottom:4px">ORD-${o.id.substring(o.id.length-6)}</div>
       <div style="font-size:0.7rem;color:var(--muted)">${ft(o.created_at || o.timestamp)}</div>
     </td>
+
+    <!-- 2. CUSTOMER -->
     <td>
       <div style="font-weight:600;margin-bottom:4px">${x(o.nama)}</div>
       <div style="font-size:0.75rem;color:var(--muted)">${o.hp}</div>
     </td>
+
+    <!-- 3. PRODUK -->
     <td><div style="font-size:0.8rem;font-weight:500">${x(o.produk)}</div></td>
+
+    <!-- 4. ALAMAT LENGKAP -->
     <td>
-      <div style="font-size:0.75rem;line-height:1.5;max-width:250px">${x(o.alamat)}</div>
+      <div style="font-size:0.75rem;line-height:1.5;max-width:240px">${x(o.alamat)}</div>
       ${o.ai_alamat ? `
       <div style="margin-top:8px; padding-top:8px; border-top:1px dashed #e2e8f0;">
         <div style="font-size:10px; font-weight:700; color:#10b981; letter-spacing:0.5px; margin-bottom:4px;">✨ VERSI AI</div>
@@ -2471,6 +2635,60 @@ function renderSingleOrderRow(o, isCollapsed) {
       </div>
       ` : `<div style="margin-top:6px;"><button onclick="recheckOrderAI('${o.id}',this)" title="Cek AI Alamat & ID Express COD" style="font-size:10px;padding:3px 7px;border-radius:4px;border:1px solid #cbd5e1;background:#f8fafc;color:#475569;cursor:pointer;">&#x21bb; Cek AI</button></div>`}
     </td>
+
+    <!-- 5. EKSPEDISI & METODE PENGIRIMAN -->
+    <td>
+      <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-start;">
+        <span style="font-size:11px; font-weight:700; background:#f1f5f9; color:#1e293b; padding:2px 7px; border-radius:4px; border:1px solid #cbd5e1; white-space:nowrap;">
+          📦 ${x(courierName)}
+        </span>
+        <span style="font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px; ${isCOD ? 'background:#dcfce7; color:#166534; border:1px solid #bbf7d0;' : 'background:#dbeafe; color:#1e40af; border:1px solid #bfdbfe;'}">
+          ${isCOD ? 'COD' : 'Non-COD'}
+        </span>
+      </div>
+    </td>
+
+    <!-- 6. NOMOR RESI -->
+    <td>
+      ${o.no_resi ? `
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="font-family:monospace; font-size:11px; font-weight:700; color:#0f172a; background:#f8fafc; padding:3px 6px; border-radius:4px; border:1px solid #e2e8f0; white-space:nowrap;">${x(o.no_resi)}</span>
+          <button onclick="copyResiText('${o.no_resi}', this)" title="Salin No Resi" style="border:none; background:none; cursor:pointer; font-size:13px; padding:2px;">📋</button>
+        </div>
+        <div style="margin-top:3px; font-size:10px; color:${o.pickup_status === 'draft' ? '#d97706' : '#16a34a'}; font-weight:600;">
+          ${o.pickup_status === 'draft' ? '📝 Resi Draft' : '✅ Mengantar'}
+          <button onclick="openEditResiModal('${o.id}')" title="Ubah Resi / Kurir" style="border:none;background:none;color:#64748b;cursor:pointer;font-size:10px;margin-left:2px;">[✏️]</button>
+        </div>
+      ` : `
+        <div style="font-size:11px; color:#94a3b8; font-style:italic;">Belum Ada Resi</div>
+        <button onclick="openEditResiModal('${o.id}')" title="Input Resi Manual" style="margin-top:3px; font-size:10px; color:#2563eb; background:none; border:none; cursor:pointer; padding:0;">+ Input Resi</button>
+      `}
+    </td>
+
+    <!-- 7. SAMPAI MANA (TRACKING) -->
+    <td>
+      ${o.tracking_status ? `
+        <div style="font-size:11px; font-weight:600; color:#0f172a; line-height:1.3; max-width:180px;">${x(o.tracking_status)}</div>
+        ${o.tracking_date ? `<div style="font-size:10px; color:#64748b; margin-top:2px;">🕒 ${x(o.tracking_date)}</div>` : ''}
+      ` : `
+        <div style="font-size:11px; color:#94a3b8;">${o.pickup_status === 'draft' ? 'Draft (Menunggu Pickup)' : 'Belum di-pickup'}</div>
+      `}
+    </td>
+
+    <!-- 8. PDF RESI (LABEL PENGIRIMAN) -->
+    <td>
+      ${o.pdf_label_url ? `
+        <a href="${o.pdf_label_url.startsWith('http') ? o.pdf_label_url : (o.pdf_label_url + (o.pdf_label_url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(localStorage.getItem('authToken') || ''))}" target="_blank" style="display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:700; background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; padding:4px 8px; border-radius:6px; text-decoration:none; cursor:pointer; white-space:nowrap;">
+          📄 Buka PDF
+        </a>
+      ` : `
+        <a href="/api/orders/${o.id}/preview-label?token=${encodeURIComponent(localStorage.getItem('authToken') || '')}" target="_blank" style="display:inline-flex; align-items:center; gap:4px; font-size:10px; font-weight:600; background:#f8fafc; color:#64748b; border:1px dashed #cbd5e1; padding:3px 7px; border-radius:5px; text-decoration:none; cursor:pointer; white-space:nowrap;">
+          📄 Preview
+        </a>
+      `}
+    </td>
+
+    <!-- 9. STATUS -->
     <td>
       <select class="badge ${badgeClass} badge-select" onchange="updateOrderStatus('${o.id}',this.value)">
         <option value="order" ${statusVal==='order'?'selected':''}>NEW TICKET</option>
@@ -2480,8 +2698,28 @@ function renderSingleOrderRow(o, isCollapsed) {
         <option value="batal" ${statusVal==='batal'?'selected':''}>BATAL</option>
       </select>
     </td>
+
+    <!-- 10. AKSI (REQUEST PICKUP / PANGGIL KURIR / HAPUS) -->
     <td>
-      <button class="btn-red" onclick="deleteOrder('${o.id}')">Hapus</button>
+      <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-start;">
+        ${(o.pickup_status === 'requested' || o.pickup_status === 'picked_up') ? `
+          <button type="button" style="background:#10b981; color:#fff; border:none; padding:4px 8px; border-radius:5px; font-size:10px; font-weight:700; cursor:default; white-space:nowrap;" title="Sudah didaftarkan pickup">
+            ✅ Sudah Pickup
+          </button>
+        ` : o.pickup_status === 'draft' ? `
+          <button type="button" onclick="requestPickupMengantar('${o.id}', false, this)" style="background:#f59e0b; color:#fff; border:none; padding:4px 8px; border-radius:5px; font-size:10px; font-weight:700; cursor:pointer; white-space:nowrap;" title="Panggil kurir Mengantar untuk draft ini">
+            🚚 Panggil Kurir
+          </button>
+          <button type="button" onclick="cancelPickupMengantar('${o.id}', this)" style="background:none; border:none; color:#ef4444; font-size:10px; cursor:pointer; padding:0;" title="Batalkan draft ini">
+            Batal Draft
+          </button>
+        ` : `
+          <button type="button" onclick="requestPickupMengantar('${o.id}', window.isTestingPickupMode, this)" style="background:#2563eb; color:#fff; border:none; padding:4px 8px; border-radius:5px; font-size:10px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:4px; white-space:nowrap;" title="Kirim ke Mengantar">
+            <span>🚚</span> ${window.isTestingPickupMode ? 'Draft Pickup' : 'Request Pickup'}
+          </button>
+        `}
+        <button class="btn-red" onclick="deleteOrder('${o.id}')" style="font-size:10px; padding:3px 6px;">Hapus</button>
+      </div>
     </td>
   </tr>
   `;
@@ -2495,7 +2733,7 @@ function renderOrders(){
   if (totalBadge) totalBadge.innerText = orders.length + ' Pesanan';
 
   if(!orders.length){
-    list.innerHTML='<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--muted)">Belum ada data order</td></tr>';
+    list.innerHTML='<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted)">Belum ada data order</td></tr>';
     return;
   }
 
@@ -2523,7 +2761,7 @@ function renderOrders(){
   }
 
   if (!filtered.length) {
-    list.innerHTML='<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--muted)">Tidak ada pesanan yang sesuai filter pencarian</td></tr>';
+    list.innerHTML='<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted)">Tidak ada pesanan yang sesuai filter pencarian</td></tr>';
     return;
   }
 
@@ -2606,7 +2844,7 @@ function renderOrders(){
     // Header baris grup yang bisa di-klik untuk minimize/expand
     html += `
     <tr class="order-group-header-row" onclick="toggleOrderGroup('${g.key}')" title="Klik untuk minimize/expand grup ini">
-      <td colspan="6" style="padding:10px 16px;">
+      <td colspan="10" style="padding:10px 16px;">
         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
           <div style="display:flex; align-items:center; gap:8px; font-weight:700; color:#1e293b; font-size:0.85rem;">
             <span class="order-group-chevron">${isCollapsed ? '▶' : '▼'}</span>

@@ -24,6 +24,7 @@ const { getApiKeys, computeKeyStatuses, emitKeyStatuses, getAvailableKey, markKe
 const { sendWhatsAppText, sendWhatsAppImageByPath, uploadWhatsAppMediaBuffer, sendWhatsAppMediaById, waConfigured } = require('./whatsapp-api');
 const { processCustomerMessage, retryFailedMessages } = require('./message-processor');
 const { processOrderAddressAI } = require('./address-ai');
+const { syncOrdersWithMengantar, processOrderPickup, renderThermalLabelHtml } = require('./mengantar-service');
 
 // ── PWA Push Notification config ────────────────────────────────────
 const webpush = require('web-push');
@@ -391,6 +392,89 @@ Aturan Wajib:
     } else {
       res.status(404).json({ error: 'Order tidak ditemukan' });
     }
+  });
+
+  // ── MENGANTAR INTEGRATION ROUTES ───────────────────────────────────
+
+  // Request Pickup / Simpan Draft Mengantar
+  app.post('/api/orders/:id/pickup-mengantar', async (req, res) => {
+    const { id } = req.params;
+    const { isTestingDraft, courier, metode } = req.body;
+    const order = store.orders.find(o => o.id === id);
+    if (!order) return res.status(404).json({ error: 'Order tidak ditemukan' });
+
+    if (courier) order.courier = courier;
+    if (metode) order.metode_pengiriman = metode;
+
+    const result = await processOrderPickup(order, !!isTestingDraft);
+    store.save(store.PATHS.ORDER_FILE, store.orders);
+    store.persistOrderToDB(order);
+    io.emit('order_updated', order);
+
+    res.json(result);
+  });
+
+  // Batalkan Pickup / Reset Draft Mengantar
+  app.post('/api/orders/:id/cancel-pickup', async (req, res) => {
+    const { id } = req.params;
+    const order = store.orders.find(o => o.id === id);
+    if (!order) return res.status(404).json({ error: 'Order tidak ditemukan' });
+
+    order.pickup_status = 'belum_pickup';
+    order.no_resi = null;
+    order.tracking_status = null;
+    order.tracking_date = null;
+    order.pdf_label_url = null;
+    order.mengantar_order_id = null;
+    store.save(store.PATHS.ORDER_FILE, store.orders);
+    store.persistOrderToDB(order);
+    io.emit('order_updated', order);
+
+    res.json({ ok: true, message: 'Pickup / draft berhasil dibatalkan' });
+  });
+
+  // Update / Input Resi & Ekspedisi Manual
+  app.post('/api/orders/:id/resi', async (req, res) => {
+    const { id } = req.params;
+    const { no_resi, courier, tracking_status, metode_pengiriman } = req.body;
+    const order = store.orders.find(o => o.id === id);
+    if (!order) return res.status(404).json({ error: 'Order tidak ditemukan' });
+
+    if (no_resi !== undefined) order.no_resi = no_resi;
+    if (courier !== undefined) order.courier = courier;
+    if (metode_pengiriman !== undefined) order.metode_pengiriman = metode_pengiriman;
+    if (tracking_status !== undefined) order.tracking_status = tracking_status;
+    if (!order.pdf_label_url && order.no_resi) {
+      order.pdf_label_url = `/api/orders/${order.id}/preview-label`;
+    }
+    store.save(store.PATHS.ORDER_FILE, store.orders);
+    store.persistOrderToDB(order);
+    io.emit('order_updated', order);
+
+    res.json({ ok: true, order });
+  });
+
+  // Sinkronkan status resi & tracking dari akun Mengantar
+  app.post('/api/orders/sync-mengantar', async (req, res) => {
+    try {
+      const { syncedCount, mengantarTotal } = await syncOrdersWithMengantar(store.orders);
+      store.save(store.PATHS.ORDER_FILE, store.orders);
+      for (const o of store.orders) {
+        store.persistOrderToDB(o);
+      }
+      io.emit('orders', store.orders);
+      res.json({ ok: true, syncedCount, mengantarTotal });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Label Pengiriman Siap Cetak (Thermal 100x100 mm / Preview Label)
+  app.get('/api/orders/:id/preview-label', (req, res) => {
+    const order = store.orders.find(o => o.id === req.params.id);
+    if (!order) return res.status(404).send('Order tidak ditemukan');
+    const html = renderThermalLabelHtml(order);
+    res.type('html').send(html);
   });
 
   app.post('/api/cek-alamat-manual', async (req, res) => {
