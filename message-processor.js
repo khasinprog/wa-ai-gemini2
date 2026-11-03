@@ -102,6 +102,19 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
         console.log(`📋 [OrderState] ${senderName}: step=${orderState.step}, product=${orderState.product || '-'}`);
       }
 
+      // On-demand tracking sync jika customer menanyakan resi / lokasi paket
+      if (/resi|sampai mana|posisi|lacak|sudah dikirim|status paket|status pesanan/i.test(combinedBody)) {
+        const hasOrder = store.orders.some(o => o.jid === from || o.wa_id === from || (o.hp && from.includes(o.hp.slice(-8))));
+        if (hasOrder) {
+          try {
+            const { syncOrdersWithMengantar } = require('./mengantar-service');
+            await syncOrdersWithMengantar(store.orders);
+          } catch (e) {
+            console.warn('[Tracking Inquiry] Sync Mengantar error:', e.message);
+          }
+        }
+      }
+
       // ── AI REPLY: kirim full history + system prompt, biarkan AI baca sendiri ──
       let reply = await aiReply(combinedBody, senderName, history, controller.signal, from, imagePath, audioPathForAI);
 
