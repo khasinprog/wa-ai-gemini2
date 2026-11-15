@@ -289,9 +289,10 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
         }
 
         // DRAFT MODE
-        // Trigger draft jika: ada tag manual [DRAFT_*], atau reply berisi [ORDER_DATA] (konfirmasi order — admin review dulu)
+        // Trigger draft HANYA jika ada tag eksplisit [DRAFT_ONGKIR] atau [DRAFT_REKAP]
+        // Catatan: [ORDER_DATA] sudah otomatis diekstrak ke DB oleh extractOrder(), jangan menahan reply chat WhatsApp!
         const _hasDraftTag = cleanReply.includes('[DRAFT_ONGKIR]') || cleanReply.includes('[DRAFT_REKAP]');
-        const _shouldDraft = _hasDraftTag || _replyHadOrderData;
+        const _shouldDraft = _hasDraftTag;
         if (_shouldDraft) {
           cleanReply = cleanReply.replace(/\[DRAFT_REKAP\]/gi, '').replace(/\[DRAFT_ONGKIR\]/gi, '').trim();
           entry.aiReplyDraft = cleanReply;
@@ -306,10 +307,7 @@ async function processCustomerMessage(from, senderName, combinedBody, lastWamid,
           // Kirim notifikasi Telegram ke admin
           const tgDraft = require('./telegram-service');
           if (tgDraft.isConfigured()) {
-            const draftType = _hasDraftTag && cleanReply.toLowerCase().includes('rekap') ? 'rekap'
-              : _hasDraftTag ? 'ongkir'
-              : _replyHadOrderData ? 'order_confirm'
-              : 'other';
+            const draftType = cleanReply.toLowerCase().includes('rekap') ? 'rekap' : 'ongkir';
             tgDraft.sendDraftNotification({
               customerPhone:   from,
               customerName:    senderName,
@@ -509,8 +507,7 @@ async function retryFailedMessages() {
         for (const match of imgMatches) { productsToImage.push(match[1].trim()); cleanReply = cleanReply.replace(match[0], '').trim(); }
 
         const _hasRetryDraftTag = cleanReply.includes('[DRAFT_ONGKIR]') || cleanReply.includes('[DRAFT_REKAP]');
-        const _retryHadOrderData = !!(reply && reply.includes('[ORDER_DATA]'));
-        if (_hasRetryDraftTag || _retryHadOrderData) {
+        if (_hasRetryDraftTag) {
           cleanReply = cleanReply.replace(/\[DRAFT_REKAP\]/gi, '').replace(/\[DRAFT_ONGKIR\]/gi, '').trim();
           entry.aiReplyDraft = cleanReply;
           entry.draftStatus = 'pending';
@@ -522,9 +519,7 @@ async function retryFailedMessages() {
 
           const tgRetry = require('./telegram-service');
           if (tgRetry.isConfigured()) {
-            const draftType = _hasRetryDraftTag && cleanReply.toLowerCase().includes('rekap') ? 'rekap'
-              : _hasRetryDraftTag ? 'ongkir'
-              : 'order_confirm';
+            const draftType = cleanReply.toLowerCase().includes('rekap') ? 'rekap' : 'ongkir';
             tgRetry.sendDraftNotification({
               customerPhone:   entry.from,
               customerName:    entry.senderName || entry.from,

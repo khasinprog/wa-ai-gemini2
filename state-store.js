@@ -7,17 +7,17 @@
 'use strict';
 
 const path = require('path');
-const fs   = require('fs');
+const fs = require('fs');
 
-const DATA_DIR  = path.join(__dirname, 'data');
-const MSG_FILE  = path.join(DATA_DIR, 'messages.json');
-const SET_FILE  = path.join(DATA_DIR, 'settings.json');
+const DATA_DIR = path.join(__dirname, 'data');
+const MSG_FILE = path.join(DATA_DIR, 'messages.json');
+const SET_FILE = path.join(DATA_DIR, 'settings.json');
 const ORDER_FILE = path.join(DATA_DIR, 'orders.json');
-const ESC_FILE  = path.join(DATA_DIR, 'escalations.json');
+const ESC_FILE = path.join(DATA_DIR, 'escalations.json');
 const ORDER_STATE_FILE = path.join(__dirname, 'orderStates.json');
 const RAW_CAP_FILE = path.join(DATA_DIR, 'test-raw-captures.json');
 const IMAGES_DIR = path.join(DATA_DIR, 'images');
-const AUDIO_DIR  = path.join(DATA_DIR, 'audio');
+const AUDIO_DIR = path.join(DATA_DIR, 'audio');
 
 [DATA_DIR, IMAGES_DIR, AUDIO_DIR].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
 
@@ -150,29 +150,29 @@ const DEF = {
 
 // ── Load persisted state from files ──
 let settings = { ...DEF };
-let messages  = [];
-let orders    = [];
+let messages = [];
+let orders = [];
 let pendingEscalations = [];
-let escalationCounter  = 1;
+let escalationCounter = 1;
 
 try {
   if (fs.existsSync(SET_FILE)) {
     settings = { ...DEF, ...JSON.parse(fs.readFileSync(SET_FILE, 'utf8')) };
   }
-} catch(e) {}
+} catch (e) { }
 if (!settings.systemPrompt || settings.systemPrompt.length <= 7000 || !settings.systemPrompt.includes('1 kurir prioritas COD')) {
   settings.systemPrompt = DEFAULT_SYSTEM_PROMPT;
-  try { fs.writeFileSync(SET_FILE, JSON.stringify(settings, null, 2)); } catch(e) {}
+  try { fs.writeFileSync(SET_FILE, JSON.stringify(settings, null, 2)); } catch (e) { }
 }
-try { if (fs.existsSync(MSG_FILE)) messages  = JSON.parse(fs.readFileSync(MSG_FILE, 'utf8')); } catch(e) {}
-try { if (fs.existsSync(ORDER_FILE)) orders  = JSON.parse(fs.readFileSync(ORDER_FILE, 'utf8')); } catch(e) {}
+try { if (fs.existsSync(MSG_FILE)) messages = JSON.parse(fs.readFileSync(MSG_FILE, 'utf8')); } catch (e) { }
+try { if (fs.existsSync(ORDER_FILE)) orders = JSON.parse(fs.readFileSync(ORDER_FILE, 'utf8')); } catch (e) { }
 try {
   if (fs.existsSync(ESC_FILE)) {
     const raw = JSON.parse(fs.readFileSync(ESC_FILE, 'utf8'));
     pendingEscalations = raw.items || [];
-    escalationCounter  = raw.counter || 1;
+    escalationCounter = raw.counter || 1;
   }
-} catch(e) {}
+} catch (e) { }
 
 // ── In-memory Maps & state ──
 const orderStates = new Map();
@@ -193,7 +193,7 @@ try {
     testRawCaptures.push(...loaded);
     _rawCaptureId = testRawCaptures.length ? testRawCaptures[testRawCaptures.length - 1].id : 0;
   }
-} catch(e) {}
+} catch (e) { }
 const testTurns = [];
 const TEST_PHONE = 'test_internal_0000';
 let _capturedGeminiRequest = null;
@@ -211,11 +211,11 @@ async function persistMessageToDB(msg) {
     await db.saveMessage(msg);
     const waId = msg.wa_id || msg.from;
     if (waId) await db.upsertContact(waId, msg.sender_name || msg.senderName || 'Unknown');
-  } catch(e) { console.error('DB Msg Error:', e.message); }
+  } catch (e) { console.error('DB Msg Error:', e.message); }
 }
 async function persistOrderToDB(order) {
   if (!order) return;
-  try { await db.saveOrder(order); } catch(e) { console.error('DB Order Error:', e.message); }
+  try { await db.saveOrder(order); } catch (e) { console.error('DB Order Error:', e.message); }
 }
 
 // ── File save helper (non-blocking) ──
@@ -225,10 +225,10 @@ const save = (file, data) => {
     fs.writeFile(file, json, (err) => {
       if (err) {
         console.error(`Gagal menyimpan file ${path.basename(file)}:`, err.message);
-        try { io?.emit('save_error', { file: path.basename(file), error: err.message }); } catch(e2) {}
+        try { io?.emit('save_error', { file: path.basename(file), error: err.message }); } catch (e2) { }
       }
     });
-  } catch(e) {
+  } catch (e) {
     console.error(`Gagal menyimpan file ${path.basename(file)}:`, e.message);
   }
 };

@@ -140,7 +140,7 @@ async function initDB() {
     // Cleanup old processed_wamids (older than 7 days) — non-fatal
     try {
       await client.query(`DELETE FROM processed_wamids WHERE processed_at < NOW() - INTERVAL '7 days'`);
-    } catch(e) { /* ignore */ }
+    } catch (e) { /* ignore */ }
 
     console.log('✅ Database schema ready');
   } finally {
@@ -207,7 +207,7 @@ async function saveMessage(msg) {
 
 async function updateMessage(id, fields) {
   if (!DB_ENABLED) return;
-  const allowed = ['ai_reply','ai_reply_draft','draft_status','replied','manual','cancelled_entry','retry_count','media_url','link_url','link_title','link_thumbnail','link_domain'];
+  const allowed = ['ai_reply', 'ai_reply_draft', 'draft_status', 'replied', 'manual', 'cancelled_entry', 'retry_count', 'media_url', 'link_url', 'link_title', 'link_thumbnail', 'link_domain'];
   const sets = [], vals = [];
   let i = 1;
   for (const [k, v] of Object.entries(fields)) {
@@ -318,16 +318,16 @@ async function getHistoryForAI(waId, limit = 30, excludeId = null) {
     `, [waId, excludeId || null, limit]);
 
     return res.rows.map(row => ({
-      id:            row.id,
-      from:          row.wa_id,
-      body:          row.body,
-      aiReply:       row.ai_reply,
-      aiReplyDraft:  row.ai_reply_draft,
-      draftStatus:   row.draft_status,
+      id: row.id,
+      from: row.wa_id,
+      body: row.body,
+      aiReply: row.ai_reply,
+      aiReplyDraft: row.ai_reply_draft,
+      draftStatus: row.draft_status,
       cancelledEntry: row.cancelled_entry,
-      heldReply:     row.held_reply || false,
-      replied:       row.replied,
-      timestamp:     row.timestamp,
+      heldReply: row.held_reply || false,
+      replied: row.replied,
+      timestamp: row.timestamp,
     }));
   } catch (e) {
     console.error('[DB] getHistoryForAI error:', e.message);
@@ -409,9 +409,9 @@ async function getOrders() {
 async function updateOrder(id, fields) {
   if (!DB_ENABLED) return;
   const allowed = [
-    'ai_alamat','ai_cod','payment_method','cold_lead','status',
-    'courier','metode_pengiriman','no_resi','tracking_status','tracking_date',
-    'mengantar_order_id','pdf_label_url','pickup_status'
+    'ai_alamat', 'ai_cod', 'payment_method', 'cold_lead', 'status',
+    'courier', 'metode_pengiriman', 'no_resi', 'tracking_status', 'tracking_date',
+    'mengantar_order_id', 'pdf_label_url', 'pickup_status'
   ];
   const sets = [], vals = [];
   let i = 1;
@@ -459,7 +459,7 @@ async function logWebhook(eventType, payload) {
       'INSERT INTO webhook_logs (event_type, payload) VALUES ($1, $2)',
       [eventType, JSON.stringify(payload)]
     );
-  } catch(e) { /* non-fatal */ }
+  } catch (e) { /* non-fatal */ }
 }
 
 // ── Processed Wamids (Dedup) ─────────────────────────────────────
@@ -474,7 +474,7 @@ async function saveProcessedWamid(wamid) {
        ON CONFLICT (wamid) DO NOTHING`,
       [wamid]
     );
-  } catch(e) { /* non-fatal */ }
+  } catch (e) { /* non-fatal */ }
 }
 
 async function isWamidProcessed(wamid) {
@@ -485,7 +485,7 @@ async function isWamidProcessed(wamid) {
       [wamid]
     );
     return res.rowCount > 0;
-  } catch(e) { return false; }
+  } catch (e) { return false; }
 }
 
 // ── Active Claims (Warranty) ─────────────────────────────────────
@@ -500,7 +500,7 @@ async function saveActiveClaim(waId, description) {
        ON CONFLICT (wa_id) DO UPDATE SET description = $2, created_at = NOW()`,
       [waId, description]
     );
-  } catch(e) { /* non-fatal */ }
+  } catch (e) { /* non-fatal */ }
 }
 
 async function getActiveClaim(waId) {
@@ -511,14 +511,14 @@ async function getActiveClaim(waId) {
       [waId]
     );
     return res.rows[0] || null;
-  } catch(e) { return null; }
+  } catch (e) { return null; }
 }
 
 async function deleteActiveClaim(waId) {
   if (!waId) return;
   try {
     await pool.query('DELETE FROM active_claims WHERE wa_id = $1', [waId]);
-  } catch(e) { /* non-fatal */ }
+  } catch (e) { /* non-fatal */ }
 }
 
 // Load all active claims on startup
@@ -526,7 +526,7 @@ async function loadActiveClaims() {
   try {
     const res = await pool.query('SELECT * FROM active_claims');
     return res.rows;
-  } catch(e) { return []; }
+  } catch (e) { return []; }
 }
 
 module.exports = {
