@@ -99,7 +99,9 @@ async function estimateOngkir({ originMongoId, destMongoId, weight, itemValue, d
         price: info.estimatedSpecialPrice || info.estimatedPrice || info.price || 0,
         originalPrice: info.estimatedPrice || info.price || 0,
         discount: info.discount || 0,
-        etd: info.estimatedDate || info.estimate_delivery || null,
+        etd: (info.estimate_delivery && info.estimate_delivery.trim() !== '-')
+          ? info.estimate_delivery.trim()
+          : (info.estimatedDate || null),
         codFee: info.codFee || 0,
         unsupportedCod: info.unsupported_cod === true || info.coverage_cod === false || info.unsupportedOriginSpx === true,
       }));
@@ -180,6 +182,25 @@ function pickPriorityCourier(allCouriers) {
   return sortedAny[0] || allCouriers[0];
 }
 
+/**
+ * Format estimasi waktu aman untuk customer:
+ * Mengambil durasi maksimal dari data asli kurir + buffer 2 hari.
+ * Rumus: (durasi maksimal ~ durasi maksimal + 2 hari)
+ * Contoh: "2 - 8 days" (max: 8) -> "8~10 hari"
+ *         "5 - 7 Days" (max: 7) -> "7~9 hari"
+ *         "4 HARI"     (max: 4) -> "4~6 hari"
+ */
+function formatSafeEtd(rawEtd) {
+  if (!rawEtd || typeof rawEtd !== 'string') return null;
+  const numbers = rawEtd.match(/\d+/g);
+  if (!numbers || !numbers.length) return null;
+  const intVals = numbers.map(Number);
+  const maxVal = Math.max(...intVals);
+  if (maxVal <= 0) return null;
+  const safeMax = maxVal + 2;
+  return `${maxVal}~${safeMax} hari`;
+}
+
 function formatOngkirForCustomer(result, destName) {
   if (!result || (!result.price && (!result.allCouriers || !result.allCouriers.length))) {
     return `Maaf Kak, tarif ke ${destName || 'lokasi tersebut'} belum bisa dicek otomatis saat ini. Hubungi admin ya untuk info ongkir 🙏`;
@@ -195,7 +216,8 @@ function formatOngkirForCustomer(result, destName) {
   const harga = Number(selected.price).toLocaleString('id-ID');
   const codFee = (selected.codFee && selected.codFee > 0) ? selected.codFee : 4000;
   const codFeeStr = Number(codFee).toLocaleString('id-ID');
-  const etd = selected.etd ? ` (${selected.etd})` : '';
+  const safeEtd = formatSafeEtd(selected.etd);
+  const etd = safeEtd ? ` (Estimasi tiba: ${safeEtd})` : '';
 
   let msg = `Ongkir ke ${destName || 'lokasi kamu'} 📦\n`;
   msg += `• Sebesar Rp ${harga} (${cName}), biaya COD Rp ${codFeeStr}${etd}`;
@@ -269,6 +291,7 @@ module.exports = {
   searchLocationId,
   estimateOngkir,
   pickPriorityCourier,
+  formatSafeEtd,
   formatOngkirForCustomer,
   processCekOngkirTag,
   resolveOngkirTags,
