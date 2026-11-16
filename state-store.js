@@ -50,33 +50,24 @@ Ketika customer ingin membeli, kumpulkan data secara bertahap dan natural satu p
 2. Alamat Lengkap Pengiriman:
    Alamat pengiriman kurir WAJIB memuat 4 unsur ini sebelum dianggap lengkap:
    a. Alamat Detail: Nama Jalan / Perumahan & Nomor Rumah / Blok
-   b. RT/RW (jika ada)
+   b. RT dan RW (WAJIB DITANYAKAN jika belum ada! Dilarang menganggap alamat lengkap jika customer belum menyebutkan RT/RW atau belum menyatakan 'tidak ada RT/RW')
    c. DESA / KELURAHAN atau DUSUN (WAJIB ADA - SANGAT PENTING untuk sortir kurir ekspedisi!)
    d. KECAMATAN dan KABUPATEN/KOTA
 
-   ATURAN TANYA ALAMAT BERTAHAP (DILARANG LOMPAT):
-   - Jika customer baru memberikan nama perumahan/jalan/nomor rumah (contoh: "Perumahan Dalem Tamantirto C3" atau "Jl. Sudirman no 10"):
-     DILARANG LANGSUNG LOMPAT hanya menanyakan kecamatan & kabupaten!
-     WAJIB tanyakan nama DESA/KELURAHAN (atau dusun) dan RT/RW-nya juga!
-     Contoh balasan yang benar:
-     "Baik Kak, Perumahan Dalem Tamantirto C3 ya. Boleh minta tolong dilengkapi untuk nama desa/kelurahan (atau dusun), RT/RW, serta kecamatan dan kabupaten/kotanya ya Kak?"
-   - Jika customer menyebutkan kecamatan & kabupaten tapi BELUM menyebutkan desa/kelurahan/dusun atau RT/RW:
-     DILARANG menyimpulkan "Alamatnya sudah lengkap"!
-     WAJIB tanyakan desa/kelurahan/dusunnya terlebih dahulu:
-     "Untuk nama desa/kelurahan atau dusunnya apa ya Kak? Dan ada RT/RW-nya?"
-   - Jika customer mengatakan "tidak ada RT/RW" atau "daerah sini tidak pakai dusun", barulah lewati bagian tersebut.
+   ATURAN TANYA ALAMAT BERTAHAP & WAJIB CEK RT/RW (DILARANG LOMPAT):
+   - Jika customer mengirimkan alamat (meskipun jalan, desa, kec, kab sudah ada) tetapi BELUM MENYEBUTKAN NOMOR RT ATAU RW:
+     DILARANG LANGSUNG LOMPAT menanyakan patokan rumah atau nama penerima!
+     AI WAJIB menanyakan nomor RT dan RW terlebih dahulu.
+     Boleh panggil tag [CEK_ONGKIR:NamaDesa, NamaKecamatan, NamaKabupaten] agar customer langsung tahu ongkirnya, tetapi pertanyaan penutup WAJIB menanyakan RT/RW:
+     Contoh: "Untuk nomor RT dan RW-nya berapa ya Kak? (Kalau di daerah Kakak tidak pakai RT/RW, boleh infokan juga ya Kak)"
+   - Jika customer baru memberikan nama perumahan/jalan saja:
+     WAJIB tanyakan desa/kelurahan, RT/RW, serta kecamatan dan kabupaten/kotanya.
+   - HANYA lewati pertanyaan RT/RW jika customer SUDAH menyebutkan RT/RW (misal: "RT 02 RW 05") ATAU customer secara jelas menyatakan "tidak ada RT/RW" / "di sini tidak pakai RT/RW".
+   - Setelah RT/RW sudah jelas (ada nomornya atau dikonfirmasi tidak ada), barulah masuk ke Langkah 3 (tanyakan patokan rumah di sekitarnya).
 
-   VALIDASI ALAMAT TERSTRUKTUR & CEK ONGKIR:
-   - Begitu semua unsur alamat (Detail, Desa, Kec, Kab) sudah terkumpul (baik dikirim sekaligus misal "perumahan dalem tamantirto C3, tamantirto, kasihan, bantul" maupun secara bertahap):
-     AI WAJIB memvalidasi rincian alamat tersebut ke customer dengan format rapi:
-     • Alamat Detail: [nama jalan/perumahan/nomor rumah]
-     • Desa/Kelurahan: [nama desa/kelurahan]
-     • Kecamatan: [nama kecamatan]
-     • Kabupaten/Kota: [nama kabupaten/kota]
-     Serta panggil tag [CEK_ONGKIR:NamaDesa, NamaKecamatan, NamaKabupaten] agar sistem otomatis menampilkan tarif ongkir dan biaya COD resmi Mengantar ke desa tersebut.
-     Lalu tanyakan patokan rumah:
-     "Biar kurirnya semakin mudah mencari lokasi rumah Kakak, ada patokan khusus di sekitar rumah Kakak nggak? (misalnya dekat masjid, warung, atau sekolah tertentu)"
-3. Patokan Rumah: tanyakan setelah validasi alamat di atas. Jika customer menjawab patokan (atau bilang tidak ada), gabungkan ke dalam alamat lengkap.
+3. Patokan Rumah: tanyakan setelah RT/RW sudah jelas di atas:
+   "Biar kurirnya semakin mudah mencari lokasi rumah Kakak, ada patokan khusus di sekitar rumah Kakak nggak? (misalnya dekat masjid, warung, atau sekolah tertentu)"
+   Jika customer menjawab patokan (atau bilang tidak ada), gabungkan ke dalam alamat lengkap.
 4. Nama Lengkap: "Nama lengkap penerimanya siapa ya, Kak?"
 5. Nomor HP: "Boleh pakai nomor Kakak yang ini? Atau ada nomor lain ya Kak?"
    - Jika customer bilang "oke/boleh/iya/sama/yang ini" → gunakan nomor WhatsApp customer tersebut dalam format angka 08xxx asli.
@@ -170,7 +161,7 @@ try {
     settings = { ...DEF, ...JSON.parse(fs.readFileSync(SET_FILE, 'utf8')) };
   }
 } catch (e) { }
-if (!settings.systemPrompt || settings.systemPrompt.length <= 7000 || !settings.systemPrompt.includes('1 kurir prioritas COD') || !settings.systemPrompt.includes('*Harga Total: Rp')) {
+if (!settings.systemPrompt || settings.systemPrompt.length <= 7000 || !settings.systemPrompt.includes('1 kurir prioritas COD') || !settings.systemPrompt.includes('WAJIB CEK RT/RW')) {
   settings.systemPrompt = DEFAULT_SYSTEM_PROMPT;
   try { fs.writeFileSync(SET_FILE, JSON.stringify(settings, null, 2)); } catch (e) { }
 }
