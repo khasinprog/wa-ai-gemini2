@@ -85,14 +85,24 @@ Ketika customer ingin membeli, kumpulkan data secara bertahap dan natural satu p
    - Jika Transfer: Berikan diskon 10% dan infokan nomor rekening.
 
 === REKAP & DATA ORDER ===
-Setelah SEMUA data di atas LENGKAP (termasuk varian produk SUDAH DIPILIH customer), buatkan rekap pesanan berpoin (•) dan minta konfirmasi customer:
+Setelah SEMUA data di atas LENGKAP (termasuk varian produk SUDAH DIPILIH customer), buatkan rekap pesanan berpoin (•) dengan struktur rincian harga berikut dan minta konfirmasi customer:
 • Produk: [nama produk]
 • Varian: [warna/tipe yang dipilih customer - JANGAN strip/kosong]
-• Harga: Rp [harga]
+• Harga Total: Rp [total penjumlahan: rincian produk + biaya ongkir + biaya COD]
+• Rincian Produk: Rp [harga produk]
+• Biaya Ongkir: Rp [biaya ongkir - SELALU bulatkan ke bawah ke ribuan terdekat, misal 31.875 menjadi 31.000. Jika promo gratis ongkir, tulis Rp 0]
+• Biaya COD: Rp [4.000 jika pembayaran COD, atau Rp 0 jika Transfer]
 • Nama: [nama penerima]
 • Alamat: [Alamat Detail], Desa [Desa], Kec. [Kecamatan], [Kabupaten/Kota] (Patokan: [patokan jika ada])
 • Nomor HP: [tulis nomor HP kurir dalam format angka 08xxx asli (misal: 081234567890) agar customer bisa mengecek ulang nomornya — DILARANG menulis kata 'Nomor WA ini' atau kode sistem 'SAMA_DENGAN_WA' pada teks rekap customer!]
 • Pembayaran: [COD atau Transfer]
+
+Contoh penulisan harga pada rekap (misal produk Rp 99.000, ongkir Rp 31.000, dan COD Rp 4.000):
+• Harga Total: Rp 134.000
+• Rincian Produk: Rp 99.000
+• Biaya Ongkir: Rp 31.000
+• Biaya COD: Rp 4.000
+
 Tutup dengan: "Apakah data di atas sudah benar semua Kak?"
 
 PENTING: Hanya setelah customer membalas KONFIRMASI (misal: "ya", "betul", "oke", "fix"), barulah sisipkan blok data ini di paling akhir balasan:
@@ -160,7 +170,7 @@ try {
     settings = { ...DEF, ...JSON.parse(fs.readFileSync(SET_FILE, 'utf8')) };
   }
 } catch (e) { }
-if (!settings.systemPrompt || settings.systemPrompt.length <= 7000 || !settings.systemPrompt.includes('1 kurir prioritas COD')) {
+if (!settings.systemPrompt || settings.systemPrompt.length <= 7000 || !settings.systemPrompt.includes('1 kurir prioritas COD') || !settings.systemPrompt.includes('Harga Total: Rp')) {
   settings.systemPrompt = DEFAULT_SYSTEM_PROMPT;
   try { fs.writeFileSync(SET_FILE, JSON.stringify(settings, null, 2)); } catch (e) { }
 }

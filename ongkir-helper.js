@@ -92,19 +92,24 @@ async function estimateOngkir({ originMongoId, destMongoId, weight, itemValue, d
     const allCouriers = data.data;
 
     // Build daftar kurir yang tersedia (non-cargo, non-unsupported)
+    // Ongkir otomatis dibulatkan ke bawah ke ribuan terdekat (misal 31.875 -> 31.000)
     const available = Object.entries(allCouriers)
       .filter(([name, info]) => !info.unsupported && !name.toLowerCase().includes('cargo'))
-      .map(([name, info]) => ({
-        courier: name,
-        price: info.estimatedSpecialPrice || info.estimatedPrice || info.price || 0,
-        originalPrice: info.estimatedPrice || info.price || 0,
-        discount: info.discount || 0,
-        etd: (info.estimate_delivery && info.estimate_delivery.trim() !== '-')
-          ? info.estimate_delivery.trim()
-          : (info.estimatedDate || null),
-        codFee: info.codFee || 0,
-        unsupportedCod: info.unsupported_cod === true || info.coverage_cod === false || info.unsupportedOriginSpx === true,
-      }));
+      .map(([name, info]) => {
+        const rawPrice = info.estimatedSpecialPrice || info.estimatedPrice || info.price || 0;
+        const roundedPrice = Math.floor(rawPrice / 1000) * 1000;
+        return {
+          courier: name,
+          price: roundedPrice,
+          originalPrice: info.estimatedPrice || info.price || 0,
+          discount: info.discount || 0,
+          etd: (info.estimate_delivery && info.estimate_delivery.trim() !== '-')
+            ? info.estimate_delivery.trim()
+            : (info.estimatedDate || null),
+          codFee: info.codFee || 0,
+          unsupportedCod: info.unsupported_cod === true || info.coverage_cod === false || info.unsupportedOriginSpx === true,
+        };
+      });
 
     if (!available.length) return null;
 
@@ -213,7 +218,9 @@ function formatOngkirForCustomer(result, destName) {
   }
 
   const cName = COURIER_DISPLAY_NAMES[selected.courier] || selected.courier.toUpperCase();
-  const harga = Number(selected.price).toLocaleString('id-ID');
+  const rawPrice = selected.price || 0;
+  const roundedPrice = Math.floor(rawPrice / 1000) * 1000;
+  const harga = Number(roundedPrice).toLocaleString('id-ID');
   const codFee = (selected.codFee && selected.codFee > 0) ? selected.codFee : 4000;
   const codFeeStr = Number(codFee).toLocaleString('id-ID');
   const safeEtd = formatSafeEtd(selected.etd);

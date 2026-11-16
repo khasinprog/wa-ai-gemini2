@@ -45,9 +45,10 @@ describe('ongkir-helper ETD & Formatting', () => {
 
       const formatted = formatOngkirForCustomer(mockResult, 'PEUNAYONG, KUTA ALAM, BANDA ACEH');
       expect(formatted).toContain('Ongkir ke PEUNAYONG, KUTA ALAM, BANDA ACEH 📦');
-      expect(formatted).toContain('Sebesar Rp 31.875 (SPX)');
+      expect(formatted).toContain('Sebesar Rp 31.000 (SPX)');
       expect(formatted).toContain('biaya COD Rp 4.000');
       expect(formatted).toContain('(Estimasi tiba: 8~10 hari)');
     });
   });
 });
+
